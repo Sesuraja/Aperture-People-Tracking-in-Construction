@@ -26,7 +26,6 @@ import { hardwareRouter } from './src/server/routes/hardware.js';
 import { realtimeRouter } from './src/server/routes/realtime.js';
 import { demoRouter } from './src/server/routes/demo.js';
 import { errorHandler } from './src/server/middleware/errorHandler.js';
-import { initWebSocketServer } from './src/server/services/websocket.js';
 
 export const app = express();
 app.set('trust proxy', 1);
@@ -40,9 +39,6 @@ async function startServer() {
   startRealTimeTagsCleanupJob(15, 60);
   startPollingService();
   await bootstrapAdminUser();
-
-  // Initialize WebSocket Server for real-time live tracking and safety alerts
-  initWebSocketServer(httpServer);
 
   // Helmet HTTP security headers (configured for iframe & SPA compatibility)
   app.use(helmet({

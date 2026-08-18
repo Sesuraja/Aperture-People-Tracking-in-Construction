@@ -863,7 +863,7 @@ export default function IncidentsTab() {
                 : 'bg-amber-50 text-amber-700 border-amber-200'
             }`}>
               <Database size={11} />
-              {isMongoActive() ? 'MongoDB Active: gao_rfid' : 'Firestore Fallback'}
+              {isMongoActive() ? 'MongoDB Active: aperture_people_tracking' : 'In-Memory Fallback'}
             </span>
           </div>
           <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-0.5">

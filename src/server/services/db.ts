@@ -1,3 +1,8 @@
+import dns from 'dns';
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
+} catch {}
+
 import { MongoClient, Db } from 'mongodb';
 import dotenv from 'dotenv';
 import fs from 'fs';
@@ -117,11 +122,7 @@ export async function initDatabase(customUri?: string): Promise<void> {
     mongoClient = null;
     mongoDb = null;
   } finally {
-    // Only seed demo data when falling back to in-memory storage.
-    // When MongoDB is connected, use the real data already in the database.
-    if (!mongoDb) {
-      await bootstrapMapAndZoneDefinitions();
-    }
+    await bootstrapMapAndZoneDefinitions();
   }
 }
 
@@ -1827,14 +1828,41 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
   const result: Record<string, number> = {};
   
   const seedCollection = async (colName: string, defaultData: any[]) => {
-    const existing = await getCollectionDocs(colName);
-    if (force || existing.length === 0) {
-      for (const item of defaultData) {
-        await upsertDoc(colName, item);
+    let count = 0;
+    if (mongoDb) {
+      try {
+        count = await mongoDb.collection(colName).countDocuments({}, { limit: 1 });
+      } catch {
+        count = 0;
+      }
+    } else {
+      count = (inMemoryStore[colName] || []).length;
+    }
+
+    if (force || count === 0) {
+      if (mongoDb && defaultData.length > 0) {
+        try {
+          const ops = defaultData.map(item => ({
+            updateOne: {
+              filter: { id: item.id || `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}` },
+              update: { $set: item },
+              upsert: true
+            }
+          }));
+          await mongoDb.collection(colName).bulkWrite(ops, { ordered: false });
+        } catch {
+          for (const item of defaultData) {
+            await upsertDoc(colName, item);
+          }
+        }
+      } else {
+        for (const item of defaultData) {
+          await upsertDoc(colName, item);
+        }
       }
       result[colName] = defaultData.length;
     } else {
-      result[colName] = existing.length;
+      result[colName] = count;
     }
   };
 
@@ -2026,15 +2054,10 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
 }
 
 /**
- * Bootstraps permanent zones, map configurations, and reader-to-zone mappings in DB.
- * Only runs when using in-memory fallback (no MongoDB connection).
+ * Bootstraps permanent zones, map configurations, registered people, and demo data in DB.
+ * Only seeds collections if they are currently empty (existing.length === 0).
  */
 export async function bootstrapMapAndZoneDefinitions(): Promise<void> {
-  // Skip seeding if MongoDB is connected — use real persisted data instead.
-  if (mongoDb) {
-    console.log('[DB Service] MongoDB connected — skipping demo data seeding. Using real database data.');
-    return;
-  }
   try {
     await seedAllDemoData(false);
   } catch (err: any) {

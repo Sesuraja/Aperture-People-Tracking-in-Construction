@@ -4,10 +4,7 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 
 export const mongodbRouter = Router();
 
-// Secure all endpoints of this router with Admin authentication by default
-mongodbRouter.use(requireAuth, requireRole('admin'));
-
-// GET /api/mongodb/status
+// GET /api/mongodb/status - accessible for system health checks across all tabs
 mongodbRouter.get('/status', async (req: Request, res: Response) => {
   try {
     const stats = await getMongoStats();
@@ -23,6 +20,9 @@ mongodbRouter.get('/status', async (req: Request, res: Response) => {
     });
   }
 });
+
+// Secure mutation endpoints with Admin authentication
+mongodbRouter.use(requireAuth, requireRole('admin'));
 
 // POST /api/mongodb/test-connection
 mongodbRouter.post('/test-connection', async (req: Request, res: Response) => {

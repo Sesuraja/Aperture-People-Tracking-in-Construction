@@ -1,5 +1,21 @@
+let _mongoConnectedState = true;
+
+if (typeof window !== 'undefined') {
+  const checkMongoStatus = async () => {
+    try {
+      const res = await fetch('/api/mongodb/status');
+      if (res.ok) {
+        const data = await res.json();
+        _mongoConnectedState = Boolean(data.connected);
+      }
+    } catch {}
+  };
+  checkMongoStatus();
+  setInterval(checkMongoStatus, 10000);
+}
+
 export function isMongoActive(): boolean {
-  return true;
+  return _mongoConnectedState;
 }
 
 export const db = { name: 'mongodb' };

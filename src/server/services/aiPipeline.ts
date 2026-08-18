@@ -1,8 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
 import { upsertDoc, getCollectionDocs } from './db.js';
-import { broadcastWebSocketEvent } from './websocket.js';
-import { broadcastSseEvent } from './sse.js';
-import { publishMqttMessage } from './mqtt.js';
 import { getGeminiApiKey, isGeminiAvailable, markGeminiAuthFailed } from '../routes/ai.js';
 
 export interface TelemetryPayload {
@@ -295,27 +292,6 @@ Respond strictly with valid JSON:
         updatedAt: nowIso
       });
     }
-
-    // 3. BROADCAST TO LIVE STREAMS (WebSocket, SSE, MQTT)
-    broadcastWebSocketEvent('tag_update', tagDocument);
-    broadcastWebSocketEvent('ai_insight', insightDoc);
-    if (aiResult.aiAnomaly) {
-      broadcastWebSocketEvent('safety_alert', {
-        type: 'safety_alert',
-        tagId,
-        personName: fullName,
-        location,
-        anomaly: aiResult.aiAnomaly,
-        timestamp: nowIso
-      });
-    }
-
-    broadcastSseEvent('tag_update', tagDocument);
-    broadcastSseEvent('ai_insight', insightDoc);
-
-    // Publish to MQTT
-    publishMqttMessage('gao/rfid/scans', tagDocument).catch(() => {});
-    publishMqttMessage('people/tracking/insights', insightDoc).catch(() => {});
   }
 
   return {

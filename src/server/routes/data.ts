@@ -8,8 +8,6 @@ import {
   logAuditEvent
 } from '../services/db.js';
 import { requireAuth, AuthRequest } from '../middleware/auth.js';
-import { broadcastSseEvent } from '../services/sse.js';
-import { broadcastWebSocketEvent } from '../services/websocket.js';
 
 export const dataRouter = Router();
 
@@ -51,10 +49,13 @@ dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
     'incidents_enterprise', 'audit_logs', 'users', 'permissions', 'role_permissions',
     'analytics_reports', 'analytics_metrics', 'analytics_equipment',
     'ai_recommendations', 'incidents', 'ai_rca_reports', 'ai_hazard_predictions',
-    'ai_insights',
+    'ai_insights', 'ai_copilot_chats',
     'assets', 'vehicles', 'cameras', 'sensors', 'infrastructure', 'maintenance_nodes', 'work_orders',
     'technicians', 'schedules', 'compliance_frameworks', 'retention_policies', 'compliance_reports',
-    'people', 'personnel', 'zones', 'geofences', 'map_configurations', 'reader_zone_mappings'
+    'people', 'personnel', 'zones', 'geofences', 'map_configurations', 'reader_zone_mappings',
+    'quick_notes', 'hardware_readers', 'hardware_tag_mappings', 'third_party_apis',
+    'site_configurations', 'shift_assignments', 'training_records', 'ppe_records',
+    'notifications', 'system_events', 'daily_reports'
   ];
 
   if (!allowed.includes(collection)) {
@@ -107,10 +108,6 @@ dataRouter.post('/:collection', async (req: AuthRequest, res: Response) => {
       ip: req.ip
     });
 
-    // Broadcast SSE & WebSocket real-time updates to all connected clients
-    broadcastSseEvent('collection_update', { collection, action: 'upsert', doc: saved });
-    broadcastWebSocketEvent('collection_update', { collection, action: 'upsert', doc: saved });
-
     return res.json(saved);
   } catch (err: any) {
     console.error(`[Data Route] Error upserting in ${collection}:`, err);
@@ -137,10 +134,6 @@ dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
       details: { docId: id },
       ip: req.ip
     });
-
-    // Broadcast SSE & WebSocket real-time updates to all connected clients
-    broadcastSseEvent('collection_update', { collection, action: 'update', doc: saved });
-    broadcastWebSocketEvent('collection_update', { collection, action: 'update', doc: saved });
 
     return res.json(saved);
   } catch (err: any) {
@@ -169,10 +162,6 @@ dataRouter.delete('/:collection/:id', async (req: AuthRequest, res: Response) =>
     if (!deleted) {
       return res.status(404).json({ error: 'Document not found or already deleted' });
     }
-
-    // Broadcast SSE & WebSocket real-time updates to all connected clients
-    broadcastSseEvent('collection_update', { collection, action: 'delete', id });
-    broadcastWebSocketEvent('collection_update', { collection, action: 'delete', id });
 
     return res.json({ message: 'Document deleted successfully', id });
   } catch (err: any) {
