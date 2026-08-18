@@ -1,0 +1,265 @@
+{
+  "entities": {
+    "Alert": {
+      "title": "Alert",
+      "description": "System security and info alerts",
+      "type": "object",
+      "properties": {
+        "type": { "type": "string" },
+        "message": { "type": "string" },
+        "timestamp": { "type": "number", "description": "Unix timestamp" }
+      },
+      "required": ["type", "message", "timestamp"]
+    },
+    "Device": {
+      "title": "Device",
+      "description": "RFID Readers and Devices",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "status": { "type": "string" },
+        "zone": { "type": "string" }
+      },
+      "required": ["name", "status"]
+    },
+    "LiveTag": {
+      "title": "Live Tag",
+      "description": "Real-time tracking tags",
+      "type": "object",
+      "properties": {
+        "TagID": { "type": "string" },
+        "Location": { "type": "string" },
+        "Timestamp": { "type": "string" },
+        "dwellTime": { "type": "number" },
+        "lastSeen": { "type": "string" },
+        "activityInsights": {
+          "type": "object",
+          "properties": {
+            "activity": { "type": "string" },
+            "confidence": { "type": "number" }
+          }
+        }
+      },
+      "required": ["TagID", "Location", "Timestamp"]
+    },
+    "Asset": {
+      "title": "Asset",
+      "description": "Equipment assets",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["id", "name", "type", "x", "y"]
+    },
+    "Vehicle": {
+      "title": "Vehicle",
+      "description": "Vehicles",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["id", "name", "type", "x", "y"]
+    },
+    "CameraDevice": {
+      "title": "CameraDevice",
+      "description": "Camera devices",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["id", "name", "x", "y"]
+    },
+    "EnvSensor": {
+      "title": "EnvSensor",
+      "description": "Environment sensors",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "x": { "type": "number" },
+        "y": { "type": "number" }
+      },
+      "required": ["id", "name", "x", "y"]
+    },
+    "Setting": {
+      "title": "Setting",
+      "description": "App settings",
+      "type": "object",
+      "properties": {
+        "apiUrl": { "type": "string" },
+        "demoMode": { "type": "boolean" }
+      }
+    },
+    "DashboardLayout": {
+      "title": "Dashboard Layout",
+      "description": "User customized dashboard layout configuration",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "kpis": {
+          "type": "array",
+          "description": "Array of KPI configurations"
+        },
+        "panels": {
+          "type": "array",
+          "description": "Array of panel configurations"
+        },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "Visitor": {
+      "title": "Visitor",
+      "description": "Visitor pre-registration and tracking",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "company": { "type": "string" },
+        "host": { "type": "string" },
+        "email": { "type": "string" },
+        "status": { "type": "string" },
+        "time": { "type": "string" },
+        "tag": { "type": "string" },
+        "location": { "type": "string" },
+        "duration": { "type": "string" },
+        "path": { "type": "array" },
+        "qrCodeRef": { "type": "string" },
+        "arrivalTime": { "type": "number" },
+        "isOverstayed": { "type": "boolean" }
+      },
+      "required": ["id", "name", "company", "status"]
+    },
+    "VisitorAccessToken": {
+      "title": "Visitor Access Token",
+      "description": "Temporary access token generated for guest QR code validation",
+      "type": "object",
+      "properties": {
+        "tokenId": { "type": "string" },
+        "visitorId": { "type": "string" },
+        "visitorName": { "type": "string" },
+        "company": { "type": "string" },
+        "host": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "allowedZones": { "type": "array" },
+        "maxUsages": { "type": "number" },
+        "scanCount": { "type": "number" }
+      },
+      "required": ["tokenId", "visitorId", "status", "expiresAt"]
+    },
+    "VisitorSecurityItem": {
+      "title": "Visitor Security List Item",
+      "description": "Blacklist and whitelist entry for visitor real-time validation",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "company": { "type": "string" },
+        "type": { "type": "string" },
+        "reason": { "type": "string" },
+        "addedBy": { "type": "string" },
+        "addedDate": { "type": "string" },
+        "riskLevel": { "type": "string" }
+      },
+      "required": ["id", "name", "type", "reason"]
+    },
+    "VisitorAccessLog": {
+      "title": "Visitor Access Log",
+      "description": "Scan and entry validation log",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "tokenId": { "type": "string" },
+        "visitorName": { "type": "string" },
+        "gate": { "type": "string" },
+        "status": { "type": "string" },
+        "timestamp": { "type": "string" }
+      },
+      "required": ["id", "tokenId", "status"]
+    },
+    "QuickNote": {
+      "title": "Quick Note",
+      "description": "Supervisor zone quick notes",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "zone": { "type": "string" },
+        "note": { "type": "string" },
+        "status": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "author": { "type": "string" }
+      },
+      "required": ["zone", "note", "status"]
+    }
+  },
+  "firestore": {
+    "/alerts/{alertId}": {
+      "schema": "Alert",
+      "description": "Alerts triggered by GAO tags"
+    },
+    "/devices/{deviceId}": {
+      "schema": "Device",
+      "description": "Configured reader devices"
+    },
+    "/live_tags/{tagId}": {
+      "schema": "LiveTag",
+      "description": "Currently active tags"
+    },
+    "/assets/{assetId}": {
+      "schema": "Asset",
+      "description": "Equipment assets"
+    },
+    "/vehicles/{vehicleId}": {
+      "schema": "Vehicle",
+      "description": "Vehicles"
+    },
+    "/cameras/{cameraId}": {
+      "schema": "CameraDevice",
+      "description": "Camera devices"
+    },
+    "/sensors/{sensorId}": {
+      "schema": "EnvSensor",
+      "description": "Environment sensors"
+    },
+    "/settings/dashboard_{userId}": {
+      "schema": "DashboardLayout",
+      "description": "User specific dashboard layout config"
+    },
+    "/settings/{document}": {
+      "schema": "Setting",
+      "description": "App settings"
+    },
+    "/visitors/{visitorId}": {
+      "schema": "Visitor",
+      "description": "Pre-registered and active visitors"
+    },
+    "/visitor_security_list/{itemId}": {
+      "schema": "VisitorSecurityItem",
+      "description": "Visitor blacklist and whitelist directory"
+    },
+    "/visitor_access_tokens/{tokenId}": {
+      "schema": "VisitorAccessToken",
+      "description": "Guest temporary QR access tokens"
+    },
+    "/visitor_access_logs/{logId}": {
+      "schema": "VisitorAccessLog",
+      "description": "Logs of scanner token validations"
+    },
+    "/quick_notes/{noteId}": {
+      "schema": "QuickNote",
+      "description": "Supervisor temporary observations or status flags on specific zones"
+    }
+  }
+}
