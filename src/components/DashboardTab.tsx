@@ -121,8 +121,8 @@ export function getDefaultKPIs(): KPIConfig[] {
     { id: 'emergency_alerts', title: 'Emergency Alerts', visible: true, order: 10, sub: 'Critical panic & crane radius breaches', iconName: 'Siren', iconColor: 'bg-rose-600' },
     { id: 'attendance_today', title: 'Attendance Today', visible: true, order: 11, sub: 'Workers scheduled vs checked in', iconName: 'Clock', iconColor: 'bg-blue-600' },
     { id: 'ppe_compliance', title: 'PPE Compliance', visible: true, order: 12, sub: 'Hardhat tag & vest scan rate', iconName: 'ShieldCheck', iconColor: 'bg-teal-600' },
-    { id: 'productivity_score', title: 'Productivity Score', visible: true, order: 13, sub: 'Active work vs idle dwell rating', iconName: 'TrendingUp', iconColor: 'bg-emerald-600' },
-    { id: 'site_utilization', title: 'Site Utilization', visible: true, order: 14, sub: 'Active sectors vs max capacity', iconName: 'Gauge', iconColor: 'bg-violet-600' },
+    { id: 'productivity_score', title: 'Productivity Score', visible: false, order: 13, sub: 'Active work vs idle dwell rating', iconName: 'TrendingUp', iconColor: 'bg-emerald-600' },
+    { id: 'site_utilization', title: 'Site Utilization', visible: false, order: 14, sub: 'Active sectors vs max capacity', iconName: 'Gauge', iconColor: 'bg-violet-600' },
   ];
 }
 
@@ -2207,9 +2207,9 @@ export default function DashboardTab({
         </div>
       ) : null}
 
-      {/* Dynamic KPI Cards Row */}
+      {/* Dynamic KPI Cards Row (3 Rows x 4 Columns) */}
       {sortedVisibleKpis.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-7 gap-4 shrink-0">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4.5 shrink-0">
           {sortedVisibleKpis.map(k => renderKpiCard(k.id))}
         </div>
       ) : (
