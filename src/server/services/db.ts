@@ -2054,15 +2054,12 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
 }
 
 /**
- * Bootstraps permanent zones, map configurations, registered people, and demo data in DB.
- * Only seeds collections if they are currently empty (existing.length === 0).
+ * Bootstraps permanent zones and map configurations.
+ * Does NOT seed synthetic demo data — all data must exist in MongoDB already.
  */
 export async function bootstrapMapAndZoneDefinitions(): Promise<void> {
-  try {
-    await seedAllDemoData(false);
-  } catch (err: any) {
-    console.warn('[DB Service] Warning during map & zone bootstrapping:', err.message);
-  }
+  // Seeding disabled: only show real MongoDB data.
+  // Call seedAllDemoData(true) manually from admin if you want to seed empty collections.
 }
 
 /**

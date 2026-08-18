@@ -499,262 +499,72 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
     } else if (mode === 'demo') {
        setIsLoading(false);
 
-       // Initial demo workforce fallback
-       const DEMO_WORKERS: Person[] = [
-         { id: 'HH-1092', name: 'Marcus Vance', role: 'EHS Safety Director', currentZone: 'Tower Core Structure', presenceState: 'MOVING', dwellTime: 420, x: 55, y: 35, lastSeen: new Date(), trail: [] },
-         { id: 'HH-2041', name: 'Elena Rostova', role: 'Structural Engineer', currentZone: 'Tower Core Structure', presenceState: 'IDLE', dwellTime: 650, x: 62, y: 48, lastSeen: new Date(), trail: [] },
-         { id: 'HH-3309', name: 'David Kim', role: 'Formwork Lead', currentZone: 'Deep Excavation Shaft', presenceState: 'MOVING', dwellTime: 210, x: 22, y: 38, lastSeen: new Date(), trail: [] },
-         { id: 'HH-5112', name: 'Carlos Mendez', role: 'Tower Crane Operator', currentZone: 'Heavy Crane & Exclusion Area', presenceState: 'IDLE', dwellTime: 1200, x: 86, y: 18, lastSeen: new Date(), trail: [] },
-         { id: 'HH-6221', name: 'Aisha Patel', role: 'Lead Electrician', currentZone: 'High Voltage Area', presenceState: 'MOVING', dwellTime: 180, x: 50, y: 10, lastSeen: new Date(), trail: [] },
-         { id: 'HH-7405', name: 'Lucas Sterling', role: 'Heavy Rigging Tech', currentZone: 'Heavy Crane & Exclusion Area', presenceState: 'MOVING', dwellTime: 340, x: 88, y: 32, lastSeen: new Date(), trail: [] },
-         { id: 'HH-8991', name: 'Wei Zhang', role: 'Excavator Operator', currentZone: 'Deep Excavation Shaft', presenceState: 'IDLE', dwellTime: 890, x: 18, y: 55, lastSeen: new Date(), trail: [] },
-         { id: 'HH-9023', name: 'Sarah Jenkins', role: 'QA Inspector', currentZone: 'Tower Core Structure', presenceState: 'MOVING', dwellTime: 150, x: 68, y: 30, lastSeen: new Date(), trail: [] },
-         { id: 'HH-4412', name: 'Tariq Al-Mansoor', role: 'Scaffold Crew Lead', currentZone: 'Tower Core Structure', presenceState: 'MOVING', dwellTime: 510, x: 58, y: 60, lastSeen: new Date(), trail: [] },
-         { id: 'HH-1188', name: 'Priya Sharma', role: 'Structural Welder', currentZone: 'Tower Core Structure', presenceState: 'IDLE', dwellTime: 720, x: 74, y: 42, lastSeen: new Date(), trail: [] },
-         { id: 'HH-2290', name: 'James Wilson', role: 'Concrete Finisher', currentZone: 'Deep Excavation Shaft', presenceState: 'MOVING', dwellTime: 310, x: 30, y: 25, lastSeen: new Date(), trail: [] },
-         { id: 'HH-3381', name: 'Liam O\'Connor', role: 'Site Surveyor', currentZone: 'Tower Core Structure', presenceState: 'MOVING', dwellTime: 190, x: 52, y: 65, lastSeen: new Date(), trail: [] }
-       ];
+       // Load data from MongoDB via REST API — no hardcoded fallback data
+       const loadFromMongo = async () => {
+         if (!isMounted) return;
+         try {
+           const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
+           const authHeaders = {
+             'Accept': 'application/json',
+             'Authorization': `Bearer ${token}`
+           };
 
-       const DEMO_ASSETS: Asset[] = [
-         { id: 'AST-01', name: 'CAT 336 Excavator', type: 'Heavy Machinery', x: 25, y: 40, status: 'In Use', battery: 94 },
-         { id: 'AST-02', name: 'Potain MDT 389 Tower Crane', type: 'Lifting Equipment', x: 86, y: 20, status: 'Operating', battery: 100 },
-         { id: 'AST-03', name: 'Cummins 250kVA Generator', type: 'Power Equipment', x: 55, y: 45, status: 'Active', battery: 82 },
-         { id: 'AST-04', name: 'Miller Big Blue Welder', type: 'Welding Unit', x: 70, y: 50, status: 'Idle', battery: 88 }
-       ];
-
-       const DEMO_VEHICLES: Vehicle[] = [
-         { id: 'VEH-01', name: 'Mack Concrete Mixer #4', type: 'Concrete Mixer', x: 28, y: 35, speed: 4, status: 'Unloading' },
-         { id: 'VEH-02', name: 'CAT 950M Wheel Loader', type: 'Earthmover', x: 20, y: 50, speed: 8, status: 'Moving' },
-         { id: 'VEH-03', name: 'Ford F-250 Safety Unit', type: 'Emergency Response', x: 60, y: 35, speed: 0, status: 'Standby' }
-       ];
-
-        // Asynchronously pull initial seed data directly from MongoDB database
-        const initDemoDataFromMongo = async () => {
-          try {
-            const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
-            const authHeaders = {
-              'Accept': 'application/json',
-              'Authorization': `Bearer ${token}`
-            };
-
-            const [peopleRes, assetsRes, vehiclesRes] = await Promise.all([
-              fetch('/api/data/registered_people', { headers: authHeaders }).catch(() => null),
-              fetch('/api/data/assets', { headers: authHeaders }).catch(() => null),
-              fetch('/api/data/vehicles', { headers: authHeaders }).catch(() => null)
-            ]);
+           const [peopleRes, assetsRes, vehiclesRes] = await Promise.all([
+             fetch('/api/data/registered_people', { headers: authHeaders }).catch(() => null),
+             fetch('/api/data/assets', { headers: authHeaders }).catch(() => null),
+             fetch('/api/data/vehicles', { headers: authHeaders }).catch(() => null)
+           ]);
 
            if (peopleRes && peopleRes.ok) {
              const data = await peopleRes.json();
-             if (Array.isArray(data) && data.length > 0) {
+             if (Array.isArray(data) && isMounted) {
                const zonesList = getZonesForProject(activeProjectId);
                const mapped = data.map((p: any, idx: number) => {
-                 const zone = p.currentZone || zonesList[idx % zonesList.length] || 'Tower Core Structure';
+                 const zone = p.currentZone || zonesList[idx % zonesList.length] || 'People Tracking in Construction';
                  const rect = getZoneRect(zone, activeProjectId, dynamicZones);
                  return {
                    id: p.id || p.hardhatTagId || `W-${idx + 1}`,
                    name: p.name || `Worker ${idx + 1}`,
                    role: p.role || 'Field Personnel',
-                   tradeCompany: p.tradeCompany || 'Apex Construction',
-                   ppeStatus: p.ppeStatus || 'COMPLIANT',
-                   shiftStatus: p.shiftStatus || 'ON_SITE',
-                   trainingStatus: p.trainingStatus || 'COMPLIANT',
+                   tradeCompany: p.tradeCompany,
+                   ppeStatus: p.ppeStatus,
+                   shiftStatus: p.shiftStatus,
+                   trainingStatus: p.trainingStatus,
                    hardhatTagId: p.hardhatTagId || p.id,
                    currentZone: zone,
-                   presenceState: 'MOVING' as any,
-                   dwellTime: 120 + idx * 45,
+                   presenceState: (p.presenceState || 'IDLE') as any,
+                   dwellTime: p.dwellTime || 0,
                    x: rect.x + 2 + Math.random() * (rect.width - 4),
                    y: rect.y + 2 + Math.random() * (rect.height - 4),
-                   lastSeen: new Date(),
+                   lastSeen: p.lastSeen ? new Date(p.lastSeen) : new Date(),
                    trail: []
                  };
                });
-               if (isMounted) setPeople(mapped);
-             } else {
-               if (isMounted) setPeople(prev => prev.length === 0 ? DEMO_WORKERS : prev);
+               setPeople(mapped);
              }
-           } else {
-             if (isMounted) setPeople(prev => prev.length === 0 ? DEMO_WORKERS : prev);
            }
 
            if (assetsRes && assetsRes.ok) {
              const data = await assetsRes.json();
-             if (Array.isArray(data) && data.length > 0 && isMounted) {
+             if (Array.isArray(data) && isMounted) {
                setAssets(data);
-             } else if (isMounted) {
-               setAssets(prev => prev.length === 0 ? DEMO_ASSETS : prev);
              }
            }
 
            if (vehiclesRes && vehiclesRes.ok) {
              const data = await vehiclesRes.json();
-             if (Array.isArray(data) && data.length > 0 && isMounted) {
+             if (Array.isArray(data) && isMounted) {
                setVehicles(data);
-             } else if (isMounted) {
-               setVehicles(prev => prev.length === 0 ? DEMO_VEHICLES : prev);
              }
            }
-         } catch {
-           if (isMounted) {
-             setPeople(prev => prev.length === 0 ? DEMO_WORKERS : prev);
-             setAssets(prev => prev.length === 0 ? DEMO_ASSETS : prev);
-             setVehicles(prev => prev.length === 0 ? DEMO_VEHICLES : prev);
-           }
+         } catch (e) {
+           console.warn('MongoDB data load warning:', e);
          }
        };
 
-       initDemoDataFromMongo();
-
-       // Active Simulation Loop in Demo Mode
-       // Active Realistic Human Walking Simulation Loop in Demo Mode
-        const demoSimulationTick = () => {
-          if (!isMounted) return;
-
-          setPeople(prevPeople => {
-            const zonesList = getZonesForProject(activeProjectId);
-            return prevPeople.map(person => {
-              const updated = { ...person };
-              updated.dwellTime = (updated.dwellTime || 0) + 1;
-              updated.lastSeen = new Date();
-
-              // Chance of moving to a new destination zone (every ~20 seconds of activity)
-              if (Math.random() < 0.03 && zonesList.length > 1) {
-                const otherZones = zonesList.filter(z => z !== updated.currentZone);
-                const newZone = otherZones[Math.floor(Math.random() * otherZones.length)];
-                updated.currentZone = newZone;
-                updated.dwellTime = 0;
-                updated.presenceState = 'MOVING';
-                delete updated.targetX;
-                delete updated.targetY;
-              }
-
-              const zoneRect = getZoneRect(updated.currentZone, activeProjectId, dynamicZones);
-
-              // Select new realistic waypoint target when reaching destination or idle timeout
-              if (
-                updated.targetX === undefined ||
-                updated.targetY === undefined ||
-                (Math.hypot(updated.targetX - updated.x, updated.targetY - updated.y) < 1.5)
-              ) {
-                if (Math.random() < 0.35 && (updated.idleRemaining || 0) <= 0) {
-                  // Person stops to work/rest
-                  updated.presenceState = 'IDLE';
-                  updated.idleRemaining = Math.floor(Math.random() * 4) + 2; // stay idle for 2-5 ticks
-                } else if ((updated.idleRemaining || 0) > 0) {
-                  updated.idleRemaining = (updated.idleRemaining || 1) - 1;
-                  updated.presenceState = 'IDLE';
-                } else {
-                  // Pick new waypoint in current zone
-                  updated.targetX = zoneRect.x + 3 + Math.random() * (zoneRect.width - 6);
-                  updated.targetY = zoneRect.y + 3 + Math.random() * (zoneRect.height - 6);
-                  updated.presenceState = 'MOVING';
-                }
-              }
-
-              if (updated.presenceState === 'MOVING' && updated.targetX !== undefined && updated.targetY !== undefined) {
-                const dx = updated.targetX - updated.x;
-                const dy = updated.targetY - updated.y;
-                const distance = Math.hypot(dx, dy);
-
-                if (distance > 0.1) {
-                  const walkingSpeed = 0.5 + Math.random() * 0.3; // natural human walk pace (meters per tick)
-                  const step = Math.min(walkingSpeed, distance);
-                  
-                  // Compute heading in degrees
-                  const heading = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360);
-                  updated.heading = heading;
-                  updated.speed = Math.round((step * 1.2) * 10) / 10;
-
-                  // Move smoothly towards target
-                  updated.x = updated.x + (dx / distance) * step;
-                  updated.y = updated.y + (dy / distance) * step;
-                }
-              } else {
-                updated.speed = 0;
-              }
-
-              // Keep strictly within zone bounds
-              updated.x = Math.max(zoneRect.x + 0.5, Math.min(zoneRect.x + zoneRect.width - 0.5, updated.x));
-              updated.y = Math.max(zoneRect.y + 0.5, Math.min(zoneRect.y + zoneRect.height - 0.5, updated.y));
-
-              // Update smooth breadcrumb trail
-              updated.trail = updated.trail ? [...updated.trail] : [];
-              if (updated.presenceState === 'MOVING') {
-                updated.trail.push({ x: Math.round(updated.x * 100) / 100, y: Math.round(updated.y * 100) / 100 });
-                if (updated.trail.length > 25) updated.trail.shift();
-              }
-
-              return updated;
-            });
-          });
-
-         setVehicles(prevVehicles => {
-           const zonesList = getZonesForProject(activeProjectId);
-           return prevVehicles.map(vehicle => {
-             const updated = { ...vehicle };
-             
-             const getZoneIdFromId = (id: string, zones: string[]): string => {
-               if (zones.length === 0) return '';
-               let hash = 0;
-               for (let i = 0; i < id.length; i++) {
-                 hash = id.charCodeAt(i) + ((hash << 5) - hash);
-               }
-               const index = Math.abs(hash) % zones.length;
-               return zones[index];
-             };
-
-             const currentZone = getZoneIdFromId(vehicle.id, zonesList);
-             const zoneRect = getZoneRect(currentZone, activeProjectId, dynamicZones);
-             
-             const anchorX = zoneRect.x + 5 + (Math.abs(vehicle.id.charCodeAt(0) * 12) % (zoneRect.width - 10));
-             const anchorY = zoneRect.y + 5 + (Math.abs((vehicle.id.charCodeAt(1) || 0) * 7) % (zoneRect.height - 10));
-
-             const targetX = anchorX + Math.sin(Date.now() / 4000 + vehicle.id.charCodeAt(0)) * 10;
-             const targetY = anchorY + Math.cos(Date.now() / 4000 + (vehicle.id.charCodeAt(1) || 0)) * 10;
-
-             updated.x = updated.x + (targetX - updated.x) * 0.05;
-             updated.y = updated.y + (targetY - updated.y) * 0.05;
-
-             updated.speed = Math.sin(Date.now() / 5000) > 0 ? Math.floor(5 + Math.random() * 5) : 0;
-             updated.status = updated.speed > 0 ? 'Moving' : 'Idle';
-
-             return updated;
-           });
-         });
-
-         setAssets(prevAssets => {
-           const zonesList = getZonesForProject(activeProjectId);
-           return prevAssets.map(asset => {
-             const updated = { ...asset };
-             updated.battery = Math.max(0, (updated.battery || 100) - (Math.random() < 0.05 ? 1 : 0));
-             
-             const getZoneIdFromId = (id: string, zones: string[]): string => {
-               if (zones.length === 0) return '';
-               let hash = 0;
-               for (let i = 0; i < id.length; i++) {
-                 hash = id.charCodeAt(i) + ((hash << 5) - hash);
-               }
-               const index = Math.abs(hash) % zones.length;
-               return zones[index];
-             };
-
-             const currentZone = getZoneIdFromId(asset.id, zonesList);
-             const zoneRect = getZoneRect(currentZone, activeProjectId, dynamicZones);
-             
-             const anchorX = zoneRect.x + 5 + (Math.abs(asset.id.charCodeAt(0) * 12) % (zoneRect.width - 10));
-             const anchorY = zoneRect.y + 5 + (Math.abs((asset.id.charCodeAt(1) || 0) * 7) % (zoneRect.height - 10));
-
-             const targetX = anchorX + Math.sin(Date.now() / 8000 + asset.id.charCodeAt(0)) * 2;
-             const targetY = anchorY + Math.cos(Date.now() / 8000 + (asset.id.charCodeAt(1) || 0)) * 2;
-
-             updated.x = updated.x + (targetX - updated.x) * 0.02;
-             updated.y = updated.y + (targetY - updated.y) * 0.02;
-
-             return updated;
-           });
-         });
-       };
-
-       interval = setInterval(demoSimulationTick, 1800);
+       loadFromMongo();
+       // Poll MongoDB every 4 seconds for fresh data
+       interval = setInterval(loadFromMongo, 4000);
     }
 
     return () => {
