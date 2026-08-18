@@ -70,7 +70,6 @@ export const DEFAULT_LAYER_CONFIGS: Record<string, MapLayerConfig> = {
   equipment: { id: 'equipment', name: 'Equipment', category: 'equipment', visible: true, opacity: 1, locked: false, count: 8, iconName: 'Box', color: 'bg-amber-500 text-white' },
   vehicles: { id: 'vehicles', name: 'Vehicles', category: 'equipment', visible: true, opacity: 1, locked: false, count: 6, iconName: 'Truck', color: 'bg-orange-500 text-white' },
   rfidReaders: { id: 'rfidReaders', name: 'RFID Readers', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 6, iconName: 'Radio', color: 'bg-purple-500 text-white' },
-  bleGateways: { id: 'bleGateways', name: 'BLE Gateways', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 8, iconName: 'Wifi', color: 'bg-violet-500 text-white' },
   gpsDevices: { id: 'gpsDevices', name: 'GPS Devices', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 10, iconName: 'Navigation', color: 'bg-sky-500 text-white' },
   cctvCameras: { id: 'cctvCameras', name: 'CCTV Cameras', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 7, iconName: 'Camera', color: 'bg-teal-500 text-white' },
   hazardZones: { id: 'hazardZones', name: 'Hazard Zones', category: 'zones', visible: true, opacity: 0.8, locked: true, count: 4, iconName: 'AlertTriangle', color: 'bg-rose-500 text-white' },

@@ -36,7 +36,7 @@ export interface VehicleItem {
 export interface InfrastructureItem {
   id: string;
   name: string;
-  type: 'UHF RFID Reader' | 'BLE Gateway' | 'UWB Anchor' | 'Wi-Fi Access Point' | 'IoT Edge Gateway';
+  type: 'UHF RFID Reader' | 'UHF Fixed Portal' | 'UWB Anchor' | 'Wi-Fi Access Point' | 'IoT Edge Gateway';
   location: string;
   ipAddress?: string;
   macAddress?: string;

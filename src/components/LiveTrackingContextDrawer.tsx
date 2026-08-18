@@ -128,7 +128,7 @@ export default function LiveTrackingContextDrawer({
                   <span className="text-xs font-extrabold font-mono text-slate-800">{p.hardhatTagId || 'RFID-4029'}</span>
                 </div>
                 <div className="p-2 bg-white rounded-xl border border-slate-200 text-center">
-                  <span className="text-[9px] font-bold text-slate-400 uppercase block">BLE Battery</span>
+                  <span className="text-[9px] font-bold text-slate-400 uppercase block">Tag Battery</span>
                   <span className="text-xs font-extrabold text-emerald-600 flex items-center justify-center gap-1">
                     <Battery className="w-3 h-3" /> 88%
                   </span>

@@ -9,7 +9,7 @@ export interface HardwareReader {
   model: string;
   ipAddress: string;
   port: number;
-  protocol: 'HTTP Push' | 'GAO TCP/IP' | 'LLRP (EPC Gen2)' | 'BLE Gateway' | 'WebSocket SSL' | 'MQTT Direct';
+  protocol: 'HTTP Push' | 'GAO TCP/IP' | 'LLRP (EPC Gen2)' | 'UHF Gateway' | 'WebSocket SSL' | 'MQTT Direct';
   powerDbm: number; // e.g. 30 dBm
   sensitivityDbm: number; // e.g. -70 dBm
   status: 'ONLINE' | 'SCANNING' | 'STANDBY' | 'OFFLINE';

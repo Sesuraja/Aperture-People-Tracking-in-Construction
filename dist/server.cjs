@@ -990,7 +990,7 @@ var DEFAULT_MAINTENANCE_NODES = [
   {
     id: "R-12",
     name: "Confined Shaft & Tunnel Anchor",
-    type: "BLE AoA Gateway",
+    type: "UHF Fixed Reader",
     location: "Sub-Basement Shaft B2 (Zone B)",
     zoneId: "zone-b",
     signal: 98,
@@ -1002,7 +1002,7 @@ var DEFAULT_MAINTENANCE_NODES = [
     nextServiceDue: "2026-10-28",
     temperatureC: 32.5,
     vibrationMmS: 0.4,
-    notes: "Monitors tunneling crew beacon tags"
+    notes: "Monitors tunneling crew RFID tags"
   },
   {
     id: "R-44",
@@ -1042,7 +1042,7 @@ var DEFAULT_MAINTENANCE_NODES = [
   {
     id: "R-19",
     name: "Scaffold Tower Alpha Gateway",
-    type: "BLE Mesh Repeater",
+    type: "UHF Portal Repeater",
     location: "Tower Alpha Floor 14",
     zoneId: "zone-c",
     signal: 78,
@@ -1142,7 +1142,7 @@ var DEFAULT_TECHNICIANS = [
   { id: "tech-1", name: "David Vance", role: "Senior RF & Hardware Specialist", status: "Available", phone: "+1 (555) 234-5678", specialization: "RFID / Antenna Tuning / Gate Portals", activeWorkOrders: 1 },
   { id: "tech-2", name: "Elena Rostova", role: "Field Electronics Technician", status: "On-site Repair", phone: "+1 (555) 876-5432", specialization: "Batteries / Solar Power / IoT Nodes", activeWorkOrders: 1 },
   { id: "tech-3", name: "Marcus Brody", role: "Vision & Systems Specialist", status: "Available", phone: "+1 (555) 345-6789", specialization: "AI Cameras / Optical Sensors / Network", activeWorkOrders: 1 },
-  { id: "tech-4", name: "Aisha Patel", role: "Telemetry & Safety Engineer", status: "In Transit", phone: "+1 (555) 987-6543", specialization: "Gas Sensors / BLE Anchors / Confined Space", activeWorkOrders: 0 }
+  { id: "tech-4", name: "Aisha Patel", role: "Telemetry & Safety Engineer", status: "In Transit", phone: "+1 (555) 987-6543", specialization: "Gas Sensors / UHF Portals / Confined Space", activeWorkOrders: 0 }
 ];
 var DEFAULT_SCHEDULES = [
   { id: "SCH-01", title: "Monthly Antenna Signal Sweep & Impedance Check", targetNodeCategory: "UHF RFID Reader", frequencyDays: 30, lastRun: "2026-07-10", nextRun: "2026-08-10", assignedTech: "David Vance", active: true },
@@ -1535,7 +1535,7 @@ var DEFAULT_DEVICES = [
     id: "DEV-03",
     name: "Tower Core Structure L1 Access Portal",
     category: "rfid",
-    type: "UHF Fixed Reader + BLE Anchor",
+    type: "UHF Fixed Portal Reader",
     location: "Tower Core Elevator Lobby",
     zoneId: "Tower Core Structure",
     status: "online",
@@ -1583,9 +1583,9 @@ var DEFAULT_DEVICES = [
   },
   {
     id: "DEV-05",
-    name: "High Voltage Switchgear BLE Mesh Repeater",
-    category: "ble",
-    type: "Intrinsically Safe BLE 5.2 Anchor",
+    name: "High Voltage Switchgear UHF Gateway Repeater",
+    category: "rfid",
+    type: "Intrinsically Safe UHF Gateway Repeater",
     location: "High Voltage Transformer Station",
     zoneId: "High Voltage Area",
     status: "online",
@@ -2932,7 +2932,7 @@ aiRouter.post("/analyze-telemetry", aiRateLimiter, async (req, res) => {
   }
   try {
     const ai = new import_genai.GoogleGenAI({ apiKey });
-    const aiPrompt = `You are an elite Enterprise Construction BI & Industrial IoT Safety Data Analyst specializing in RFID/BLE tracking, worker productivity, OSHA EHS compliance, and equipment fleet efficiency.
+    const aiPrompt = `You are an elite Enterprise Construction BI & Industrial IoT Safety Data Analyst specializing in UHF RFID personnel tracking, worker productivity, OSHA EHS compliance, and equipment fleet efficiency.
 Analyze the following telemetry and user inquiry:
 - User Question / Prompt: "${prompt || "Provide a general executive telemetry overview and actionable recommendations."}"
 - Time Frame: ${dateRange || "7d"}

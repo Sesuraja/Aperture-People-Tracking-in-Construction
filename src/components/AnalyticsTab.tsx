@@ -463,9 +463,9 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
 
   const readerHealthData = [
     { id: 'RDR-01', name: 'Main Gate Turnstile RFID Portal', type: 'Fixed UHF RFID 915MHz', uptimePct: 99.98 },
-    { id: 'GW-02', name: 'Tower Core Scaffold BLE Gateway', type: 'BLE 5.3 AoA Directional', uptimePct: 99.91 },
+    { id: 'GW-02', name: 'Tower Core Scaffold RFID Portal', type: 'UHF Fixed 4-Port Reader', uptimePct: 99.91 },
     { id: 'GPS-01', name: 'RTK GPS Base Station Alpha', type: 'GPS Differential RTK', uptimePct: 100.0 },
-    { id: 'GW-03', name: 'Sub-Basement B1 Trench Gateway', type: 'BLE Mesh Enclosure', uptimePct: 98.40 }
+    { id: 'GW-03', name: 'Sub-Basement B1 Trench Gateway', type: 'UHF Portal Enclosure', uptimePct: 98.40 }
   ];
 
   const zoneOccupancyData = [
@@ -1010,7 +1010,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
             <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
               <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
                 <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Radio size={16} className="text-emerald-500" /> RFID & BLE Gateway Network Health
+                  <Radio size={16} className="text-emerald-500" /> RFID Reader & Gateway Network Health
                 </CardTitle>
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Signal strength (RSSI), packet rates, and active ping diagnostics</p>
               </CardHeader>

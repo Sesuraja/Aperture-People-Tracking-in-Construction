@@ -527,8 +527,7 @@ export default function DevicesTab() {
     const logs: string[] = ['Initiating full site-wide hardware telemetry scan...', 'Checking Ethernet socket interfaces & IP connectivity...'];
     
     setTimeout(() => {
-      logs.push('Pinging 8 active gateway interfaces...');
-      logs.push('Verifying LoRaWAN & BLE mesh socket link noise floors...');
+      logs.push('Verifying LoRaWAN & RFID gateway socket link noise floors...');
       
       setTimeout(async () => {
         let issues = 0;
@@ -585,7 +584,7 @@ export default function DevicesTab() {
       case 'rfid':
         return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-[#007BC4] border border-blue-200"><Radio size={12} /> RFID Reader</span>;
       case 'ble':
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"><Wifi size={12} /> BLE Gateway</span>;
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"><Radio size={12} /> Fixed Gateway</span>;
       case 'gps':
         return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200"><Satellite size={12} /> GPS Base</span>;
       case 'iot':
@@ -936,7 +935,7 @@ export default function DevicesTab() {
               {[
                 { id: 'all', label: 'All Hardware' },
                 { id: 'rfid', label: 'RFID Readers' },
-                { id: 'ble', label: 'BLE Gateways' },
+                { id: 'ble', label: 'Fixed Gateways' },
                 { id: 'gps', label: 'GPS Base' },
                 { id: 'iot', label: 'IoT Sensors' },
                 { id: 'cctv', label: 'CCTV' },
@@ -1482,17 +1481,17 @@ export default function DevicesTab() {
                     <span className="text-xs font-mono font-bold text-rose-700">Area: ~34 m² Blindspot</span>
                   </div>
                   <p className="text-xs text-slate-600 dark:text-slate-300">
-                    High concrete density attenuates gateway GW-BLE53-03 signal. Workers entering B2 pit lose active beacon tracking for over 12 minutes.
+                    High concrete density attenuates gateway GW-RDR-03 signal. Workers entering B2 pit lose active tag tracking for over 12 minutes.
                   </p>
                   <div className="pt-2 border-t border-rose-200/60 dark:border-rose-900/40 flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
-                    <span>💡 Recommended Remedy: Install 1x BLE Mesh Repeater Gateway at Scaffold Joint #14</span>
+                    <span>💡 Recommended Remedy: Install 1x UHF Repeater Gateway at Scaffold Joint #14</span>
                     <button 
                       onClick={() => {
                         setEditForm({
-                          id: `GW-BLE-B2-${Math.floor(100 + Math.random() * 900)}`,
-                          name: 'Sub-Basement B2 Scaffold Mesh Gateway',
-                          category: 'ble',
-                          type: 'BLE Mesh Repeater',
+                          id: `GW-UHF-B2-${Math.floor(100 + Math.random() * 900)}`,
+                          name: 'Sub-Basement B2 Scaffold UHF Gateway',
+                          category: 'rfid',
+                          type: 'UHF Fixed Portal',
                           location: 'Sub-Basement B2 Pit',
                           ip: '192.168.10.125',
                           status: 'online',
@@ -1837,6 +1836,7 @@ export default function DevicesTab() {
                     </button>
                   )}
                 </div>
+                    <p className="text-xs text-slate-500">Deploy encrypted binary updates across all site RFID and IoT hardware into MongoDB</p>
               </div>
             )}
 
@@ -1848,7 +1848,7 @@ export default function DevicesTab() {
                     <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Device ID / MAC</label>
                     <input
                       type="text"
-                      placeholder="e.g. GW-BLE53-09"
+                      placeholder="e.g. GW-RDR-09"
                       value={editForm.id || ''}
                       disabled={actionModalType === 'edit'}
                       onChange={e => setEditForm({ ...editForm, id: e.target.value })}
@@ -1876,7 +1876,7 @@ export default function DevicesTab() {
                       className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
                     >
                       <option value="rfid">UHF RFID Reader</option>
-                      <option value="ble">BLE AoA Gateway</option>
+                      <option value="ble">Fixed RFID Gateway</option>
                       <option value="gps">GPS Base Station</option>
                       <option value="iot">IoT Environmental Sensor</option>
                       <option value="cctv">CCTV Camera</option>
@@ -1942,7 +1942,7 @@ export default function DevicesTab() {
                   <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Related Protocols</label>
                   <input
                     type="text"
-                    placeholder="e.g. MQTT, HTTP REST, LLRP, BLE 5.0"
+                    placeholder="e.g. MQTT, HTTP REST, LLRP, TCP/IP"
                     value={editForm.protocols || ''}
                     onChange={e => setEditForm({ ...editForm, protocols: e.target.value })}
                     className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"

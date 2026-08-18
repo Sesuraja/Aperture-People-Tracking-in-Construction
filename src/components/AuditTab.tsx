@@ -167,7 +167,7 @@ const DEFAULT_FRAMEWORKS: ComplianceFramework[] = [
       { id: 'REQ-101', code: '1926.150', description: 'Fire Protection & Evacuation Muster Tracking within 10 minutes', status: 'Pass', lastChecked: '2026-08-08', notes: 'Automated RFID muster active' },
       { id: 'REQ-102', code: '1926.20', description: 'General Safety & Medical First-Aid Certified Crew Roster', status: 'Pass', lastChecked: '2026-08-07', notes: 'First aid badge tags logged' },
       { id: 'REQ-103', code: '1926.500', description: 'Fall Protection Certification in Scaffold Tower Zone C', status: 'Pass', lastChecked: '2026-08-05', notes: 'Scaffold sensor anchors verified' },
-      { id: 'REQ-104', code: '1926.800', description: 'Underground Shaft & Tunneling Atmospheric & Personnel Log', status: 'In Progress', lastChecked: '2026-08-08', notes: 'Tunnel B2 BLE gateway calibration' }
+      { id: 'REQ-104', code: '1926.800', description: 'Underground Shaft & Tunneling Atmospheric & Personnel Log', status: 'In Progress', lastChecked: '2026-08-08', notes: 'Tunnel B2 UHF gateway calibration' }
     ]
   },
   {

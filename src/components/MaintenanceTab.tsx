@@ -90,7 +90,7 @@ const DEFAULT_NODES: MaintenanceNode[] = [
   {
     id: 'R-12',
     name: 'Confined Shaft & Tunnel Anchor',
-    type: 'BLE AoA Gateway',
+    type: 'UHF Fixed Reader',
     location: 'Sub-Basement Shaft B2 (Zone B)',
     zoneId: 'zone-b',
     signal: 98,
@@ -102,7 +102,7 @@ const DEFAULT_NODES: MaintenanceNode[] = [
     nextServiceDue: '2026-10-28',
     temperatureC: 32.5,
     vibrationMmS: 0.4,
-    notes: 'Monitors tunneling crew beacon tags'
+    notes: 'Monitors tunneling crew RFID tags'
   },
   {
     id: 'R-44',
@@ -142,7 +142,7 @@ const DEFAULT_NODES: MaintenanceNode[] = [
   {
     id: 'R-19',
     name: 'Scaffold Tower Alpha Gateway',
-    type: 'BLE Mesh Repeater',
+    type: 'UHF Portal Repeater',
     location: 'Tower Alpha Floor 14',
     zoneId: 'zone-c',
     signal: 78,
@@ -244,7 +244,7 @@ const DEFAULT_TECHNICIANS: Technician[] = [
   { id: 'tech-1', name: 'David Vance', role: 'Senior RF & Hardware Specialist', status: 'Available', phone: '+1 (555) 234-5678', specialization: 'RFID / Antenna Tuning / Gate Portals', activeWorkOrders: 1 },
   { id: 'tech-2', name: 'Elena Rostova', role: 'Field Electronics Technician', status: 'On-site Repair', phone: '+1 (555) 876-5432', specialization: 'Batteries / Solar Power / IoT Nodes', activeWorkOrders: 1 },
   { id: 'tech-3', name: 'Marcus Brody', role: 'Vision & Systems Specialist', status: 'Available', phone: '+1 (555) 345-6789', specialization: 'AI Cameras / Optical Sensors / Network', activeWorkOrders: 1 },
-  { id: 'tech-4', name: 'Aisha Patel', role: 'Telemetry & Safety Engineer', status: 'In Transit', phone: '+1 (555) 987-6543', specialization: 'Gas Sensors / BLE Anchors / Confined Space', activeWorkOrders: 0 }
+  { id: 'tech-4', name: 'Aisha Patel', role: 'Telemetry & Safety Engineer', status: 'In Transit', phone: '+1 (555) 987-6543', specialization: 'Gas Sensors / UHF Portals / Confined Space', activeWorkOrders: 0 }
 ];
 
 const DEFAULT_SCHEDULES: ScheduleRule[] = [

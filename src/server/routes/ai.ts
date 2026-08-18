@@ -663,7 +663,7 @@ aiRouter.post('/analyze-telemetry', aiRateLimiter, async (req: Request, res: Res
 
   try {
     const ai = new GoogleGenAI({ apiKey });
-    const aiPrompt = `You are an elite Enterprise Construction BI & Industrial IoT Safety Data Analyst specializing in RFID/BLE tracking, worker productivity, OSHA EHS compliance, and equipment fleet efficiency.
+    const aiPrompt = `You are an elite Enterprise Construction BI & Industrial IoT Safety Data Analyst specializing in UHF RFID personnel tracking, worker productivity, OSHA EHS compliance, and equipment fleet efficiency.
 Analyze the following telemetry and user inquiry:
 - User Question / Prompt: "${prompt || 'Provide a general executive telemetry overview and actionable recommendations.'}"
 - Time Frame: ${dateRange || '7d'}

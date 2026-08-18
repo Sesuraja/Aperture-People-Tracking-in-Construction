@@ -2205,43 +2205,7 @@ export default function DashboardTab({
             </button>
           </div>
         </div>
-      ) : (
-        <div id="gao_server_simulated_banner" className="bg-amber-50/70 border border-amber-200 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300">
-          <div className="absolute top-0 left-0 w-1.5 h-full bg-amber-500" />
-          <div className="flex items-start gap-4 flex-1">
-            <div className="p-3 bg-amber-50 rounded-xl border border-amber-100/60 shrink-0 text-amber-600">
-              <WifiOff className="w-5 h-5" />
-            </div>
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-slate-900 text-sm">Currently Running in Simulated Demo Mode</span>
-                <span className="bg-amber-50 text-amber-800 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase border border-amber-200">
-                  Offline Playground Dataset
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 font-medium leading-relaxed max-w-2xl">
-                The dashboard is currently running in simulated/mock mode. To connect your physical old server's API Key and display your real live production UHF employee tracking scans, switch to Real Connection Mode.
-              </p>
-              <div className="flex flex-wrap items-center gap-3 mt-2 font-semibold text-[11px] text-amber-700">
-                <span>✓ Isolated local tracking sweeps</span>
-                <span>•</span>
-                <span>✓ High-fidelity loitering models</span>
-                <span>•</span>
-                <span>✓ Simulated emergency hazards</span>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 mt-2 md:mt-0 shrink-0">
-            <button 
-              id="dashboard_sim_to_config_btn"
-              onClick={() => navigate('/settings', { state: { focusSection: 'apidocs' } })}
-              className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white px-4 py-2.5 rounded-lg text-xs font-bold border border-amber-500 shadow-sm transition-transform active:scale-95 duration-100 cursor-pointer"
-            >
-              Configure Aperture API Key <ArrowRight className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
+      ) : null}
 
       {/* Dynamic KPI Cards Row */}
       {sortedVisibleKpis.length > 0 ? (

@@ -764,7 +764,6 @@ Content-Type: application/json
                     <option value="HTTP Push">HTTP Push</option>
                     <option value="GAO TCP/IP">GAO TCP/IP</option>
                     <option value="LLRP (EPC Gen2)">LLRP (EPC Gen2)</option>
-                    <option value="BLE Gateway">BLE Gateway</option>
                   </select>
                 </div>
               </div>
