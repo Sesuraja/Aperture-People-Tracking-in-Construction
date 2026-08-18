@@ -1031,10 +1031,6 @@ export default function DevicesTab() {
                                 {device.category === 'rfid' && <Radio size={16} className="text-[#007BC4]" />}
                                 {device.category === 'ble' && <Wifi size={16} className="text-indigo-600" />}
                                 {device.category === 'gps' && <Satellite size={16} className="text-purple-600" />}
-                                {device.category === 'iot' && <Cpu size={16} className="text-emerald-600" />}
-                                {device.category === 'cctv' && <Video size={16} className="text-slate-600" />}
-                                {device.category === 'ai_camera' && <Eye size={16} className="text-amber-600" />}
-                                {device.category === 'weather' && <CloudSun size={16} className="text-cyan-600" />}
                                 {device.category === 'rfid_tag' && <Radio size={16} className="text-blue-600" />}
                               </div>
                               <div>
@@ -1850,11 +1846,6 @@ export default function DevicesTab() {
                     >
                       <option value="rfid">UHF RFID Reader</option>
                       <option value="ble">Fixed RFID Gateway</option>
-                      <option value="gps">GPS Base Station</option>
-                      <option value="iot">IoT Environmental Sensor</option>
-                      <option value="cctv">CCTV Camera</option>
-                      <option value="ai_camera">AI Vision Camera</option>
-                      <option value="weather">Weather Station</option>
                       <option value="rfid_tag">RFID Tag</option>
                     </select>
                   </div>

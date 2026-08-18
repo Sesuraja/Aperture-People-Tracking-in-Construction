@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
-  Map as MapIcon, Plus, Trash2, Edit3, Save, Upload, Sliders, Radio, 
+  Map as MapIcon, Plus, Trash2, Edit3, Save, Upload, Sliders, SlidersHorizontal, Radio, 
   Wrench, Truck, Camera, Thermometer, ShieldCheck, AlertTriangle, Box, Compass, RefreshCw, Check,
   Layers, MapPin, Eye, Settings, HelpCircle, HardHat, Building2, Layers3, History, FileCode,
   Sparkles, FileText, ChevronRight, RotateCw, Copy, ShieldAlert, ArrowRight, X, FolderPlus,
@@ -327,6 +327,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const mapRef = useRef<HTMLDivElement>(null);
+  const floorFileInputRef = useRef<HTMLInputElement>(null);
 
   // Dynamic Zone Occupancy & Alert Calculation Helper
   const calculateZoneMetrics = (zName: string, bounds: ZoneBounds) => {
@@ -815,8 +816,8 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
       console.warn('Geofence database save warning:', err);
     }
 
-    setCustomZones(prev => ({
-      ...prev,
+    const updatedZones: Record<string, ZoneBounds> = {
+      ...customZones,
       [geofenceForm.name]: {
         x, y, width, height,
         category: (geofenceForm.category || "").toUpperCase(),
@@ -825,13 +826,78 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         polygonPoints: drawnPoints,
         proximityAlertEnabled: geofenceForm.proximityAlertEnabled
       }
-    }));
+    };
+
+    setCustomZones(updatedZones);
+
+    if (trackingCtx?.saveCustomZones) {
+      trackingCtx.saveCustomZones(updatedZones, customFloorplan, customSvgSource).catch(() => {});
+    }
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+    window.dispatchEvent(new CustomEvent('gao_project_updated'));
 
     setIsSavingGeofenceModalOpen(false);
     setDrawnPoints([]);
     setDrawToolMode('select');
-    setSuccessMsg(`Geofence "${geofenceForm.name}" saved to database for proximity alerting!`);
+    setSuccessMsg(`Geofence "${geofenceForm.name}" saved and synchronized to Live Tracking map!`);
     setTimeout(() => setSuccessMsg(null), 4500);
+  };
+
+  const handleDeleteZone = async (zName: string) => {
+    const nextZones = { ...customZones };
+    delete nextZones[zName];
+    setCustomZones(nextZones);
+
+    const zoneId = `zone_${(zName || "").toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`;
+    try {
+      const authHeaders = getAuthHeaders();
+      await fetch(`/api/data/zones/${zoneId}`, { method: 'DELETE', headers: authHeaders });
+      await fetch(`/api/data/zones/${zName}`, { method: 'DELETE', headers: authHeaders });
+    } catch (err) {
+      console.warn('Zone deletion warning:', err);
+    }
+
+    if (trackingCtx?.saveCustomZones) {
+      trackingCtx.saveCustomZones(nextZones, customFloorplan, customSvgSource).catch(() => {});
+    }
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+    window.dispatchEvent(new CustomEvent('gao_project_updated'));
+    setSuccessMsg(`Zone "${zName}" removed and synchronized to Live Tracking!`);
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  const handleFloorMapUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    if (file.type === 'image/svg+xml' || file.name.endsWith('.svg')) {
+      reader.onload = (event) => {
+        const svgContent = event.target?.result as string;
+        setCustomSvgSource(svgContent);
+        setCustomFloorplan(null);
+        if (trackingCtx?.saveCustomZones) {
+          trackingCtx.saveCustomZones(customZones, null, svgContent).catch(() => {});
+        }
+        window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+        setSuccessMsg(`SVG Floor Map for ${currentFloor?.name || 'Floor'} uploaded and synchronized to Live Tracking!`);
+        setTimeout(() => setSuccessMsg(null), 3500);
+      };
+      reader.readAsText(file);
+    } else {
+      reader.onload = (event) => {
+        const imgDataUrl = event.target?.result as string;
+        setCustomFloorplan(imgDataUrl);
+        setCustomSvgSource(null);
+        if (trackingCtx?.saveCustomZones) {
+          trackingCtx.saveCustomZones(customZones, imgDataUrl, null).catch(() => {});
+        }
+        window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+        setSuccessMsg(`Floor Map Blueprint uploaded and synchronized to Live Tracking!`);
+        setTimeout(() => setSuccessMsg(null), 3500);
+      };
+      reader.readAsDataURL(file);
+    }
   };
 
   const handleSaveZonesFromEditor = async (
@@ -1171,14 +1237,23 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                 </div>
 
                 {Object.entries(customZones).map(([zName, bounds]: [string, any]) => (
-                  <div key={zName} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1">
+                  <div key={zName} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1.5 group">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{zName}</span>
-                      <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
-                        bounds.hazardLevel === 'critical' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'
-                      }`}>
-                        {bounds.hazardLevel || 'normal'}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
+                          bounds.hazardLevel === 'critical' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'
+                        }`}>
+                          {bounds.hazardLevel || 'normal'}
+                        </span>
+                        <button
+                          onClick={() => handleDeleteZone(zName)}
+                          className="p-1 text-slate-400 hover:text-rose-400 rounded-md hover:bg-rose-500/10 transition"
+                          title={`Delete zone ${zName}`}
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
                     </div>
                     <div className="text-[10px] text-slate-400 flex justify-between font-mono">
                       <span>{bounds.category || 'ZONE'}</span>
@@ -1273,65 +1348,124 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         {/* Center / Right Column: Live Interactive Vector Map Display */}
         <div className="lg:col-span-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 shadow-sm flex flex-col h-[720px] relative overflow-hidden">
           {/* Map Top Action Controls */}
-          <div className="flex items-center justify-between mb-3 flex-wrap gap-2 z-20">
-            <div>
-              <span className="text-xs font-bold text-[#007BC4] uppercase tracking-wider flex items-center gap-1.5">
-                <Layers size={14} /> Digital Twin Vector Map Canvas
-              </span>
-              <h3 className="text-sm font-bold text-slate-800 dark:text-white">
-                {currentSite.name} — {currentBuilding?.name} ({currentFloor?.name})
-              </h3>
-            </div>
-            
-            {/* Drawing Tool Controls Bar */}
-            <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 p-1.5 rounded-xl">
-              <button
-                onClick={() => { setDrawToolMode('select'); setDrawnPoints([]); }}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
-                  drawToolMode === 'select' ? 'bg-[#007BC4] text-white' : 'text-slate-300 hover:text-white'
-                }`}
-              >
-                <Compass size={12} /> Pan/Select
-              </button>
-              <button
-                onClick={() => { setDrawToolMode('polygon'); setDrawnPoints([]); }}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
-                  drawToolMode === 'polygon' ? 'bg-amber-500 text-slate-950 font-black' : 'text-amber-400 hover:text-amber-300'
-                }`}
-              >
-                <PenTool size={12} /> Draw Polygon
-              </button>
-              <button
-                onClick={() => { setDrawToolMode('rectangle'); setDrawnPoints([]); }}
-                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
-                  drawToolMode === 'rectangle' ? 'bg-amber-500 text-slate-950 font-black' : 'text-amber-400 hover:text-amber-300'
-                }`}
-              >
-                <Square size={12} /> Draw Box
-              </button>
+          <div className="flex flex-col gap-2.5 mb-3 z-20">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <span className="text-xs font-bold text-[#007BC4] uppercase tracking-wider flex items-center gap-1.5">
+                  <Layers size={14} /> Digital Twin Vector Map Canvas
+                </span>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-white">
+                  {currentSite.name} — {currentBuilding?.name} ({currentFloor?.name})
+                </h3>
+              </div>
 
-              {drawnPoints.length > 0 && (
-                <>
-                  <button
-                    onClick={() => setDrawnPoints(prev => prev.slice(0, -1))}
-                    className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold"
-                  >
-                    Undo Pt
-                  </button>
-                  <button
-                    onClick={() => setDrawnPoints([])}
-                    className="px-2 py-1 bg-rose-900/60 text-rose-300 rounded-lg text-[10px] font-bold hover:bg-rose-900"
-                  >
-                    Clear
-                  </button>
-                  <button
-                    onClick={() => setIsSavingGeofenceModalOpen(true)}
-                    className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black rounded-lg text-[10px] flex items-center gap-1 shadow animate-pulse"
-                  >
-                    <Save size={12} /> Save Geofence ({drawnPoints.length} pts)
-                  </button>
-                </>
-              )}
+              <div className="flex items-center gap-2">
+                <input 
+                  type="file" 
+                  ref={floorFileInputRef} 
+                  onChange={handleFloorMapUpload} 
+                  accept="image/*,.svg" 
+                  className="hidden" 
+                />
+                
+                <button
+                  onClick={() => floorFileInputRef.current?.click()}
+                  className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                  title="Upload custom CAD blueprint or floor map for this level"
+                >
+                  <Upload size={13} /> Upload Floor Map
+                </button>
+
+                <button
+                  onClick={() => setIsMapEditorOpen(true)}
+                  className="px-2.5 py-1.5 bg-slate-900 dark:bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                  title="Open visual zone positioning editor"
+                >
+                  <SlidersHorizontal size={13} /> Edit Layout & Zones
+                </button>
+              </div>
+            </div>
+
+            {/* Floor Navigation Pills Bar & Drawing Tool Controls */}
+            <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-slate-100 dark:border-slate-700/60">
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mr-1">Floor:</span>
+                {currentBuilding?.floors.map(floor => {
+                  const isSelected = selectedFloorId === floor.id;
+                  return (
+                    <button
+                      key={floor.id}
+                      onClick={() => {
+                        setSelectedFloorId(floor.id);
+                        const v = floor.versions.find(ver => ver.id === floor.activeVersionId) || floor.versions[0];
+                        if (v) {
+                          setCustomFloorplan(v.floorplanUrl || null);
+                          setCustomSvgSource(v.svgSource || null);
+                          if (v.zones) setCustomZones(v.zones);
+                        }
+                      }}
+                      className={`h-7 px-2.5 rounded-lg text-[10px] font-mono font-bold inline-flex items-center justify-center transition border shrink-0 ${
+                        isSelected
+                          ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm ring-2 ring-indigo-300'
+                          : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      {floor.name.split(' - ')[0] || `Level ${floor.levelNumber}`}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Drawing Tool Controls Bar */}
+              <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 p-1 rounded-xl">
+                <button
+                  onClick={() => { setDrawToolMode('select'); setDrawnPoints([]); }}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
+                    drawToolMode === 'select' ? 'bg-[#007BC4] text-white' : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  <Compass size={12} /> Pan/Select
+                </button>
+                <button
+                  onClick={() => { setDrawToolMode('polygon'); setDrawnPoints([]); }}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
+                    drawToolMode === 'polygon' ? 'bg-amber-500 text-slate-950 font-black' : 'text-amber-400 hover:text-amber-300'
+                  }`}
+                >
+                  <PenTool size={12} /> Draw Polygon
+                </button>
+                <button
+                  onClick={() => { setDrawToolMode('rectangle'); setDrawnPoints([]); }}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
+                    drawToolMode === 'rectangle' ? 'bg-amber-500 text-slate-950 font-black' : 'text-amber-400 hover:text-amber-300'
+                  }`}
+                >
+                  <Square size={12} /> Draw Box
+                </button>
+
+                {drawnPoints.length > 0 && (
+                  <>
+                    <button
+                      onClick={() => setDrawnPoints(prev => prev.slice(0, -1))}
+                      className="px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-[10px] font-bold"
+                    >
+                      Undo
+                    </button>
+                    <button
+                      onClick={() => setDrawnPoints([])}
+                      className="px-2 py-1 bg-rose-900/60 text-rose-300 rounded-lg text-[10px] font-bold hover:bg-rose-900"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={() => setIsSavingGeofenceModalOpen(true)}
+                      className="px-2.5 py-1 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-black rounded-lg text-[10px] flex items-center gap-1 shadow animate-pulse"
+                    >
+                      <Save size={12} /> Save ({drawnPoints.length} pts)
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
 
