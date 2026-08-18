@@ -853,16 +853,35 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
       const authHeaders = getAuthHeaders();
       await fetch(`/api/data/zones/${zoneId}`, { method: 'DELETE', headers: authHeaders });
       await fetch(`/api/data/zones/${zName}`, { method: 'DELETE', headers: authHeaders });
+      await fetch(`/api/data/geofences/${zoneId}`, { method: 'DELETE', headers: authHeaders });
+      await fetch(`/api/data/geofences/${zName}`, { method: 'DELETE', headers: authHeaders });
+
+      // Update map_configurations in MongoDB so the removed zone is completely purged
+      await fetch('/api/data/map_configurations', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          id: activeProject,
+          siteId: activeProject,
+          floorplanUrl: customFloorplan,
+          svgSource: customSvgSource,
+          zones: nextZones,
+          updatedAt: new Date().toISOString()
+        })
+      });
     } catch (err) {
       console.warn('Zone deletion warning:', err);
     }
 
+    if (trackingCtx?.deleteZone) {
+      trackingCtx.deleteZone(zoneId);
+    }
     if (trackingCtx?.saveCustomZones) {
       trackingCtx.saveCustomZones(nextZones, customFloorplan, customSvgSource).catch(() => {});
     }
     window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
     window.dispatchEvent(new CustomEvent('gao_project_updated'));
-    setSuccessMsg(`Zone "${zName}" removed and synchronized to Live Tracking!`);
+    setSuccessMsg(`Zone "${zName}" completely deleted from database & Live Tracking!`);
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
@@ -911,7 +930,20 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
     const authHeaders = getAuthHeaders();
     try {
-      // Save all zones to the database with permanent zoneIds
+      // 1. Delete removed zones from the database
+      const previousZoneNames = Object.keys(customZones);
+      const deletedZoneNames = previousZoneNames.filter(zName => !(zName in updatedZones));
+      for (const delName of deletedZoneNames) {
+        const delZoneId = `zone_${(delName || "").toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`;
+        await fetch(`/api/data/zones/${delZoneId}`, { method: 'DELETE', headers: authHeaders });
+        await fetch(`/api/data/zones/${delName}`, { method: 'DELETE', headers: authHeaders });
+        await fetch(`/api/data/geofences/${delZoneId}`, { method: 'DELETE', headers: authHeaders });
+        if (trackingCtx?.deleteZone) {
+          trackingCtx.deleteZone(delZoneId);
+        }
+      }
+
+      // 2. Save all current zones to the database with permanent zoneIds
       for (const [name, bounds] of Object.entries(updatedZones)) {
         const zoneId = `zone_${(name || "").toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`;
         await fetch('/api/data/zones', {
