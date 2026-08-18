@@ -32,6 +32,7 @@ __export(server_exports, {
   app: () => app
 });
 module.exports = __toCommonJS(server_exports);
+var import_dns2 = __toESM(require("dns"), 1);
 var import_dotenv2 = __toESM(require("dotenv"), 1);
 var import_express12 = __toESM(require("express"), 1);
 var import_http = __toESM(require("http"), 1);
@@ -41,10 +42,15 @@ var import_helmet = __toESM(require("helmet"), 1);
 var import_vite = require("vite");
 
 // src/server/services/db.ts
+var import_dns = __toESM(require("dns"), 1);
 var import_mongodb = require("mongodb");
 var import_dotenv = __toESM(require("dotenv"), 1);
 var import_fs = __toESM(require("fs"), 1);
 var import_path = __toESM(require("path"), 1);
+try {
+  import_dns.default.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
+} catch {
+}
 import_dotenv.default.config();
 var mongoClient = null;
 var mongoDb = null;
@@ -238,13 +244,33 @@ async function reconnectDatabase(newUriInput) {
     return { success: false, error: err.message || "Failed to reconnect to MongoDB" };
   }
 }
-async function getCollectionDocs(colName) {
+async function getCollectionDocs(colName, opts) {
   if (mongoDb) {
     try {
-      const docs = await mongoDb.collection(colName).find({}).toArray();
+      const DEFAULT_LIMITS = {
+        ai_insights: 500,
+        audit_logs: 1e3,
+        incidents: 2e3,
+        incidents_enterprise: 500,
+        rfid_realtime_events: 500,
+        tag_history: 500
+      };
+      const limit = opts?.limit ?? DEFAULT_LIMITS[colName] ?? 0;
+      const sort = opts?.sort ?? (DEFAULT_LIMITS[colName] ? { createdAt: -1 } : {});
+      let cursor = mongoDb.collection(colName).find({});
+      if (Object.keys(sort).length) cursor = cursor.sort(sort);
+      if (limit > 0) cursor = cursor.limit(limit);
+      const docs = await cursor.toArray();
       return docs.map((doc) => {
         const { _id, ...rest } = doc;
-        return { id: doc.id || (_id ? _id.toString() : void 0), ...rest };
+        const out = { id: doc.id || (_id ? _id.toString() : void 0), ...rest };
+        if (colName === "live_tags" || colName === "real_time_tags" || colName === "rfid_realtime_events") {
+          if (out.TagID !== void 0 && out.tagId !== void 0) {
+            out.TagID = out.TagID || out.tagId;
+            delete out.tagId;
+          }
+        }
+        return out;
       });
     } catch (err) {
       console.error(`[DB Service] Error fetching docs for ${colName}:`, err);
@@ -1717,14 +1743,40 @@ var DEFAULT_VEHICLES = [
 async function seedAllDemoData(force = false) {
   const result = {};
   const seedCollection = async (colName, defaultData) => {
-    const existing = await getCollectionDocs(colName);
-    if (force || existing.length === 0) {
-      for (const item of defaultData) {
-        await upsertDoc(colName, item);
+    let count = 0;
+    if (mongoDb) {
+      try {
+        count = await mongoDb.collection(colName).countDocuments({}, { limit: 1 });
+      } catch {
+        count = 0;
+      }
+    } else {
+      count = (inMemoryStore[colName] || []).length;
+    }
+    if (force || count === 0) {
+      if (mongoDb && defaultData.length > 0) {
+        try {
+          const ops = defaultData.map((item) => ({
+            updateOne: {
+              filter: { id: item.id || `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}` },
+              update: { $set: item },
+              upsert: true
+            }
+          }));
+          await mongoDb.collection(colName).bulkWrite(ops, { ordered: false });
+        } catch {
+          for (const item of defaultData) {
+            await upsertDoc(colName, item);
+          }
+        }
+      } else {
+        for (const item of defaultData) {
+          await upsertDoc(colName, item);
+        }
       }
       result[colName] = defaultData.length;
     } else {
-      result[colName] = existing.length;
+      result[colName] = count;
     }
   };
   try {
@@ -1902,11 +1954,6 @@ async function seedAllDemoData(force = false) {
   }
 }
 async function bootstrapMapAndZoneDefinitions() {
-  try {
-    await seedAllDemoData(false);
-  } catch (err) {
-    console.warn("[DB Service] Warning during map & zone bootstrapping:", err.message);
-  }
 }
 var cleanupTimer = null;
 function startRealTimeTagsCleanupJob(intervalMinutes = 15, maxAgeMinutes = 60) {
@@ -1919,7 +1966,7 @@ function startRealTimeTagsCleanupJob(intervalMinutes = 15, maxAgeMinutes = 60) {
 }
 
 // src/server/routes/connections.ts
-var import_express3 = require("express");
+var import_express2 = require("express");
 
 // src/server/services/connectionsService.ts
 function buildHeaders(config) {
@@ -1975,776 +2022,21 @@ async function deleteConnection(id) {
 // src/server/services/aiPipeline.ts
 var import_genai2 = require("@google/genai");
 
-// src/server/services/websocket.ts
-var import_ws = require("ws");
-var import_url = require("url");
-
-// src/server/routes/rfid.ts
+// src/server/routes/ai.ts
 var import_express = require("express");
 var import_zod = require("zod");
-var rfidRouter = (0, import_express.Router)();
-function formatUtcDateTime(dateInput) {
-  const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
-  if (isNaN(d.getTime())) {
-    const now = /* @__PURE__ */ new Date();
-    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")} ${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}:${String(now.getUTCSeconds()).padStart(2, "0")}`;
-  }
-  const YYYY = d.getUTCFullYear();
-  const MM = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const DD = String(d.getUTCDate()).padStart(2, "0");
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  const ss = String(d.getUTCSeconds()).padStart(2, "0");
-  return `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}`;
-}
-function formatUtcTimestampMs(dateInput) {
-  const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
-  const base = formatUtcDateTime(d);
-  const fff = String(isNaN(d.getTime()) ? 0 : d.getUTCMilliseconds()).padStart(3, "0");
-  return `${base}.${fff}`;
-}
-var scanSchema = import_zod.z.object({
-  tagId: import_zod.z.string().optional(),
-  TagID: import_zod.z.string().optional(),
-  name: import_zod.z.string().optional(),
-  FirstName: import_zod.z.string().optional(),
-  LastName: import_zod.z.string().optional(),
-  role: import_zod.z.string().optional().default("General Staff"),
-  zone: import_zod.z.string().optional(),
-  LocationName: import_zod.z.string().optional(),
-  Location: import_zod.z.string().optional(),
-  status: import_zod.z.string().optional().default("Active"),
-  epc: import_zod.z.string().optional(),
-  rssi: import_zod.z.number().optional().default(-62),
-  antennaId: import_zod.z.number().optional().default(1),
-  readerId: import_zod.z.string().optional().default("GAO-UHF-READER-01")
-});
-function getDefaultHistoryRecords() {
-  const now = /* @__PURE__ */ new Date();
-  const h1Enter = new Date(now.getTime() - 36e5 * 2);
-  const h1Leave = new Date(now.getTime() - 36e5 * 1.5);
-  const h2Enter = new Date(now.getTime() - 36e5 * 5);
-  const h2Leave = new Date(now.getTime() - 36e5 * 3.5);
-  const h3Enter = new Date(now.getTime() - 36e5 * 24);
-  const h3Leave = new Date(now.getTime() - 36e5 * 22);
-  return [
-    {
-      TagID: "E28011606000020788842D31",
-      FirstName: "John",
-      LastName: "Smith",
-      LocationName: "d6",
-      EnterTime: formatUtcDateTime(h1Enter),
-      LeaveTime: formatUtcDateTime(h1Leave),
-      EnterTimeStr: formatUtcDateTime(h1Enter),
-      LeaveTimeStr: formatUtcDateTime(h1Leave),
-      Duration: 0.5
-    },
-    {
-      TagID: "E28011606000020788842D31",
-      FirstName: "Jack",
-      LastName: "Wince",
-      LocationName: "d8",
-      EnterTime: formatUtcDateTime(h2Enter),
-      LeaveTime: formatUtcDateTime(h2Leave),
-      EnterTimeStr: formatUtcDateTime(h2Enter),
-      LeaveTimeStr: formatUtcDateTime(h2Leave),
-      Duration: 1.5
-    },
-    {
-      TagID: "E28011606000020788842D32",
-      FirstName: "Marcus",
-      LastName: "Vance",
-      LocationName: "Zone1",
-      EnterTime: formatUtcDateTime(h3Enter),
-      LeaveTime: formatUtcDateTime(h3Leave),
-      EnterTimeStr: formatUtcDateTime(h3Enter),
-      LeaveTimeStr: formatUtcDateTime(h3Leave),
-      Duration: 2
-    }
-  ];
-}
-function getDefaultRealtimeTags() {
-  const now = Date.now();
-  return [
-    {
-      TagID: "E28011606000020788842D31",
-      Timestamp: formatUtcTimestampMs(now),
-      Location: "Zone1"
-    },
-    {
-      TagID: "E28011606000020788842D31",
-      Timestamp: formatUtcTimestampMs(now - 1125),
-      Location: "Zone1"
-    },
-    {
-      TagID: "E28011606000020788842D31",
-      Timestamp: formatUtcTimestampMs(now - 2297),
-      Location: "Zone1"
-    },
-    {
-      TagID: "E28011606000020788842D32",
-      Timestamp: formatUtcTimestampMs(now - 3450),
-      Location: "Zone2"
-    }
-  ];
-}
-var handleGetTotalCount = async (req, res) => {
-  try {
-    const isDemo = req.query.demo === "true" || req.headers["x-demo-mode"] === "true";
-    const history = await getCollectionDocs("tag_history");
-    let total = history.length;
-    if (total === 0 && isDemo) {
-      total = getDefaultHistoryRecords().length;
-    }
-    if (req.query.format === "object") {
-      return res.json({ totalCount: total, count: total });
-    }
-    res.setHeader("Content-Type", "application/json");
-    return res.status(200).send(String(total));
-  } catch (err) {
-    console.error("[RFID Route] History count error:", err);
-    return res.status(500).json({ error: "Failed to fetch history count" });
-  }
-};
-rfidRouter.get("/GetHistoryTotalCount", handleGetTotalCount);
-rfidRouter.get("/history/count", handleGetTotalCount);
-var handleGetHistory = async (req, res) => {
-  const skipCount = parseInt(req.params.SkipCount || req.params.skip || req.query.skip || "0", 10);
-  const rawTake = parseInt(req.params.TakeCount || req.params.take || req.query.take || "50", 10);
-  const takeCount = Math.min(Math.max(1, rawTake), 200);
-  const isDemo = req.query.demo === "true" || req.headers["x-demo-mode"] === "true";
-  try {
-    const dbHistory = await getCollectionDocs("tag_history");
-    let records = dbHistory;
-    if (records.length === 0 && isDemo) {
-      records = getDefaultHistoryRecords();
-    }
-    const formattedRecords = records.map((item) => {
-      const enter = item.EnterTime || item.EnterTimeStr || item.enterTime || item.timestamp || item.createdTime || (/* @__PURE__ */ new Date()).toISOString();
-      const leave = item.LeaveTime || item.LeaveTimeStr || item.leaveTime || (/* @__PURE__ */ new Date()).toISOString();
-      const enterDate = new Date(enter);
-      const leaveDate = new Date(leave);
-      const diffMs = Math.max(0, leaveDate.getTime() - enterDate.getTime());
-      const durationHours = item.Duration !== void 0 ? Number(item.Duration) : Math.round(diffMs / 36e5 * 10) / 10;
-      const firstName = item.FirstName || item.firstName || (item.name ? item.name.split(" ")[0] : "Staff");
-      const lastName = item.LastName || item.lastName || (item.name ? item.name.split(" ").slice(1).join(" ") : "User");
-      const enterStr = formatUtcDateTime(enterDate);
-      const leaveStr = formatUtcDateTime(leaveDate);
-      return {
-        TagID: item.TagID || item.tagId || item.epc || "E28011606000020788842D31",
-        FirstName: firstName,
-        LastName: lastName,
-        LocationName: item.LocationName || item.locationName || item.zone || item.Location || "Zone1",
-        EnterTime: enterStr,
-        LeaveTime: leaveStr,
-        EnterTimeStr: enterStr,
-        LeaveTimeStr: leaveStr,
-        Duration: durationHours
-      };
-    });
-    formattedRecords.sort((a, b) => new Date(b.EnterTime).getTime() - new Date(a.EnterTime).getTime());
-    const paginated = formattedRecords.slice(skipCount, skipCount + takeCount);
-    return res.json(paginated);
-  } catch (err) {
-    console.error("[RFID Route] GetHistoryRecords error:", err);
-    return res.status(500).json({ error: "Failed to fetch history records" });
-  }
-};
-rfidRouter.get("/GetHistoryRecords/:SkipCount/:TakeCount", handleGetHistory);
-rfidRouter.get("/GetHistoryRecords/:skip/:take", handleGetHistory);
-rfidRouter.get("/GetHistoryRecords", handleGetHistory);
-rfidRouter.get("/history", handleGetHistory);
-var handleGetRealtime = async (req, res) => {
-  const isDemo = req.query.demo === "true" || req.headers["x-demo-mode"] === "true";
-  try {
-    const liveTags = await getCollectionDocs("live_tags");
-    let tagsToProcess = liveTags;
-    if (tagsToProcess.length === 0 && isDemo) {
-      tagsToProcess = getDefaultRealtimeTags();
-    }
-    const formattedTags = tagsToProcess.map((item) => {
-      const ts = item.Timestamp || item.timestamp || item.lastSeen || (/* @__PURE__ */ new Date()).toISOString();
-      return {
-        TagID: item.TagID || item.tagId || item.epc || "E28011606000020788842D31",
-        Timestamp: formatUtcTimestampMs(ts),
-        Location: item.Location || item.location || item.LocationName || item.zone || "Zone1",
-        LocationName: item.LocationName || item.Location || item.zone || "Zone1",
-        personName: item.personName || item.name || "",
-        personId: item.personId || null,
-        zoneId: item.zoneId || null,
-        zoneName: item.zoneName || item.Location || "Zone1",
-        x: item.x,
-        y: item.y,
-        rssi: item.rssi,
-        readerId: item.readerId,
-        antennaId: item.antennaId
-      };
-    });
-    formattedTags.sort((a, b) => new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime());
-    return res.json(formattedTags);
-  } catch (err) {
-    console.error("[RFID Route] GetTagsInRealtime error:", err);
-    return res.status(500).json({ error: "Failed to fetch realtime tags" });
-  }
-};
-rfidRouter.get("/GetTagsInRealtime", handleGetRealtime);
-rfidRouter.get("/realtime", handleGetRealtime);
-function requireDeviceApiKey(req, res, next) {
-  const configuredKey = process.env.GAO_DEVICE_API_KEY || process.env.RFID_READER_API_KEY || process.env.APERTURE_RFID_API_KEY;
-  if (!configuredKey) {
-    return next();
-  }
-  const providedKey = req.headers["x-gao-api-key"] || req.headers["x-api-key"] || req.headers["authorization"]?.replace(/^Bearer\s+/i, "") || req.query.apiKey || req.query.key;
-  if (providedKey === configuredKey) {
-    return next();
-  }
-  return res.status(401).json({
-    error: "Unauthorized: Invalid or missing RFID Device API Key (X-GAO-API-Key header required)"
-  });
-}
-rfidRouter.post("/scan", requireDeviceApiKey, async (req, res) => {
-  const parseResult = scanSchema.safeParse(req.body);
-  if (!parseResult.success) {
-    return res.status(400).json({
-      error: "Invalid RFID scan payload",
-      details: parseResult.error.issues
-    });
-  }
-  const data = parseResult.data;
-  const tagId = data.TagID || data.tagId || data.epc || `TAG_${Date.now()}`;
-  const location = data.Location || data.LocationName || data.zone || "Zone1";
-  const firstName = data.FirstName || (data.name ? data.name.split(" ")[0] : "Staff");
-  const lastName = data.LastName || (data.name ? data.name.split(" ").slice(1).join(" ") : "Member");
-  const now = /* @__PURE__ */ new Date();
-  const timestampIso = now.toISOString();
-  const utcDateTimeStr = formatUtcDateTime(now);
-  const utcTimestampMsStr = formatUtcTimestampMs(now);
-  try {
-    const scanPayload = {
-      TagID: tagId,
-      Location: location,
-      FirstName: firstName,
-      LastName: lastName,
-      role: data.role,
-      status: data.status,
-      rssi: data.rssi,
-      readerId: data.readerId
-    };
-    const aiResult = await processTelemetryWithAI(scanPayload, "HTTP API Scan");
-    await logAuditEvent({
-      action: "RFID_SCAN_EVENT",
-      resource: "rfid",
-      details: { TagID: tagId, worker: `${firstName} ${lastName}`, Location: location },
-      ip: req.ip
-    });
-    return res.json({
-      message: "Scan recorded and analyzed by AI Engine successfully",
-      scanRecord: aiResult.analyzedResults[0]
-    });
-  } catch (err) {
-    console.error("[RFID Route] Scan post error:", err);
-    return res.status(500).json({ error: "Failed to record RFID scan" });
-  }
-});
-rfidRouter.post("/realtime-tags/bulk", requireDeviceApiKey, async (req, res) => {
-  try {
-    const rawTags = req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
-    if (!Array.isArray(rawTags) || rawTags.length === 0) {
-      return res.status(400).json({ error: "Array of tag records required in body" });
-    }
-    const aiResult = await processTelemetryWithAI(rawTags, "HTTP Bulk Stream");
-    return res.json({
-      success: true,
-      message: `Successfully processed AI analysis & bulk write of ${aiResult.processedCount} tags into MongoDB collections.`,
-      analyzedResults: aiResult.analyzedResults
-    });
-  } catch (err) {
-    console.error("[RFID Route] Bulk write error:", err);
-    return res.status(500).json({ error: "Failed to perform bulk write to real_time_tags" });
-  }
-});
-rfidRouter.post("/bulk-ingest", requireDeviceApiKey, async (req, res) => {
-  try {
-    const rawTags = req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
-    const aiResult = await processTelemetryWithAI(rawTags, "Bulk Ingest Stream");
-    return res.json({ success: true, processedCount: aiResult.processedCount, analyzedResults: aiResult.analyzedResults });
-  } catch (err) {
-    return res.status(500).json({ error: err.message || "Failed bulk ingest" });
-  }
-});
-rfidRouter.post("/realtime-tags/cleanup", requireDeviceApiKey, async (req, res) => {
-  try {
-    const maxAgeMinutes = Number(req.body?.maxAgeMinutes || req.query?.maxAgeMinutes || 60);
-    const result = await cleanupStaleRealTimeTags(maxAgeMinutes);
-    return res.json({
-      success: true,
-      message: `Successfully cleaned up ${result.cleanedCount} stale real-time tag documents older than ${maxAgeMinutes} minutes.`,
-      result
-    });
-  } catch (err) {
-    console.error("[RFID Route] Cleanup route error:", err);
-    return res.status(500).json({ error: "Failed to execute stale real-time tags cleanup" });
-  }
-});
+var import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
+var import_genai = require("@google/genai");
 
 // src/server/services/websocket.ts
-var clients = /* @__PURE__ */ new Set();
-var clientSessions = /* @__PURE__ */ new Map();
-var wssInstance = null;
-var syntheticEngineInterval = null;
-var SYNTHETIC_PEOPLE = [
-  { tagId: "E28011606000020788842D31", firstName: "Carlos", lastName: "Mendez", role: "Safety Engineer" },
-  { tagId: "E28011606000020788842D32", firstName: "Sarah", lastName: "Connor", role: "Site Supervisor" },
-  { tagId: "E28011606000020788842D33", firstName: "David", lastName: "Miller", role: "Rigging Specialist" },
-  { tagId: "E28011606000020788842D34", firstName: "Elena", lastName: "Rostova", role: "EHS Officer" },
-  { tagId: "E28011606000020788842D35", firstName: "Marcus", lastName: "Vance", role: "Crane Operator" },
-  { tagId: "E28011606000020788842D36", firstName: "Liam", lastName: "O'Connor", role: "Electrical Lead" }
-];
-var SYNTHETIC_ZONES = [
-  "Gate 1 Turnstile",
-  "Main Fabrication Workshop",
-  "Scaffolding Tier 3",
-  "Heavy Crane Exclusion Zone",
-  "Confined Shaft A",
-  "Assembly Deck B"
-];
-function extractApiKeyFromReq(req) {
-  try {
-    const host = req.headers.host || "localhost";
-    const parsedUrl = new import_url.URL(req.url || "/ws", `http://${host}`);
-    const queryKey = parsedUrl.searchParams.get("apiKey") || parsedUrl.searchParams.get("api_key") || parsedUrl.searchParams.get("key") || parsedUrl.searchParams.get("token");
-    if (queryKey && queryKey.trim()) {
-      return queryKey.trim();
-    }
-    const authHeader = req.headers["authorization"] || req.headers["x-api-key"];
-    if (authHeader) {
-      const authStr = Array.isArray(authHeader) ? authHeader[0] : authHeader;
-      if (authStr.startsWith("Bearer ")) return authStr.slice(7).trim();
-      return authStr.trim();
-    }
-    const secProtocol = req.headers["sec-websocket-protocol"];
-    if (secProtocol) {
-      const protoStr = Array.isArray(secProtocol) ? secProtocol[0] : secProtocol;
-      const parts = protoStr.split(",").map((s) => s.trim());
-      for (const p of parts) {
-        if (p.startsWith("key_") || p.startsWith("aperture_") || p.length >= 8) {
-          return p;
-        }
-      }
-    }
-  } catch (e) {
-  }
-  return "aperture_live_key_gao991283x";
-}
-function initWebSocketServer(server) {
-  const wss = new import_ws.WebSocketServer({
-    noServer: true,
-    handleProtocols: (protocols) => {
-      const firstProto = Array.from(protocols)[0];
-      return firstProto || false;
-    }
-  });
-  wssInstance = wss;
-  console.log("[WebSocket Service] Server initialized with multi-path upgrade & multi-API key support");
-  server.on("upgrade", (request, socket, head) => {
-    const urlStr = request.url || "";
-    const pathname = urlStr.split("?")[0];
-    const isValidWsRoute = pathname === "/ws" || pathname.startsWith("/ws/") || pathname.includes("/ws") || pathname.includes("/realtime") || pathname.includes("/socket");
-    if (isValidWsRoute) {
-      wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit("connection", ws, request);
-      });
-    } else {
-    }
-  });
-  wss.on("connection", (ws, req) => {
-    clients.add(ws);
-    const ip = req.socket.remoteAddress || "unknown";
-    const extractedApiKey = extractApiKeyFromReq(req);
-    const sessionId = `ws_sess_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const requestPath = (req.url || "/ws").split("?")[0];
-    const session = {
-      id: sessionId,
-      apiKey: extractedApiKey,
-      connectedAt: formatUtcDateTime(),
-      clientIp: ip,
-      syntheticEnabled: false,
-      lastPing: Date.now(),
-      path: requestPath
-    };
-    clientSessions.set(ws, session);
-    console.log(`[WebSocket] Client connected [Session: ${sessionId}] API Key: "${extractedApiKey}" Path: ${requestPath}. Active: ${clients.size}`);
-    sendToClient(ws, {
-      type: "connection_established",
-      payload: {
-        status: "connected",
-        sessionId,
-        apiKey: extractedApiKey,
-        path: requestPath,
-        mode: "REAL_RFID_STREAM",
-        serverTime: formatUtcDateTime(),
-        activeConnections: clients.size,
-        message: `GAO RFID Real-Time WebSocket Server active. API Key [${extractedApiKey}] verified.`
-      }
-    });
-    ws.on("message", async (data) => {
-      try {
-        session.lastPing = Date.now();
-        const rawString = data.toString();
-        let message;
-        try {
-          message = JSON.parse(rawString);
-        } catch {
-          message = parseRawMessageFallback(rawString);
-        }
-        if (message.apiKey || message.payload?.apiKey) {
-          session.apiKey = message.apiKey || message.payload?.apiKey;
-        }
-        await handleIncomingWSMessage(ws, message, session);
-      } catch (err) {
-        console.error("[WebSocket] Error processing message:", err.message);
-        sendToClient(ws, {
-          type: "error_ack",
-          payload: { message: "Message processed with default parameters", error: err.message }
-        });
-      }
-    });
-    ws.on("close", (code, reason) => {
-      clients.delete(ws);
-      clientSessions.delete(ws);
-      console.log(`[WebSocket] Client disconnected [Session: ${sessionId}] (Code: ${code}). Remaining: ${clients.size}`);
-    });
-    ws.on("error", (err) => {
-      console.error(`[WebSocket] Socket error [Session: ${sessionId}]:`, err.message);
-      clients.delete(ws);
-      clientSessions.delete(ws);
-    });
-  });
-  const heartbeatInterval = setInterval(() => {
-    for (const ws of clients) {
-      if (ws.readyState === import_ws.WebSocket.OPEN) {
-        try {
-          ws.ping();
-        } catch {
-          clients.delete(ws);
-          clientSessions.delete(ws);
-        }
-      } else {
-        clients.delete(ws);
-        clientSessions.delete(ws);
-      }
-    }
-  }, 15e3);
-  startSyntheticDataEngine();
-  wss.on("close", () => {
-    clearInterval(heartbeatInterval);
-    if (syntheticEngineInterval) clearInterval(syntheticEngineInterval);
-  });
-  return wss;
-}
-function parseRawMessageFallback(raw) {
-  const trimmed = raw.trim();
-  if (trimmed.toUpperCase() === "PING") {
-    return { type: "ping" };
-  }
-  if (trimmed.includes("=")) {
-    const params = new URLSearchParams(trimmed);
-    return {
-      type: "report_tag_scan",
-      TagID: params.get("TagID") || params.get("tagId") || void 0,
-      Location: params.get("Location") || params.get("location") || void 0,
-      payload: Object.fromEntries(params.entries())
-    };
-  }
-  return {
-    type: "raw_text",
-    payload: { rawText: trimmed }
-  };
-}
-function startSyntheticDataEngine() {
-  if (syntheticEngineInterval) return;
-  console.log("[Synthetic Engine] Background RFID Synthetic Data Engine started.");
-  syntheticEngineInterval = setInterval(async () => {
-    if (clients.size === 0) return;
-    const hasSyntheticSubscribers = Array.from(clientSessions.values()).some((s) => s.syntheticEnabled);
-    if (!hasSyntheticSubscribers) return;
-    try {
-      const person = SYNTHETIC_PEOPLE[Math.floor(Math.random() * SYNTHETIC_PEOPLE.length)];
-      const zone = SYNTHETIC_ZONES[Math.floor(Math.random() * SYNTHETIC_ZONES.length)];
-      const rssi = Math.floor(Math.random() * (-55 - -88 + 1)) + -88;
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      const timestampMs = formatUtcTimestampMs(nowIso);
-      const syntheticPayload = {
-        TagID: person.tagId,
-        FirstName: person.firstName,
-        LastName: person.lastName,
-        Location: zone,
-        LocationName: zone,
-        Timestamp: timestampMs,
-        rssi,
-        readerId: `GAO_UHF_READER_Z${zone.replace(/[^0-9]/g, "") || "1"}`,
-        antennaId: Math.floor(Math.random() * 4) + 1,
-        sourceProtocol: "Synthetic Generator Engine"
-      };
-      const aiResult = await processTelemetryWithAI(syntheticPayload, "Synthetic Engine Stream");
-      const syntheticFrame = {
-        type: "synthetic_rfid_scan",
-        source: "Synthetic Data Engine",
-        payload: {
-          ...syntheticPayload,
-          aiAnalysis: aiResult.analyzedResults[0] || null
-        },
-        timestamp: formatUtcDateTime()
-      };
-      for (const [ws, session] of clientSessions.entries()) {
-        if (ws.readyState === import_ws.WebSocket.OPEN && session.syntheticEnabled) {
-          try {
-            ws.send(JSON.stringify({
-              ...syntheticFrame,
-              apiKey: session.apiKey
-            }));
-          } catch {
-          }
-        }
-      }
-    } catch (err) {
-      console.warn("[Synthetic Engine] Frame generation issue:", err.message);
-    }
-  }, 4500);
-}
-function sendToClient(ws, msg) {
-  if (ws.readyState === import_ws.WebSocket.OPEN) {
-    ws.send(JSON.stringify({ ...msg, timestamp: msg.timestamp || formatUtcDateTime() }));
-  }
-}
-async function handleIncomingWSMessage(ws, msg, session) {
-  const typeLower = (msg.type || "").toLowerCase();
-  switch (typeLower) {
-    case "ping":
-      sendToClient(ws, { type: "pong", payload: { time: Date.now(), apiKey: session.apiKey } });
-      break;
-    case "auth":
-    case "authenticate":
-    case "set_api_key": {
-      const newKey = msg.apiKey || msg.payload?.apiKey || msg.payload?.key || session.apiKey;
-      session.apiKey = newKey;
-      sendToClient(ws, {
-        type: "auth_success",
-        payload: {
-          status: "authenticated",
-          apiKey: newKey,
-          sessionId: session.id,
-          message: `WebSocket session re-authenticated with API Key: ${newKey}`
-        }
-      });
-      break;
-    }
-    case "get_session":
-    case "get_session_info":
-      sendToClient(ws, {
-        type: "session_info_response",
-        payload: {
-          session,
-          activeConnections: clients.size,
-          serverTime: formatUtcDateTime()
-        }
-      });
-      break;
-    case "enable_demo_mode":
-    case "enable_synthetic": {
-      session.syntheticEnabled = true;
-      sendToClient(ws, {
-        type: "mode_changed",
-        payload: { mode: "demo", syntheticEnabled: true, message: "Switched to Demo Mode (Synthetic RFID Stream Active)" }
-      });
-      break;
-    }
-    case "disable_demo_mode":
-    case "disable_synthetic": {
-      session.syntheticEnabled = false;
-      sendToClient(ws, {
-        type: "mode_changed",
-        payload: { mode: "real", syntheticEnabled: false, message: "Switched to Real API Mode (Live RFID Hardware Stream)" }
-      });
-      break;
-    }
-    case "set_mode": {
-      const isDemo = msg.payload?.mode === "demo" || msg.payload?.isDemo === true;
-      session.syntheticEnabled = isDemo;
-      sendToClient(ws, {
-        type: "mode_changed",
-        payload: { mode: isDemo ? "demo" : "real", syntheticEnabled: isDemo }
-      });
-      break;
-    }
-    case "toggle_synthetic":
-    case "toggle_synthetic_data": {
-      const newState = msg.payload?.enabled !== void 0 ? Boolean(msg.payload.enabled) : !session.syntheticEnabled;
-      session.syntheticEnabled = newState;
-      sendToClient(ws, {
-        type: "synthetic_toggle_response",
-        payload: {
-          syntheticEnabled: session.syntheticEnabled,
-          message: `Synthetic RFID telemetry stream ${session.syntheticEnabled ? "ENABLED" : "DISABLED"}`
-        }
-      });
-      break;
-    }
-    case "get_synthetic_data":
-    case "fetch_synthetic_data": {
-      const syntheticBatch = SYNTHETIC_PEOPLE.slice(0, 4).map((p, idx) => ({
-        TagID: p.tagId,
-        FirstName: p.firstName,
-        LastName: p.lastName,
-        Location: SYNTHETIC_ZONES[idx % SYNTHETIC_ZONES.length],
-        Timestamp: formatUtcTimestampMs(/* @__PURE__ */ new Date()),
-        rssi: -65 - idx * 5,
-        source: "Synthetic Data Generator"
-      }));
-      sendToClient(ws, {
-        type: "get_synthetic_data_response",
-        payload: syntheticBatch,
-        apiKey: session.apiKey
-      });
-      break;
-    }
-    case "subscribe":
-      sendToClient(ws, { type: "subscribed", payload: { channel: msg.payload?.channel || "all", apiKey: session.apiKey } });
-      break;
-    case "gettagsinrealtime":
-    case "get_realtime_tags":
-    case "get_tags_in_realtime": {
-      const liveTags = await getCollectionDocs("live_tags");
-      const formatted = liveTags.map((item) => ({
-        TagID: item.TagID || item.tagId || item.epc || "E28011606000020788842D31",
-        Timestamp: formatUtcTimestampMs(item.Timestamp || item.timestamp || item.lastSeen),
-        Location: item.Location || item.location || item.LocationName || item.zone || "Zone1"
-      })).sort((a, b) => new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime());
-      sendToClient(ws, {
-        type: "GetTagsInRealtime_response",
-        payload: formatted,
-        apiKey: session.apiKey
-      });
-      break;
-    }
-    case "gethistoryrecords":
-    case "get_history_records":
-    case "get_history": {
-      const skipCount = Number(msg.payload?.SkipCount || 0);
-      const takeCount = Math.min(Number(msg.payload?.TakeCount || 50), 200);
-      const history = await getCollectionDocs("tag_history");
-      const formatted = history.map((item) => {
-        const enter = item.EnterTime || item.EnterTimeStr || item.timestamp || (/* @__PURE__ */ new Date()).toISOString();
-        const leave = item.LeaveTime || item.LeaveTimeStr || (/* @__PURE__ */ new Date()).toISOString();
-        const enterStr = formatUtcDateTime(enter);
-        const leaveStr = formatUtcDateTime(leave);
-        const diffMs = Math.max(0, new Date(leaveStr).getTime() - new Date(enterStr).getTime());
-        const duration = item.Duration !== void 0 ? item.Duration : Math.round(diffMs / 36e5 * 10) / 10;
-        return {
-          TagID: item.TagID || item.tagId || item.epc || "E28011606000020788842D31",
-          FirstName: item.FirstName || item.firstName || "John",
-          LastName: item.LastName || item.lastName || "Smith",
-          LocationName: item.LocationName || item.locationName || item.zone || "d6",
-          EnterTime: enterStr,
-          LeaveTime: leaveStr,
-          EnterTimeStr: enterStr,
-          LeaveTimeStr: leaveStr,
-          Duration: duration
-        };
-      }).sort((a, b) => new Date(b.EnterTime).getTime() - new Date(a.EnterTime).getTime()).slice(skipCount, skipCount + takeCount);
-      sendToClient(ws, {
-        type: "GetHistoryRecords_response",
-        payload: formatted,
-        apiKey: session.apiKey
-      });
-      break;
-    }
-    case "gethistorytotalcount":
-    case "get_history_total_count": {
-      const history = await getCollectionDocs("tag_history");
-      sendToClient(ws, {
-        type: "GetHistoryTotalCount_response",
-        payload: { totalCount: history.length, count: history.length },
-        apiKey: session.apiKey
-      });
-      break;
-    }
-    case "report_tag_scan":
-    case "tag_scan": {
-      const tagId = msg.TagID || msg.payload?.TagID || msg.payload?.tagId || "E28011606000020788842D31";
-      const location = msg.Location || msg.payload?.Location || msg.payload?.zone || "Zone1";
-      const firstName = msg.FirstName || msg.payload?.FirstName || "John";
-      const lastName = msg.LastName || msg.payload?.LastName || "Smith";
-      const utcTimestampMsStr = formatUtcTimestampMs(/* @__PURE__ */ new Date());
-      const scanPayload = {
-        TagID: tagId,
-        Timestamp: utcTimestampMsStr,
-        Location: location,
-        FirstName: firstName,
-        LastName: lastName,
-        apiKey: session.apiKey,
-        ...msg.payload
-      };
-      await processTelemetryWithAI(scanPayload, `WebSocket (${session.apiKey})`);
-      break;
-    }
-    case "acknowledge_alert":
-      broadcastWebSocketEvent("alert_acknowledged", msg.payload);
-      break;
-    case "trigger_safety_alert":
-      broadcastWebSocketEvent("safety_alert", msg.payload);
-      break;
-    case "tag_movement": {
-      if (msg.payload && (msg.payload.TagID || msg.payload.tagId)) {
-        await processTelemetryWithAI(msg.payload, `WebSocket (${session.apiKey})`);
-      } else {
-        broadcastWebSocketEvent("tag_update", msg.payload);
-      }
-      break;
-    }
-    default:
-      console.log(`[WebSocket] Received message type [${msg.type}] from API key "${session.apiKey}"`);
-      sendToClient(ws, {
-        type: "ack",
-        payload: { receivedType: msg.type, status: "processed", apiKey: session.apiKey }
-      });
-  }
-}
-function broadcastWebSocketEvent(type, payload) {
-  const messageString = JSON.stringify({
-    type,
-    payload,
-    timestamp: formatUtcDateTime()
-  });
-  for (const client of clients) {
-    if (client.readyState === import_ws.WebSocket.OPEN) {
-      try {
-        client.send(messageString);
-      } catch (err) {
-        console.error("[WebSocket] Failed to broadcast to client:", err.message);
-        clients.delete(client);
-        clientSessions.delete(client);
-      }
-    } else {
-      clients.delete(client);
-      clientSessions.delete(client);
-    }
-  }
+function broadcastWebSocketEvent(_type, _payload) {
 }
 function getWebSocketStats() {
-  const activeSessions = Array.from(clientSessions.values()).map((s) => ({
-    id: s.id,
-    apiKey: s.apiKey,
-    connectedAt: s.connectedAt,
-    clientIp: s.clientIp,
-    syntheticEnabled: s.syntheticEnabled,
-    path: s.path
-  }));
   return {
-    activeConnections: clients.size,
-    path: "/ws",
-    syntheticEngineActive: true,
-    sessions: activeSessions
+    connectedClients: 0,
+    totalConnectionsHandled: 0,
+    totalSessions: 0,
+    sessions: []
   };
 }
 
@@ -2788,237 +2080,6 @@ setInterval(() => {
     }
   }
 }, 15e3);
-
-// src/server/services/mqtt.ts
-var import_mqtt = __toESM(require("mqtt"), 1);
-var DEFAULT_BROKER = process.env.MQTT_BROKER_URL || "mqtt://broker.emqx.io:1883";
-var DEFAULT_CLIENT_ID = `gao_rfid_server_${Math.random().toString(16).substring(2, 8)}`;
-var DEFAULT_TOPICS = ["gao/rfid/scans", "gao/rfid/status", "aperture/tags", "people/tracking/#"];
-var mqttClient = null;
-var isConnected = false;
-var messageReceivedCount = 0;
-var messageSentCount = 0;
-var activeConfig = {
-  brokerUrl: DEFAULT_BROKER,
-  clientId: DEFAULT_CLIENT_ID,
-  topics: DEFAULT_TOPICS,
-  enabled: true,
-  lastConnectedAt: null,
-  lastError: null
-};
-async function getMqttConfig() {
-  try {
-    const doc = await getDocById("settings", "mqtt_config");
-    if (doc) {
-      activeConfig = {
-        brokerUrl: doc.brokerUrl || DEFAULT_BROKER,
-        clientId: doc.clientId || DEFAULT_CLIENT_ID,
-        username: doc.username || "",
-        password: doc.password || "",
-        topics: Array.isArray(doc.topics) && doc.topics.length > 0 ? doc.topics : DEFAULT_TOPICS,
-        enabled: doc.enabled !== void 0 ? doc.enabled : true,
-        lastConnectedAt: doc.lastConnectedAt || null,
-        lastError: doc.lastError || null
-      };
-    }
-  } catch (err) {
-    console.warn("[MQTT Service] Could not load stored config, using defaults:", err);
-  }
-  return activeConfig;
-}
-async function initMqttService() {
-  const config = await getMqttConfig();
-  if (mqttClient) {
-    try {
-      mqttClient.end(true);
-    } catch {
-    }
-    mqttClient = null;
-    isConnected = false;
-  }
-  if (!config.enabled) {
-    return getMqttStatus();
-  }
-  const clientId = config.clientId || `gao_rfid_${Math.random().toString(16).substring(2, 8)}`;
-  console.log(`[MQTT Service] Connecting to broker: ${config.brokerUrl} as ${clientId}`);
-  try {
-    mqttClient = import_mqtt.default.connect(config.brokerUrl, {
-      clientId,
-      username: config.username || void 0,
-      password: config.password || void 0,
-      keepalive: 30,
-      reconnectPeriod: 5e3,
-      connectTimeout: 1e4
-    });
-    mqttClient.on("connect", async () => {
-      isConnected = true;
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      activeConfig.lastConnectedAt = nowIso;
-      activeConfig.lastError = null;
-      console.log(`[MQTT Service] Connected successfully to ${config.brokerUrl}`);
-      await upsertDoc("settings", {
-        id: "mqtt_config",
-        ...activeConfig,
-        lastConnectedAt: nowIso,
-        lastError: null
-      });
-      if (config.topics && config.topics.length > 0) {
-        mqttClient?.subscribe(config.topics, (err) => {
-          if (err) {
-            console.error("[MQTT Service] Subscription error:", err);
-          } else {
-            console.log(`[MQTT Service] Subscribed to topics:`, config.topics);
-          }
-        });
-      }
-      const connPayload = {
-        status: "connected",
-        brokerUrl: config.brokerUrl,
-        clientId,
-        timestamp: nowIso
-      };
-      broadcastWebSocketEvent("mqtt_status", connPayload);
-      broadcastSseEvent("mqtt_status", connPayload);
-    });
-    mqttClient.on("message", async (topic, messageBuffer) => {
-      messageReceivedCount++;
-      const payloadString = messageBuffer.toString();
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      let parsedPayload = payloadString;
-      try {
-        parsedPayload = JSON.parse(payloadString);
-      } catch {
-        parsedPayload = { raw: payloadString };
-      }
-      console.log(`[MQTT Service] Message received on [${topic}]:`, payloadString.slice(0, 100));
-      const eventData = {
-        topic,
-        payload: parsedPayload,
-        receivedAt: nowIso
-      };
-      try {
-        await upsertDoc("mqtt_messages", {
-          id: `mqtt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-          topic,
-          payload: parsedPayload,
-          receivedAt: nowIso
-        });
-      } catch (e) {
-        console.warn("[MQTT Service] Failed to store message in DB:", e);
-      }
-      broadcastWebSocketEvent("mqtt_message", eventData);
-      broadcastSseEvent("mqtt_message", eventData);
-      if (parsedPayload && (parsedPayload.TagID || parsedPayload.tagId || parsedPayload.epc)) {
-        await processTelemetryWithAI(parsedPayload, `MQTT (${topic})`);
-      }
-    });
-    mqttClient.on("error", (err) => {
-      isConnected = false;
-      const errMsg = err.message || "MQTT Connection Error";
-      console.error("[MQTT Service] Error:", errMsg);
-      activeConfig.lastError = errMsg;
-      broadcastWebSocketEvent("mqtt_status", { status: "error", error: errMsg });
-      broadcastSseEvent("mqtt_status", { status: "error", error: errMsg });
-    });
-    mqttClient.on("offline", () => {
-      isConnected = false;
-      console.warn("[MQTT Service] Client offline");
-      broadcastWebSocketEvent("mqtt_status", { status: "offline" });
-    });
-  } catch (err) {
-    isConnected = false;
-    activeConfig.lastError = err.message || "Failed to connect to broker";
-    console.error("[MQTT Service] Connection setup exception:", err);
-  }
-  return getMqttStatus();
-}
-function getMqttStatus() {
-  return {
-    connected: isConnected,
-    brokerUrl: activeConfig.brokerUrl,
-    clientId: activeConfig.clientId || DEFAULT_CLIENT_ID,
-    subscribedTopics: activeConfig.topics,
-    messagesReceivedCount: messageReceivedCount,
-    messagesSentCount: messageSentCount,
-    lastConnectedAt: activeConfig.lastConnectedAt || null,
-    lastError: activeConfig.lastError || null,
-    enabled: activeConfig.enabled
-  };
-}
-async function publishMqttMessage(topic, message) {
-  if (!mqttClient || !isConnected) {
-    const cfg = await getMqttConfig();
-    if (cfg.enabled) {
-      await initMqttService();
-    }
-  }
-  if (!mqttClient || !isConnected) {
-    return {
-      success: false,
-      topic,
-      error: "MQTT client is not connected to broker"
-    };
-  }
-  const payloadString = typeof message === "string" ? message : JSON.stringify(message);
-  return new Promise((resolve) => {
-    mqttClient?.publish(topic, payloadString, { qos: 0 }, (err) => {
-      if (err) {
-        console.error(`[MQTT Service] Failed to publish to ${topic}:`, err);
-        resolve({ success: false, topic, error: err.message });
-      } else {
-        messageSentCount++;
-        console.log(`[MQTT Service] Published successfully to [${topic}]`);
-        resolve({ success: true, topic });
-      }
-    });
-  });
-}
-async function subscribeMqttTopic(topic) {
-  if (!topic || !topic.trim()) {
-    return { success: false, topic: "", error: "Topic cannot be empty" };
-  }
-  const cleanTopic = topic.trim();
-  const cfg = await getMqttConfig();
-  if (!cfg.topics.includes(cleanTopic)) {
-    cfg.topics.push(cleanTopic);
-    await upsertDoc("settings", {
-      id: "mqtt_config",
-      ...cfg
-    });
-  }
-  if (mqttClient && isConnected) {
-    return new Promise((resolve) => {
-      mqttClient?.subscribe(cleanTopic, (err) => {
-        if (err) {
-          resolve({ success: false, topic: cleanTopic, error: err.message });
-        } else {
-          resolve({ success: true, topic: cleanTopic });
-        }
-      });
-    });
-  }
-  return { success: true, topic: cleanTopic };
-}
-async function updateMqttConfig(newCfg) {
-  const current = await getMqttConfig();
-  const updated = {
-    ...current,
-    ...newCfg,
-    topics: newCfg.topics ? newCfg.topics : current.topics
-  };
-  await upsertDoc("settings", {
-    id: "mqtt_config",
-    ...updated
-  });
-  return initMqttService();
-}
-initMqttService().catch((err) => console.error("[MQTT Service] Auto init failed:", err));
-
-// src/server/routes/ai.ts
-var import_express2 = require("express");
-var import_zod2 = require("zod");
-var import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
-var import_genai = require("@google/genai");
 
 // src/server/middleware/auth.ts
 var import_jsonwebtoken = __toESM(require("jsonwebtoken"), 1);
@@ -3350,7 +2411,7 @@ Ask me specifically about **worker headcounts, crane exclusion zones, scaffoldin
     ]
   };
 }
-var aiRouter = (0, import_express2.Router)();
+var aiRouter = (0, import_express.Router)();
 var runtimeGeminiKey = null;
 var geminiAuthDisabled = false;
 var lastGeminiAuthError = null;
@@ -3408,21 +2469,21 @@ var aiRateLimiter = (0, import_express_rate_limit.default)({
   standardHeaders: true,
   legacyHeaders: false
 });
-var analyzeRfidSchema = import_zod2.z.object({
-  liveTags: import_zod2.z.array(import_zod2.z.any()).optional().default([]),
-  historyRecords: import_zod2.z.array(import_zod2.z.any()).optional().default([]),
-  scans: import_zod2.z.array(import_zod2.z.any()).optional().default([]),
-  zones: import_zod2.z.array(import_zod2.z.any()).optional().default([]),
-  apiKeySource: import_zod2.z.string().optional(),
-  context: import_zod2.z.string().optional()
+var analyzeRfidSchema = import_zod.z.object({
+  liveTags: import_zod.z.array(import_zod.z.any()).optional().default([]),
+  historyRecords: import_zod.z.array(import_zod.z.any()).optional().default([]),
+  scans: import_zod.z.array(import_zod.z.any()).optional().default([]),
+  zones: import_zod.z.array(import_zod.z.any()).optional().default([]),
+  apiKeySource: import_zod.z.string().optional(),
+  context: import_zod.z.string().optional()
 });
-var copilotSchema = import_zod2.z.object({
-  question: import_zod2.z.string().min(1),
-  history: import_zod2.z.array(import_zod2.z.object({
-    role: import_zod2.z.enum(["user", "assistant"]),
-    text: import_zod2.z.string()
+var copilotSchema = import_zod.z.object({
+  question: import_zod.z.string().min(1),
+  history: import_zod.z.array(import_zod.z.object({
+    role: import_zod.z.enum(["user", "assistant"]),
+    text: import_zod.z.string()
   })).optional().default([]),
-  context: import_zod2.z.any().optional()
+  context: import_zod.z.any().optional()
 });
 aiRouter.post("/analyze-rfid-results", aiRateLimiter, async (req, res) => {
   const parseResult = analyzeRfidSchema.safeParse(req.body);
@@ -4126,24 +3187,6 @@ Respond strictly with valid JSON:
         updatedAt: nowIso
       });
     }
-    broadcastWebSocketEvent("tag_update", tagDocument);
-    broadcastWebSocketEvent("ai_insight", insightDoc);
-    if (aiResult.aiAnomaly) {
-      broadcastWebSocketEvent("safety_alert", {
-        type: "safety_alert",
-        tagId,
-        personName: fullName,
-        location,
-        anomaly: aiResult.aiAnomaly,
-        timestamp: nowIso
-      });
-    }
-    broadcastSseEvent("tag_update", tagDocument);
-    broadcastSseEvent("ai_insight", insightDoc);
-    publishMqttMessage("gao/rfid/scans", tagDocument).catch(() => {
-    });
-    publishMqttMessage("people/tracking/insights", insightDoc).catch(() => {
-    });
   }
   return {
     success: true,
@@ -4332,7 +3375,7 @@ function startPollingService() {
 }
 
 // src/server/routes/connections.ts
-var connectionsRouter = (0, import_express3.Router)();
+var connectionsRouter = (0, import_express2.Router)();
 connectionsRouter.get("/", requireAuth, async (req, res) => {
   try {
     const list = await getAllConnections();
@@ -4500,11 +3543,11 @@ connectionsRouter.post("/hardware/ingest", async (req, res) => {
 });
 
 // src/server/routes/auth.ts
-var import_express4 = require("express");
+var import_express3 = require("express");
 var import_bcryptjs = __toESM(require("bcryptjs"), 1);
-var import_zod3 = require("zod");
+var import_zod2 = require("zod");
 var import_express_rate_limit2 = __toESM(require("express-rate-limit"), 1);
-var authRouter = (0, import_express4.Router)();
+var authRouter = (0, import_express3.Router)();
 var authRateLimiter = (0, import_express_rate_limit2.default)({
   windowMs: 15 * 60 * 1e3,
   max: 15,
@@ -4512,15 +3555,15 @@ var authRateLimiter = (0, import_express_rate_limit2.default)({
   standardHeaders: true,
   legacyHeaders: false
 });
-var loginSchema = import_zod3.z.object({
-  email: import_zod3.z.string().email(),
-  password: import_zod3.z.string().min(1, "Password is required")
+var loginSchema = import_zod2.z.object({
+  email: import_zod2.z.string().email(),
+  password: import_zod2.z.string().min(1, "Password is required")
 });
-var registerSchema = import_zod3.z.object({
-  email: import_zod3.z.string().email(),
-  password: import_zod3.z.string().min(6, "Password must be at least 6 characters"),
-  name: import_zod3.z.string().optional(),
-  role: import_zod3.z.string().optional().default("viewer")
+var registerSchema = import_zod2.z.object({
+  email: import_zod2.z.string().email(),
+  password: import_zod2.z.string().min(6, "Password must be at least 6 characters"),
+  name: import_zod2.z.string().optional(),
+  role: import_zod2.z.string().optional().default("viewer")
 });
 function sanitizeUser(user) {
   if (!user) return null;
@@ -4776,10 +3819,10 @@ authRouter.post("/logout-everywhere", requireAuth, async (req, res) => {
 });
 
 // src/server/routes/admin.ts
-var import_express5 = require("express");
+var import_express4 = require("express");
 var import_bcryptjs2 = __toESM(require("bcryptjs"), 1);
-var import_zod4 = require("zod");
-var adminRouter = (0, import_express5.Router)();
+var import_zod3 = require("zod");
+var adminRouter = (0, import_express4.Router)();
 adminRouter.use(requireAuth);
 async function findUserByIdOrUid(userId) {
   const user = await getDocById("users", userId);
@@ -4787,26 +3830,26 @@ async function findUserByIdOrUid(userId) {
   const users = await getCollectionDocs("users");
   return users.find((u) => u.id === userId || u.uid === userId || u.id && userId && u.id.toString() === userId.toString()) || null;
 }
-var createUserSchema = import_zod4.z.object({
-  email: import_zod4.z.string().email(),
-  password: import_zod4.z.string().min(6, "Password must be at least 6 characters"),
-  name: import_zod4.z.string().optional(),
-  role: import_zod4.z.string().optional().default("viewer")
+var createUserSchema = import_zod3.z.object({
+  email: import_zod3.z.string().email(),
+  password: import_zod3.z.string().min(6, "Password must be at least 6 characters"),
+  name: import_zod3.z.string().optional(),
+  role: import_zod3.z.string().optional().default("viewer")
 });
-var setRoleSchema = import_zod4.z.object({
-  userId: import_zod4.z.string().optional(),
-  uid: import_zod4.z.string().optional(),
-  email: import_zod4.z.string().optional(),
-  role: import_zod4.z.string().min(1)
+var setRoleSchema = import_zod3.z.object({
+  userId: import_zod3.z.string().optional(),
+  uid: import_zod3.z.string().optional(),
+  email: import_zod3.z.string().optional(),
+  role: import_zod3.z.string().min(1)
 });
-var bulkSetRoleSchema = import_zod4.z.object({
-  userIds: import_zod4.z.array(import_zod4.z.string()).min(1),
-  role: import_zod4.z.string().min(1)
+var bulkSetRoleSchema = import_zod3.z.object({
+  userIds: import_zod3.z.array(import_zod3.z.string()).min(1),
+  role: import_zod3.z.string().min(1)
 });
-var updatePermissionsSchema = import_zod4.z.object({
-  rolePermissions: import_zod4.z.array(import_zod4.z.object({
-    role: import_zod4.z.string(),
-    permissions: import_zod4.z.array(import_zod4.z.string())
+var updatePermissionsSchema = import_zod3.z.object({
+  rolePermissions: import_zod3.z.array(import_zod3.z.object({
+    role: import_zod3.z.string(),
+    permissions: import_zod3.z.array(import_zod3.z.string())
   }))
 });
 adminRouter.get("/users", requirePermission("settings"), async (req, res) => {
@@ -5154,10 +4197,10 @@ adminRouter.get("/data-retention", requirePermission("settings"), async (req, re
   }
 });
 adminRouter.post("/data-retention", requirePermission("settings"), async (req, res) => {
-  const schema = import_zod4.z.object({
-    tagHistoryRetentionDays: import_zod4.z.number().min(1).max(3650),
-    staleLiveTagHours: import_zod4.z.number().min(1).max(720),
-    auditLogRetentionDays: import_zod4.z.number().min(7).max(3650)
+  const schema = import_zod3.z.object({
+    tagHistoryRetentionDays: import_zod3.z.number().min(1).max(3650),
+    staleLiveTagHours: import_zod3.z.number().min(1).max(720),
+    auditLogRetentionDays: import_zod3.z.number().min(7).max(3650)
   });
   const parseResult = schema.safeParse(req.body);
   if (!parseResult.success) {
@@ -5230,6 +4273,314 @@ adminRouter.post("/data-retention/execute", requirePermission("settings"), async
   }
 });
 
+// src/server/routes/rfid.ts
+var import_express5 = require("express");
+var import_zod4 = require("zod");
+var rfidRouter = (0, import_express5.Router)();
+function formatUtcDateTime(dateInput) {
+  const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
+  if (isNaN(d.getTime())) {
+    const now = /* @__PURE__ */ new Date();
+    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")} ${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}:${String(now.getUTCSeconds()).padStart(2, "0")}`;
+  }
+  const YYYY = d.getUTCFullYear();
+  const MM = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const DD = String(d.getUTCDate()).padStart(2, "0");
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}`;
+}
+function formatUtcTimestampMs(dateInput) {
+  const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
+  const base = formatUtcDateTime(d);
+  const fff = String(isNaN(d.getTime()) ? 0 : d.getUTCMilliseconds()).padStart(3, "0");
+  return `${base}.${fff}`;
+}
+var scanSchema = import_zod4.z.object({
+  tagId: import_zod4.z.string().optional(),
+  TagID: import_zod4.z.string().optional(),
+  name: import_zod4.z.string().optional(),
+  FirstName: import_zod4.z.string().optional(),
+  LastName: import_zod4.z.string().optional(),
+  role: import_zod4.z.string().optional().default("General Staff"),
+  zone: import_zod4.z.string().optional(),
+  LocationName: import_zod4.z.string().optional(),
+  Location: import_zod4.z.string().optional(),
+  status: import_zod4.z.string().optional().default("Active"),
+  epc: import_zod4.z.string().optional(),
+  rssi: import_zod4.z.number().optional().default(-62),
+  antennaId: import_zod4.z.number().optional().default(1),
+  readerId: import_zod4.z.string().optional().default("GAO-UHF-READER-01")
+});
+function getDefaultHistoryRecords() {
+  const now = /* @__PURE__ */ new Date();
+  const h1Enter = new Date(now.getTime() - 36e5 * 2);
+  const h1Leave = new Date(now.getTime() - 36e5 * 1.5);
+  const h2Enter = new Date(now.getTime() - 36e5 * 5);
+  const h2Leave = new Date(now.getTime() - 36e5 * 3.5);
+  const h3Enter = new Date(now.getTime() - 36e5 * 24);
+  const h3Leave = new Date(now.getTime() - 36e5 * 22);
+  return [
+    {
+      TagID: "E28011606000020788842D31",
+      FirstName: "John",
+      LastName: "Smith",
+      LocationName: "d6",
+      EnterTime: formatUtcDateTime(h1Enter),
+      LeaveTime: formatUtcDateTime(h1Leave),
+      EnterTimeStr: formatUtcDateTime(h1Enter),
+      LeaveTimeStr: formatUtcDateTime(h1Leave),
+      Duration: 0.5
+    },
+    {
+      TagID: "E28011606000020788842D31",
+      FirstName: "Jack",
+      LastName: "Wince",
+      LocationName: "d8",
+      EnterTime: formatUtcDateTime(h2Enter),
+      LeaveTime: formatUtcDateTime(h2Leave),
+      EnterTimeStr: formatUtcDateTime(h2Enter),
+      LeaveTimeStr: formatUtcDateTime(h2Leave),
+      Duration: 1.5
+    },
+    {
+      TagID: "E28011606000020788842D32",
+      FirstName: "Marcus",
+      LastName: "Vance",
+      LocationName: "Zone1",
+      EnterTime: formatUtcDateTime(h3Enter),
+      LeaveTime: formatUtcDateTime(h3Leave),
+      EnterTimeStr: formatUtcDateTime(h3Enter),
+      LeaveTimeStr: formatUtcDateTime(h3Leave),
+      Duration: 2
+    }
+  ];
+}
+function getDefaultRealtimeTags() {
+  const now = Date.now();
+  return [
+    {
+      TagID: "E28011606000020788842D31",
+      Timestamp: formatUtcTimestampMs(now),
+      Location: "Zone1"
+    },
+    {
+      TagID: "E28011606000020788842D31",
+      Timestamp: formatUtcTimestampMs(now - 1125),
+      Location: "Zone1"
+    },
+    {
+      TagID: "E28011606000020788842D31",
+      Timestamp: formatUtcTimestampMs(now - 2297),
+      Location: "Zone1"
+    },
+    {
+      TagID: "E28011606000020788842D32",
+      Timestamp: formatUtcTimestampMs(now - 3450),
+      Location: "Zone2"
+    }
+  ];
+}
+var handleGetTotalCount = async (req, res) => {
+  try {
+    const isDemo = req.query.demo === "true" || req.headers["x-demo-mode"] === "true";
+    const history = await getCollectionDocs("tag_history");
+    let total = history.length;
+    if (total === 0 && isDemo) {
+      total = getDefaultHistoryRecords().length;
+    }
+    if (req.query.format === "object") {
+      return res.json({ totalCount: total, count: total });
+    }
+    res.setHeader("Content-Type", "application/json");
+    return res.status(200).send(String(total));
+  } catch (err) {
+    console.error("[RFID Route] History count error:", err);
+    return res.status(500).json({ error: "Failed to fetch history count" });
+  }
+};
+rfidRouter.get("/GetHistoryTotalCount", handleGetTotalCount);
+rfidRouter.get("/history/count", handleGetTotalCount);
+var handleGetHistory = async (req, res) => {
+  const skipCount = parseInt(req.params.SkipCount || req.params.skip || req.query.skip || "0", 10);
+  const rawTake = parseInt(req.params.TakeCount || req.params.take || req.query.take || "50", 10);
+  const takeCount = Math.min(Math.max(1, rawTake), 200);
+  const isDemo = req.query.demo === "true" || req.headers["x-demo-mode"] === "true";
+  try {
+    const dbHistory = await getCollectionDocs("tag_history");
+    let records = dbHistory;
+    if (records.length === 0 && isDemo) {
+      records = getDefaultHistoryRecords();
+    }
+    const formattedRecords = records.map((item) => {
+      const enter = item.EnterTime || item.EnterTimeStr || item.enterTime || item.timestamp || item.createdTime || (/* @__PURE__ */ new Date()).toISOString();
+      const leave = item.LeaveTime || item.LeaveTimeStr || item.leaveTime || (/* @__PURE__ */ new Date()).toISOString();
+      const enterDate = new Date(enter);
+      const leaveDate = new Date(leave);
+      const diffMs = Math.max(0, leaveDate.getTime() - enterDate.getTime());
+      const durationHours = item.Duration !== void 0 ? Number(item.Duration) : Math.round(diffMs / 36e5 * 10) / 10;
+      const firstName = item.FirstName || item.firstName || (item.name ? item.name.split(" ")[0] : "Staff");
+      const lastName = item.LastName || item.lastName || (item.name ? item.name.split(" ").slice(1).join(" ") : "User");
+      const enterStr = formatUtcDateTime(enterDate);
+      const leaveStr = formatUtcDateTime(leaveDate);
+      return {
+        TagID: item.TagID || item.tagId || item.epc || "E28011606000020788842D31",
+        FirstName: firstName,
+        LastName: lastName,
+        LocationName: item.LocationName || item.locationName || item.zone || item.Location || "Zone1",
+        EnterTime: enterStr,
+        LeaveTime: leaveStr,
+        EnterTimeStr: enterStr,
+        LeaveTimeStr: leaveStr,
+        Duration: durationHours
+      };
+    });
+    formattedRecords.sort((a, b) => new Date(b.EnterTime).getTime() - new Date(a.EnterTime).getTime());
+    const paginated = formattedRecords.slice(skipCount, skipCount + takeCount);
+    return res.json(paginated);
+  } catch (err) {
+    console.error("[RFID Route] GetHistoryRecords error:", err);
+    return res.status(500).json({ error: "Failed to fetch history records" });
+  }
+};
+rfidRouter.get("/GetHistoryRecords/:SkipCount/:TakeCount", handleGetHistory);
+rfidRouter.get("/GetHistoryRecords/:skip/:take", handleGetHistory);
+rfidRouter.get("/GetHistoryRecords", handleGetHistory);
+rfidRouter.get("/history", handleGetHistory);
+var handleGetRealtime = async (req, res) => {
+  const isDemo = req.query.demo === "true" || req.headers["x-demo-mode"] === "true";
+  try {
+    const liveTags = await getCollectionDocs("live_tags");
+    let tagsToProcess = liveTags;
+    if (tagsToProcess.length === 0 && isDemo) {
+      tagsToProcess = getDefaultRealtimeTags();
+    }
+    const formattedTags = tagsToProcess.map((item) => {
+      const ts = item.Timestamp || item.timestamp || item.lastSeen || (/* @__PURE__ */ new Date()).toISOString();
+      return {
+        TagID: item.TagID || item.tagId || item.epc || "E28011606000020788842D31",
+        Timestamp: formatUtcTimestampMs(ts),
+        Location: item.Location || item.location || item.LocationName || item.zone || "Zone1",
+        LocationName: item.LocationName || item.Location || item.zone || "Zone1",
+        personName: item.personName || item.name || "",
+        personId: item.personId || null,
+        zoneId: item.zoneId || null,
+        zoneName: item.zoneName || item.Location || "Zone1",
+        x: item.x,
+        y: item.y,
+        rssi: item.rssi,
+        readerId: item.readerId,
+        antennaId: item.antennaId
+      };
+    });
+    formattedTags.sort((a, b) => new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime());
+    return res.json(formattedTags);
+  } catch (err) {
+    console.error("[RFID Route] GetTagsInRealtime error:", err);
+    return res.status(500).json({ error: "Failed to fetch realtime tags" });
+  }
+};
+rfidRouter.get("/GetTagsInRealtime", handleGetRealtime);
+rfidRouter.get("/realtime", handleGetRealtime);
+function requireDeviceApiKey(req, res, next) {
+  const configuredKey = process.env.GAO_DEVICE_API_KEY || process.env.RFID_READER_API_KEY || process.env.APERTURE_RFID_API_KEY;
+  if (!configuredKey) {
+    return next();
+  }
+  const providedKey = req.headers["x-gao-api-key"] || req.headers["x-api-key"] || req.headers["authorization"]?.replace(/^Bearer\s+/i, "") || req.query.apiKey || req.query.key;
+  if (providedKey === configuredKey) {
+    return next();
+  }
+  return res.status(401).json({
+    error: "Unauthorized: Invalid or missing RFID Device API Key (X-GAO-API-Key header required)"
+  });
+}
+rfidRouter.post("/scan", requireDeviceApiKey, async (req, res) => {
+  const parseResult = scanSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({
+      error: "Invalid RFID scan payload",
+      details: parseResult.error.issues
+    });
+  }
+  const data = parseResult.data;
+  const tagId = data.TagID || data.tagId || data.epc || `TAG_${Date.now()}`;
+  const location = data.Location || data.LocationName || data.zone || "Zone1";
+  const firstName = data.FirstName || (data.name ? data.name.split(" ")[0] : "Staff");
+  const lastName = data.LastName || (data.name ? data.name.split(" ").slice(1).join(" ") : "Member");
+  const now = /* @__PURE__ */ new Date();
+  const timestampIso = now.toISOString();
+  const utcDateTimeStr = formatUtcDateTime(now);
+  const utcTimestampMsStr = formatUtcTimestampMs(now);
+  try {
+    const scanPayload = {
+      TagID: tagId,
+      Location: location,
+      FirstName: firstName,
+      LastName: lastName,
+      role: data.role,
+      status: data.status,
+      rssi: data.rssi,
+      readerId: data.readerId
+    };
+    const aiResult = await processTelemetryWithAI(scanPayload, "HTTP API Scan");
+    await logAuditEvent({
+      action: "RFID_SCAN_EVENT",
+      resource: "rfid",
+      details: { TagID: tagId, worker: `${firstName} ${lastName}`, Location: location },
+      ip: req.ip
+    });
+    return res.json({
+      message: "Scan recorded and analyzed by AI Engine successfully",
+      scanRecord: aiResult.analyzedResults[0]
+    });
+  } catch (err) {
+    console.error("[RFID Route] Scan post error:", err);
+    return res.status(500).json({ error: "Failed to record RFID scan" });
+  }
+});
+rfidRouter.post("/realtime-tags/bulk", requireDeviceApiKey, async (req, res) => {
+  try {
+    const rawTags = req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
+    if (!Array.isArray(rawTags) || rawTags.length === 0) {
+      return res.status(400).json({ error: "Array of tag records required in body" });
+    }
+    const aiResult = await processTelemetryWithAI(rawTags, "HTTP Bulk Stream");
+    return res.json({
+      success: true,
+      message: `Successfully processed AI analysis & bulk write of ${aiResult.processedCount} tags into MongoDB collections.`,
+      analyzedResults: aiResult.analyzedResults
+    });
+  } catch (err) {
+    console.error("[RFID Route] Bulk write error:", err);
+    return res.status(500).json({ error: "Failed to perform bulk write to real_time_tags" });
+  }
+});
+rfidRouter.post("/bulk-ingest", requireDeviceApiKey, async (req, res) => {
+  try {
+    const rawTags = req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
+    const aiResult = await processTelemetryWithAI(rawTags, "Bulk Ingest Stream");
+    return res.json({ success: true, processedCount: aiResult.processedCount, analyzedResults: aiResult.analyzedResults });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || "Failed bulk ingest" });
+  }
+});
+rfidRouter.post("/realtime-tags/cleanup", requireDeviceApiKey, async (req, res) => {
+  try {
+    const maxAgeMinutes = Number(req.body?.maxAgeMinutes || req.query?.maxAgeMinutes || 60);
+    const result = await cleanupStaleRealTimeTags(maxAgeMinutes);
+    return res.json({
+      success: true,
+      message: `Successfully cleaned up ${result.cleanedCount} stale real-time tag documents older than ${maxAgeMinutes} minutes.`,
+      result
+    });
+  } catch (err) {
+    console.error("[RFID Route] Cleanup route error:", err);
+    return res.status(500).json({ error: "Failed to execute stale real-time tags cleanup" });
+  }
+});
+
 // src/server/routes/data.ts
 var import_express6 = require("express");
 var dataRouter = (0, import_express6.Router)();
@@ -5291,6 +4642,7 @@ dataRouter.get("/:collection", async (req, res) => {
     "ai_rca_reports",
     "ai_hazard_predictions",
     "ai_insights",
+    "ai_copilot_chats",
     "assets",
     "vehicles",
     "cameras",
@@ -5308,7 +4660,18 @@ dataRouter.get("/:collection", async (req, res) => {
     "zones",
     "geofences",
     "map_configurations",
-    "reader_zone_mappings"
+    "reader_zone_mappings",
+    "quick_notes",
+    "hardware_readers",
+    "hardware_tag_mappings",
+    "third_party_apis",
+    "site_configurations",
+    "shift_assignments",
+    "training_records",
+    "ppe_records",
+    "notifications",
+    "system_events",
+    "daily_reports"
   ];
   if (!allowed.includes(collection)) {
     return res.status(400).json({ error: `Invalid or restricted collection: ${collection}` });
@@ -5351,8 +4714,6 @@ dataRouter.post("/:collection", async (req, res) => {
       details: { docId: saved.id },
       ip: req.ip
     });
-    broadcastSseEvent("collection_update", { collection, action: "upsert", doc: saved });
-    broadcastWebSocketEvent("collection_update", { collection, action: "upsert", doc: saved });
     return res.json(saved);
   } catch (err) {
     console.error(`[Data Route] Error upserting in ${collection}:`, err);
@@ -5374,8 +4735,6 @@ dataRouter.post("/:collection/:id", async (req, res) => {
       details: { docId: id },
       ip: req.ip
     });
-    broadcastSseEvent("collection_update", { collection, action: "update", doc: saved });
-    broadcastWebSocketEvent("collection_update", { collection, action: "update", doc: saved });
     return res.json(saved);
   } catch (err) {
     console.error(`[Data Route] Error updating doc ${id} in ${collection}:`, err);
@@ -5398,8 +4757,6 @@ dataRouter.delete("/:collection/:id", async (req, res) => {
     if (!deleted) {
       return res.status(404).json({ error: "Document not found or already deleted" });
     }
-    broadcastSseEvent("collection_update", { collection, action: "delete", id });
-    broadcastWebSocketEvent("collection_update", { collection, action: "delete", id });
     return res.json({ message: "Document deleted successfully", id });
   } catch (err) {
     console.error(`[Data Route] Error deleting doc ${id} in ${collection}:`, err);
@@ -5428,7 +4785,6 @@ data: ${JSON.stringify({ status: "connected", timestamp: (/* @__PURE__ */ new Da
 // src/server/routes/mongodb.ts
 var import_express8 = require("express");
 var mongodbRouter = (0, import_express8.Router)();
-mongodbRouter.use(requireAuth, requireRole("admin"));
 mongodbRouter.get("/status", async (req, res) => {
   try {
     const stats = await getMongoStats();
@@ -5444,6 +4800,7 @@ mongodbRouter.get("/status", async (req, res) => {
     });
   }
 });
+mongodbRouter.use(requireAuth, requireRole("admin"));
 mongodbRouter.post("/test-connection", async (req, res) => {
   const { mongodbUri } = req.body || {};
   const uriToTest = mongodbUri || getMongoUri();
@@ -5844,6 +5201,48 @@ hardwareRouter.get("/status", async (req, res) => {
 
 // src/server/routes/realtime.ts
 var import_express10 = require("express");
+
+// src/server/services/mqtt.ts
+var DEFAULT_BROKER = "";
+var DEFAULT_CLIENT_ID = "gao_rfid_server_disabled";
+var DEFAULT_TOPICS = [];
+async function getMqttConfig() {
+  return {
+    brokerUrl: DEFAULT_BROKER,
+    clientId: DEFAULT_CLIENT_ID,
+    topics: DEFAULT_TOPICS,
+    enabled: false,
+    lastConnectedAt: null,
+    lastError: null
+  };
+}
+async function initMqttService() {
+  return getMqttStatus();
+}
+function getMqttStatus() {
+  return {
+    connected: false,
+    brokerUrl: "",
+    clientId: DEFAULT_CLIENT_ID,
+    subscribedTopics: [],
+    messagesReceivedCount: 0,
+    messagesSentCount: 0,
+    lastConnectedAt: null,
+    lastError: null,
+    enabled: false
+  };
+}
+async function publishMqttMessage(_topic, _message) {
+  return { success: false, topic: _topic, error: "MQTT disabled" };
+}
+async function subscribeMqttTopic(_topic) {
+  return { success: false, topic: _topic, error: "MQTT disabled" };
+}
+async function updateMqttConfig(_newConfig) {
+  return getMqttStatus();
+}
+
+// src/server/routes/realtime.ts
 var realtimeRouter = (0, import_express10.Router)();
 var pollingClients = /* @__PURE__ */ new Set();
 var recentEventsBuffer = [];
@@ -6509,6 +5908,7 @@ function errorHandler(err, req, res, next) {
 }
 
 // server.ts
+import_dns2.default.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
 import_dotenv2.default.config();
 var app = (0, import_express12.default)();
 app.set("trust proxy", 1);
@@ -6519,7 +5919,6 @@ async function startServer() {
   startRealTimeTagsCleanupJob(15, 60);
   startPollingService();
   await bootstrapAdminUser();
-  initWebSocketServer(httpServer);
   app.use((0, import_helmet.default)({
     contentSecurityPolicy: false,
     crossOriginEmbedderPolicy: false,

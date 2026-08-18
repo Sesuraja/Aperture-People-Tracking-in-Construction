@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "framework": "vite",
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/GetHistoryTotalCount(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/GetHistoryRecords(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/GetTagsInRealtime(.*)",
+      "destination": "/api/index.ts"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}
