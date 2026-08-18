@@ -258,12 +258,14 @@ export function getBlueprintSvg(projectId: string, title: string, contractor: st
 
 export function InteractiveSiteMap({
   mode,
+  activeFloor = 'Floor 1',
   activeZones,
   people,
   vehicles,
   onSelectEntity
 }: {
   mode: MapMode;
+  activeFloor?: string;
   activeZones: Record<string, any>;
   people: Person[];
   vehicles: Vehicle[];
@@ -286,6 +288,19 @@ export function InteractiveSiteMap({
   const isTowerCoreBreached = getRFIDMarkersInZone('Tower Core').length > 0;
   const isCraneSwingBreached = getRFIDMarkersInZone('Crane Swing Zone').length > 0;
   const isHighVoltageBreached = getRFIDMarkersInZone('High Voltage Area').length > 0;
+
+  const floorTitles: Record<string, string> = {
+    'ALL': 'MASTER SITE COMPOSITE BLUEPRINT — ALL LEVELS',
+    'Floor 1': 'LEVEL 1 — GROUND ACCESS & LOGISTICS PORTAL',
+    'Floor 2': 'LEVEL 2 — 440V SUBSTATION & MEP RISERS',
+    'Floor 3': 'LEVEL 3 — REBAR & CONCRETE POUR SLAB',
+    'Floor 4': 'LEVEL 4 — STEEL FRAMING & INTERIOR RISERS',
+    'Floor 5': 'LEVEL 5 — CURTAIN WALL & FACADE DECK',
+    'Floor 6': 'LEVEL 6 — MECHANICAL PENTHOUSE & CHILLER PLANT',
+    'Floor 7': 'LEVEL 7 — TOWER CORE & 360° CRANE SWING RADIUS'
+  };
+
+  const currentFloorTitle = floorTitles[activeFloor] || `${(activeFloor || 'Level 1').toUpperCase()} ARCHITECTURAL BLUEPRINT`;
 
   return (
     <svg viewBox="0 0 1200 800" className="absolute inset-0 w-full h-full bg-slate-50 dark:bg-slate-900 select-none">
@@ -646,7 +661,7 @@ export function InteractiveSiteMap({
         <line x1="16" y1="40" x2="1184" y2="40" />
         <text x="600" y="34" textAnchor="middle" fontWeight="bold" letterSpacing="1">SITE HORIZONTAL MATRIX: 250 METERS</text>
         <line x1="20" y1="760" x2="1180" y2="760" strokeDasharray="8,2" />
-        <text x="600" y="754" textAnchor="middle" fontWeight="bold">GAO AUTOMATED RFID TELEMETRY BLUEPRINT</text>
+        <text x="600" y="754" textAnchor="middle" fontWeight="bold">{currentFloorTitle}</text>
       </g>
 
       {/* Compass North Indicator */}
@@ -693,6 +708,7 @@ export default function LiveFloorMap({
   contractor = 'Apex Construction',
   dimensions = '250m x 180m',
   mode = 'standard',
+  activeFloor = 'Floor 1',
   visibleLayers,
   zoneCapacities = {},
   emergencySosState = null,
@@ -720,6 +736,7 @@ export default function LiveFloorMap({
   contractor?: string;
   dimensions?: string;
   mode?: MapMode;
+  activeFloor?: string;
   visibleLayers?: VisibleLayers;
   zoneCapacities?: Record<string, number>;
   emergencySosState?: { active: boolean; workerId?: string; workerName?: string; zone?: string; timestamp?: string; x?: number; y?: number } | null;
@@ -798,18 +815,29 @@ export default function LiveFloorMap({
       } else {
         const centerX = cluster.reduce((sum, item) => sum + item.x, 0) / cluster.length;
         const centerY = cluster.reduce((sum, item) => sum + item.y, 0) / cluster.length;
-        const radius = Math.min(8.5, 2.8 + cluster.length * 0.45);
 
         cluster.forEach((item, posIdx) => {
-          const angle = posIdx * (2 * Math.PI / cluster.length);
-          const dx = Math.cos(angle) * radius;
-          const dy = Math.sin(angle) * radius;
-          result.push({
-            ...item,
-            displayX: Math.max(3, Math.min(97, Math.round((centerX + dx) * 10) / 10)),
-            displayY: Math.max(3, Math.min(97, Math.round((centerY + dy) * 10) / 10)),
-            clusterSize: cluster.length
-          });
+          // If worker is moving, maintain their precise walking coordinates
+          if (item.presenceState === 'MOVING') {
+            result.push({
+              ...item,
+              displayX: item.x,
+              displayY: item.y,
+              clusterSize: cluster.length
+            });
+          } else {
+            // Subtle micro-offset for idle workers in the exact same spot (max 1.5%)
+            const radius = Math.min(1.6, 0.6 + cluster.length * 0.2);
+            const angle = posIdx * (2 * Math.PI / cluster.length);
+            const dx = Math.cos(angle) * radius;
+            const dy = Math.sin(angle) * radius;
+            result.push({
+              ...item,
+              displayX: Math.max(3, Math.min(97, Math.round((centerX + dx) * 100) / 100)),
+              displayY: Math.max(3, Math.min(97, Math.round((centerY + dy) * 100) / 100)),
+              clusterSize: cluster.length
+            });
+          }
         });
       }
     });
@@ -841,9 +869,10 @@ export default function LiveFloorMap({
     setHiddenZones(hidden);
   };
 
-  const currentBlueprintUrl = (mode === 'standard' || mode === 'bim' || !floorplanUrl || floorplanUrl.includes('unsplash.com'))
-    ? getBlueprintSvg(projectId, projectName, contractor, dimensions, mode)
-    : floorplanUrl;
+  const isCustomFloorplan = Boolean(floorplanUrl && !floorplanUrl.includes('unsplash.com') && floorplanUrl.length > 5);
+  const currentBlueprintUrl = isCustomFloorplan
+    ? (floorplanUrl as string)
+    : getBlueprintSvg(projectId, projectName, contractor, dimensions, mode);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (isDrawingGeofence) return;
@@ -928,20 +957,26 @@ export default function LiveFloorMap({
         className="relative w-full h-full rounded-xl shadow-2xl transition-transform duration-75 ease-out border-4 border-slate-900 overflow-hidden bg-[#090d16]"
         style={{ transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)` }}
       >
-        {(!floorplanUrl || floorplanUrl.includes('unsplash.com')) ? (
-          <InteractiveSiteMap 
-            mode={mode}
-            activeZones={activeZones}
-            people={people}
-            vehicles={vehicles}
-            onSelectEntity={onSelectEntity}
+        {svgSource ? (
+          <div 
+            className="absolute inset-0 w-full h-full pointer-events-none" 
+            dangerouslySetInnerHTML={{ __html: svgSource }}
           />
-        ) : (
+        ) : isCustomFloorplan ? (
           <img 
             src={currentBlueprintUrl} 
             alt="Site Blueprint" 
             className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500 opacity-100"
             loading="eager"
+          />
+        ) : (
+          <InteractiveSiteMap 
+            mode={mode}
+            activeFloor={activeFloor}
+            activeZones={activeZones}
+            people={people}
+            vehicles={vehicles}
+            onSelectEntity={onSelectEntity}
           />
         )}
 
@@ -1229,58 +1264,124 @@ export default function LiveFloorMap({
 
         {/* Motion Trails with last 60 seconds fading-segment historical effect */}
         {(visibleLayers?.workers ?? true) && (
-          <svg className="absolute inset-0 w-full h-full pointer-events-none z-30">
+          <svg className="absolute inset-0 w-full h-full pointer-events-none z-30 overflow-visible">
+            <defs>
+              <linearGradient id="workerTrailGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#007BC4" stopOpacity="0.1" />
+                <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.9" />
+              </linearGradient>
+              <linearGradient id="alertTrailGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stopColor="#e11d48" stopOpacity="0.1" />
+                <stop offset="100%" stopColor="#f43f5e" stopOpacity="0.9" />
+              </linearGradient>
+            </defs>
+
             {people.map(p => {
               if (!p.trail || p.trail.length < 2) return null;
               const isAlert = p.ppeStatus === 'NON_COMPLIANT';
-              const strokeColor = isAlert ? '#f43f5e' : '#38bdf8';
-              
+              const baseColor = isAlert ? '#f43f5e' : '#0284c7';
+              const glowColor = isAlert ? '#fb7185' : '#38bdf8';
+              const trailPoints = p.trail;
+
               return (
-                <g key={`trail-worker-${p.id}`} className="transition-all duration-500">
-                  {p.trail.slice(0, -1).map((pt, idx) => {
-                    const nextPt = p.trail![idx + 1];
-                    // Create fading opacity towards the tail
-                    const opacity = ((idx + 1) / p.trail!.length) * 0.8;
-                    const strokeWidth = 1.2 + (idx / p.trail!.length) * 1.8;
+                <g key={`trail-worker-${p.id}`} className="transition-all duration-300">
+                  {/* Glowing background corridor path */}
+                  {trailPoints.slice(0, -1).map((pt, idx) => {
+                    const nextPt = trailPoints[idx + 1];
+                    const progress = (idx + 1) / trailPoints.length;
+                    const opacity = Math.max(0.15, progress * 0.85);
+                    const strokeWidth = 1.5 + progress * 2.2;
+
                     return (
-                      <line
-                        key={`seg-worker-${p.id}-${idx}`}
-                        x1={`${pt.x}%`}
-                        y1={`${pt.y}%`}
-                        x2={`${nextPt.x}%`}
-                        y2={`${nextPt.y}%`}
-                        stroke={strokeColor}
-                        strokeWidth={strokeWidth}
-                        strokeOpacity={opacity}
-                        strokeLinecap="round"
-                      />
+                      <g key={`seg-worker-${p.id}-${idx}`}>
+                        {/* Glow halo */}
+                        <line
+                          x1={`${pt.x}%`}
+                          y1={`${pt.y}%`}
+                          x2={`${nextPt.x}%`}
+                          y2={`${nextPt.y}%`}
+                          stroke={glowColor}
+                          strokeWidth={strokeWidth + 2.5}
+                          strokeOpacity={opacity * 0.35}
+                          strokeLinecap="round"
+                        />
+                        {/* Core neon path line */}
+                        <line
+                          x1={`${pt.x}%`}
+                          y1={`${pt.y}%`}
+                          x2={`${nextPt.x}%`}
+                          y2={`${nextPt.y}%`}
+                          stroke={baseColor}
+                          strokeWidth={strokeWidth}
+                          strokeOpacity={opacity}
+                          strokeLinecap="round"
+                        />
+                        {/* Footstep waypoint nodes along walking path */}
+                        {idx % 2 === 0 && (
+                          <circle
+                            cx={`${pt.x}%`}
+                            cy={`${pt.y}%`}
+                            r={1.2 + progress * 1.6}
+                            fill={glowColor}
+                            fillOpacity={opacity * 0.9}
+                          />
+                        )}
+                      </g>
                     );
                   })}
+
+                  {/* Animated directional walking indicator when moving */}
+                  {p.presenceState === 'MOVING' && trailPoints.length >= 2 && (
+                    <circle
+                      cx={`${trailPoints[trailPoints.length - 1].x}%`}
+                      cy={`${trailPoints[trailPoints.length - 1].y}%`}
+                      r="4"
+                      fill="none"
+                      stroke={glowColor}
+                      strokeWidth="1.5"
+                      strokeDasharray="2,2"
+                      className="animate-spin"
+                    />
+                  )}
                 </g>
               );
             })}
+
             {vehicles.map(v => {
               if (!v.trail || v.trail.length < 2) return null;
-              const strokeColor = '#fbbf24'; // beautiful amber-500
-              
+              const strokeColor = '#f59e0b';
+
               return (
-                <g key={`trail-vehicle-${v.id}`} className="transition-all duration-500">
+                <g key={`trail-vehicle-${v.id}`} className="transition-all duration-300">
                   {v.trail.slice(0, -1).map((pt, idx) => {
                     const nextPt = v.trail![idx + 1];
-                    const opacity = ((idx + 1) / v.trail!.length) * 0.7;
-                    const strokeWidth = 1.8 + (idx / v.trail!.length) * 2.2;
+                    const progress = (idx + 1) / v.trail!.length;
+                    const opacity = Math.max(0.2, progress * 0.8);
+                    const strokeWidth = 2.0 + progress * 2.5;
+
                     return (
-                      <line
-                        key={`seg-veh-${v.id}-${idx}`}
-                        x1={`${pt.x}%`}
-                        y1={`${pt.y}%`}
-                        x2={`${nextPt.x}%`}
-                        y2={`${nextPt.y}%`}
-                        stroke={strokeColor}
-                        strokeWidth={strokeWidth}
-                        strokeOpacity={opacity}
-                        strokeLinecap="round"
-                      />
+                      <g key={`seg-veh-${v.id}-${idx}`}>
+                        <line
+                          x1={`${pt.x}%`}
+                          y1={`${pt.y}%`}
+                          x2={`${nextPt.x}%`}
+                          y2={`${nextPt.y}%`}
+                          stroke="#fbbf24"
+                          strokeWidth={strokeWidth + 2}
+                          strokeOpacity={opacity * 0.25}
+                          strokeLinecap="round"
+                        />
+                        <line
+                          x1={`${pt.x}%`}
+                          y1={`${pt.y}%`}
+                          x2={`${nextPt.x}%`}
+                          y2={`${nextPt.y}%`}
+                          stroke={strokeColor}
+                          strokeWidth={strokeWidth}
+                          strokeOpacity={opacity}
+                          strokeLinecap="round"
+                        />
+                      </g>
                     );
                   })}
                 </g>
@@ -1524,7 +1625,7 @@ export default function LiveFloorMap({
                     left: `${person.displayX}%`, 
                     top: `${person.displayY}%`, 
                     transform: 'translate(-50%, -50%)',
-                    transition: 'left 0.8s cubic-bezier(0.25, 1, 0.5, 1), top 0.8s cubic-bezier(0.25, 1, 0.5, 1)'
+                    transition: 'left 0.6s linear, top 0.6s linear'
                   }}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1532,6 +1633,11 @@ export default function LiveFloorMap({
                   }}
                 >
                   <div className="relative group flex flex-col items-center">
+                    {/* Active Walking Footstep Ripple when moving */}
+                    {person.presenceState === 'MOVING' && (
+                      <span className="absolute -inset-1 rounded-full bg-sky-400/40 animate-ping pointer-events-none" />
+                    )}
+
                     {/* Ring Pulse Effects for Alerts / SOS / Highlights */}
                     {(isSos || isAlert) && (
                       <span className="absolute -inset-1.5 rounded-full bg-rose-500 opacity-60 animate-ping pointer-events-none" />

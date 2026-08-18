@@ -424,9 +424,8 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
                         p.currentZone = targetZone;
                         p.dwellTime = 0;
                         p.presenceState = 'MOVING';
-                        
-                        p.x = rect.x + rect.width / 2;
-                        p.y = rect.y + rect.height / 2;
+                        (p as any).targetX = rect.x + rect.width / 2;
+                        (p as any).targetY = rect.y + rect.height / 2;
                         
                         addDoc(collection(db, 'tag_history'), {
                             TagID: p.id,

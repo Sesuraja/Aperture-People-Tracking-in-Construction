@@ -867,116 +867,151 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
   // Continuous real-time movement and telemetry dynamics engine
   useEffect(() => {
+    // Corridor waypoints graph connecting zones and RFID reader portals
+    const ZONES_GRAPH: Record<string, { x: number; y: number; corridorHub: { x: number; y: number } }> = {
+      'Excavation Shaft': { x: 28, y: 38, corridorHub: { x: 28, y: 65 } },
+      'Tower Core': { x: 72, y: 45, corridorHub: { x: 72, y: 65 } },
+      'Crane Swing Zone': { x: 88, y: 22, corridorHub: { x: 88, y: 65 } },
+      'High Voltage Area': { x: 53, y: 14, corridorHub: { x: 53, y: 65 } },
+      'Muster Point A': { x: 10, y: 16, corridorHub: { x: 18, y: 65 } },
+      'Site Office': { x: 18, y: 72, corridorHub: { x: 18, y: 65 } },
+      'Material Staging Yard': { x: 48, y: 72, corridorHub: { x: 48, y: 65 } },
+      'Steel Yard': { x: 88, y: 72, corridorHub: { x: 88, y: 65 } }
+    };
+
+    const ZONE_KEYS = Object.keys(ZONES_GRAPH);
+
     const moveInterval = setInterval(() => {
       setPeople(prevPeople => {
         if (!prevPeople || prevPeople.length === 0) return prevPeople;
 
         return prevPeople.map((p, idx) => {
-          const zone = (p.currentZone || 'Tower Core').toLowerCase();
-          let zoneCenterX = 68;
-          let zoneCenterY = 45;
-          let zoneRadiusX = 12;
-          let zoneRadiusY = 10;
+          let currX = p.x;
+          let currY = p.y;
+          let targetX = (p as any).targetX;
+          let targetY = (p as any).targetY;
+          let waypoints: { x: number; y: number }[] = (p as any).waypoints || [];
+          let idleTicks = (p as any).idleRemaining || 0;
+          let currentZone = p.currentZone || 'Tower Core';
 
-          if (zone.includes('excavation') || zone.includes('pit') || zone.includes('shaft')) {
-            zoneCenterX = 28; zoneCenterY = 38; zoneRadiusX = 12; zoneRadiusY = 14;
-          } else if (zone.includes('tower') || zone.includes('core') || zone.includes('building')) {
-            zoneCenterX = 68; zoneCenterY = 45; zoneRadiusX = 14; zoneRadiusY = 12;
-          } else if (zone.includes('crane') || zone.includes('swing')) {
-            zoneCenterX = 88; zoneCenterY = 22; zoneRadiusX = 7; zoneRadiusY = 7;
-          } else if (zone.includes('voltage') || zone.includes('substation')) {
-            zoneCenterX = 53; zoneCenterY = 12; zoneRadiusX = 5; zoneRadiusY = 4;
-          } else if (zone.includes('muster') || zone.includes('assembly')) {
-            zoneCenterX = 6; zoneCenterY = 16; zoneRadiusX = 3; zoneRadiusY = 3;
-          } else if (zone.includes('office') || zone.includes('hq')) {
-            zoneCenterX = 17; zoneCenterY = 73; zoneRadiusX = 6; zoneRadiusY = 5;
-          } else if (zone.includes('staging') || zone.includes('material')) {
-            zoneCenterX = 52; zoneCenterY = 70; zoneRadiusX = 8; zoneRadiusY = 6;
-          } else if (zone.includes('steel') || zone.includes('yard')) {
-            zoneCenterX = 89; zoneCenterY = 70; zoneRadiusX = 6; zoneRadiusY = 6;
-          }
-
-          let nextX = p.x;
-          let nextY = p.y;
-          let targetX = p.targetX;
-          let targetY = p.targetY;
-          let idleTicks = p.idleRemaining || 0;
-          let isMoving = p.presenceState === 'MOVING';
-
-          // Waypoint decision
-          if (targetX === undefined || targetY === undefined || Math.hypot(targetX - p.x, targetY - p.y) < 1.2) {
-            if (idleTicks > 0) {
+          // If no active destination or reached current waypoint
+          if (targetX === undefined || targetY === undefined || Math.hypot(targetX - currX, targetY - currY) < 1.0) {
+            if (waypoints.length > 0) {
+              // Proceed to next corridor waypoint
+              const nextWp = waypoints[0];
+              waypoints = waypoints.slice(1);
+              targetX = nextWp.x;
+              targetY = nextWp.y;
+            } else if (idleTicks > 0) {
+              // Worker is working/dwelling at current spot
               idleTicks -= 1;
-              isMoving = false;
-            } else if (Math.random() < 0.3) {
-              idleTicks = Math.floor(Math.random() * 4) + 2;
-              isMoving = false;
+              targetX = currX;
+              targetY = currY;
+            } else if (Math.random() < 0.35) {
+              // Pause to perform task
+              idleTicks = Math.floor(Math.random() * 5) + 3;
+              targetX = currX;
+              targetY = currY;
             } else {
-              targetX = zoneCenterX + (Math.random() - 0.5) * zoneRadiusX * 1.6;
-              targetY = zoneCenterY + (Math.random() - 0.5) * zoneRadiusY * 1.6;
-              isMoving = true;
+              // Decide next movement: small local wander or travel to another zone/reader
+              const willTravel = Math.random() < 0.45;
+              if (willTravel) {
+                // Pick a new zone to travel to
+                const otherZones = ZONE_KEYS.filter(z => z !== currentZone);
+                const nextZone = otherZones[Math.floor(Math.random() * otherZones.length)] || currentZone;
+                const srcInfo = ZONES_GRAPH[currentZone] || ZONES_GRAPH['Tower Core'];
+                const destInfo = ZONES_GRAPH[nextZone] || ZONES_GRAPH['Tower Core'];
+
+                // Route: current pos -> current corridor hub -> dest corridor hub -> dest zone point
+                const destRandomX = destInfo.x + (Math.random() - 0.5) * 6;
+                const destRandomY = destInfo.y + (Math.random() - 0.5) * 6;
+
+                waypoints = [
+                  srcInfo.corridorHub,
+                  destInfo.corridorHub,
+                  { x: destRandomX, y: destRandomY }
+                ];
+                const first = waypoints[0];
+                waypoints = waypoints.slice(1);
+                targetX = first.x;
+                targetY = first.y;
+                currentZone = nextZone;
+              } else {
+                // Local movement within zone
+                const zoneInfo = ZONES_GRAPH[currentZone] || ZONES_GRAPH['Tower Core'];
+                targetX = zoneInfo.x + (Math.random() - 0.5) * 8;
+                targetY = zoneInfo.y + (Math.random() - 0.5) * 8;
+              }
             }
           }
 
+          let isMoving = false;
           let heading = p.heading || 0;
           let speed = 0;
+          let nextX = currX;
+          let nextY = currY;
 
-          if (isMoving && targetX !== undefined && targetY !== undefined) {
-            const dx = targetX - p.x;
-            const dy = targetY - p.y;
+          if (targetX !== undefined && targetY !== undefined) {
+            const dx = targetX - currX;
+            const dy = targetY - currY;
             const dist = Math.hypot(dx, dy);
-            if (dist > 0.1) {
-              const step = Math.min(0.45, dist);
+
+            if (dist > 0.3) {
+              isMoving = true;
+              const step = Math.min(0.75, dist); // Smooth realistic step
               nextX += (dx / dist) * step;
               nextY += (dy / dist) * step;
               heading = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360);
-              speed = Math.round(step * 2.8 * 10) / 10;
+              speed = 1.4;
             }
           }
 
-          // Soft boundary containment
-          nextX = Math.max(zoneCenterX - zoneRadiusX, Math.min(zoneCenterX + zoneRadiusX, nextX));
-          nextY = Math.max(zoneCenterY - zoneRadiusY, Math.min(zoneCenterY + zoneRadiusY, nextY));
+          // Hard bounds clamping
           nextX = Math.max(4, Math.min(96, Math.round(nextX * 100) / 100));
           nextY = Math.max(6, Math.min(94, Math.round(nextY * 100) / 100));
 
           const currentTrail = p.trail || [];
-          const newTrail = isMoving ? [...currentTrail.slice(-15), { x: nextX, y: nextY }] : currentTrail;
+          // Record continuous trail when moving
+          const newTrail = isMoving 
+            ? [...currentTrail.slice(-25), { x: nextX, y: nextY }] 
+            : (currentTrail.length > 20 ? currentTrail.slice(1) : currentTrail);
 
           return {
             ...p,
             x: nextX,
             y: nextY,
+            currentZone,
             targetX,
             targetY,
+            waypoints,
             idleRemaining: idleTicks,
             heading,
             speed,
             presenceState: isMoving ? 'MOVING' : 'IDLE',
-            dwellTime: (p.dwellTime || 0) + 1,
+            dwellTime: isMoving ? 0 : (p.dwellTime || 0) + 1,
             lastSeen: new Date(),
             trail: newTrail
           };
         });
       });
 
-      // Smooth vehicle corridor movement
+      // Smooth heavy vehicle corridor movement
       setVehicles(prevVehicles => {
         if (!prevVehicles || prevVehicles.length === 0) return prevVehicles;
         return prevVehicles.map((v, vIdx) => {
-          const speed = 0.4;
-          const t = (Date.now() / 5000 + vIdx * 2.1) % (Math.PI * 2);
+          const speed = 0.5;
+          const t = (Date.now() / 4000 + vIdx * 2.1) % (Math.PI * 2);
           const nextX = Math.max(10, Math.min(90, v.x + Math.sin(t) * speed));
-          const nextY = Math.max(15, Math.min(85, v.y + Math.cos(t * 0.8) * speed * 0.4));
+          const nextY = Math.max(15, Math.min(85, v.y + Math.cos(t * 0.8) * speed * 0.3));
           return {
             ...v,
             x: Math.round(nextX * 100) / 100,
             y: Math.round(nextY * 100) / 100,
-            trail: [...(v.trail || []).slice(-8), { x: nextX, y: nextY }]
+            trail: [...(v.trail || []).slice(-12), { x: nextX, y: nextY }]
           };
         });
       });
-    }, 1200);
+    }, 600);
 
     return () => clearInterval(moveInterval);
   }, []);

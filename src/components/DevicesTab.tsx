@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Search, Radio, Wifi, WifiOff, AlertCircle, RefreshCw, MoreVertical, Plus, X, Save, 
-  MapPin, Cpu, Video, Eye, CloudSun, Satellite, Sliders, Download, CheckCircle2, 
-  Zap, Thermometer, Activity, Layers, ShieldCheck, AlertTriangle, Gauge, Terminal, 
-  Settings2, Maximize2, ScanEye, Radar, CircleDot, HardDrive, Play, ArrowUpRight, 
+import {
+  Search, Radio, Wifi, WifiOff, AlertCircle, RefreshCw, MoreVertical, Plus, X, Save,
+  MapPin, Cpu, Video, Eye, CloudSun, Satellite, Sliders, Download, CheckCircle2,
+  Zap, Thermometer, Activity, Layers, ShieldCheck, AlertTriangle, Gauge, Terminal,
+  Settings2, Maximize2, ScanEye, Radar, CircleDot, HardDrive, Play, ArrowUpRight,
   Clock, Shield, Sparkles, Filter, Check, RotateCcw, Grid, List, Edit3, Trash2,
   Upload, CheckSquare, Square, FileSpreadsheet, SlidersHorizontal, ChevronRight
 } from 'lucide-react';
@@ -77,7 +77,7 @@ export default function DevicesTab() {
       unsubMqttMetrics();
     };
   }, []);
-  
+
   // View & Tab State
   const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
@@ -92,7 +92,7 @@ export default function DevicesTab() {
   const [selectedDevice, setSelectedDevice] = useState<DeviceItem | null>(null);
   const [actionModalType, setActionModalType] = useState<'restart' | 'calibrate' | 'ota' | 'diagnostics' | 'add' | 'edit' | 'delete' | 'import' | null>(null);
   const [inspectingDevice, setInspectingDevice] = useState<DeviceItem | null>(null);
-  
+
   // Interactive Action Progress
   const [actionProgress, setActionProgress] = useState<number>(0);
   const [actionLog, setActionLog] = useState<string[]>([]);
@@ -118,34 +118,34 @@ export default function DevicesTab() {
     const unsubDevices = onSnapshot(collection(db, 'devices'), async (snapshot) => {
       const fetchedDevices: DeviceItem[] = [];
       snapshot.forEach(d => {
-          const data = d.data();
-          fetchedDevices.push({
-            id: d.id || data.id,
-            name: data.name || 'Unnamed Device',
-            category: data.category || 'rfid',
-            type: data.type || 'Reader Gateway',
-            location: data.location || 'Site Location',
-            zoneId: data.zoneId || 'zone-a',
-            status: data.status || 'online',
-            ip: data.ip || '192.168.10.100',
-            mac: data.mac || '00:1A:2B:3C:4D:FE',
-            firmware: data.firmware || 'v2.0.0',
-            latestFirmware: data.latestFirmware || 'v2.0.0',
-            signalRssi: data.signalRssi !== undefined ? Number(data.signalRssi) : -60,
-            coverageRadiusMeters: data.coverageRadiusMeters || 20,
-            temperatureC: data.temperatureC || 36,
-            cpuUsagePct: data.cpuUsagePct || 20,
-            memoryUsagePct: data.memoryUsagePct || 40,
-            pingMs: data.pingMs || 10,
-            uptime: data.uptime || '1d 0h',
-            lastPing: data.lastPing || 'Just now',
-            calibrationStatus: data.calibrationStatus || 'Calibrated',
-            otaStatus: data.otaStatus || 'Up to Date',
-            powerSource: data.powerSource || 'PoE',
-            notes: data.notes || ''
-          });
+        const data = d.data();
+        fetchedDevices.push({
+          id: d.id || data.id,
+          name: data.name || 'Unnamed Device',
+          category: data.category || 'rfid',
+          type: data.type || 'Reader Gateway',
+          location: data.location || 'Site Location',
+          zoneId: data.zoneId || 'zone-a',
+          status: data.status || 'online',
+          ip: data.ip || '192.168.10.100',
+          mac: data.mac || '00:1A:2B:3C:4D:FE',
+          firmware: data.firmware || 'v2.0.0',
+          latestFirmware: data.latestFirmware || 'v2.0.0',
+          signalRssi: data.signalRssi !== undefined ? Number(data.signalRssi) : -60,
+          coverageRadiusMeters: data.coverageRadiusMeters || 20,
+          temperatureC: data.temperatureC || 36,
+          cpuUsagePct: data.cpuUsagePct || 20,
+          memoryUsagePct: data.memoryUsagePct || 40,
+          pingMs: data.pingMs || 10,
+          uptime: data.uptime || '1d 0h',
+          lastPing: data.lastPing || 'Just now',
+          calibrationStatus: data.calibrationStatus || 'Calibrated',
+          otaStatus: data.otaStatus || 'Up to Date',
+          powerSource: data.powerSource || 'PoE',
+          notes: data.notes || ''
         });
-        setDevices(fetchedDevices);
+      });
+      setDevices(fetchedDevices);
       setLoading(false);
       setDbSynced(true);
     }, (err) => {
@@ -162,7 +162,7 @@ export default function DevicesTab() {
     return devices.filter(dev => {
       const matchesCategory = selectedCategory === 'all' || dev.category === selectedCategory;
       const matchesStatus = selectedStatus === 'all' || dev.status === selectedStatus;
-      const matchesSearch = 
+      const matchesSearch =
         (dev.name || "").toLowerCase().includes((searchTerm || "").toLowerCase()) ||
         (dev.id || "").toLowerCase().includes((searchTerm || "").toLowerCase()) ||
         (dev.ip || "").toLowerCase().includes((searchTerm || "").toLowerCase()) ||
@@ -182,7 +182,7 @@ export default function DevicesTab() {
     const offline = devices.filter(d => d.status === 'offline').length;
     const otaPending = devices.filter(d => d.otaStatus === 'Update Available').length;
     const needsCalib = devices.filter(d => d.calibrationStatus === 'Needs Calibration').length;
-    
+
     return { total, online, warning, critical, offline, otaPending, needsCalib };
   }, [devices]);
 
@@ -225,7 +225,7 @@ export default function DevicesTab() {
   };
 
   const handleToggleSelectDevice = (id: string) => {
-    setSelectedDeviceIds(prev => 
+    setSelectedDeviceIds(prev =>
       prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
     );
   };
@@ -249,10 +249,10 @@ export default function DevicesTab() {
         setActionProgress(100);
         setActionLog(prev => [...prev, 'Device re-connected successfully!', 'Status: ONLINE | Heartbeat 2ms']);
         setIsProcessingAction(false);
-        const updated: DeviceItem = { 
-          ...selectedDevice, 
-          status: 'online', 
-          pingMs: 12, 
+        const updated: DeviceItem = {
+          ...selectedDevice,
+          status: 'online',
+          pingMs: 12,
           uptime: '0d 0h',
           lastPing: 'Just now'
         };
@@ -279,9 +279,9 @@ export default function DevicesTab() {
         setActionProgress(100);
         setActionLog(prev => [...prev, 'Calibration Completed Successfully!', 'Precision rating: 99.8%']);
         setIsProcessingAction(false);
-        const updated: DeviceItem = { 
-          ...selectedDevice, 
-          calibrationStatus: 'Calibrated', 
+        const updated: DeviceItem = {
+          ...selectedDevice,
+          calibrationStatus: 'Calibrated',
           signalRssi: -45,
           status: 'online'
         };
@@ -308,9 +308,9 @@ export default function DevicesTab() {
         setActionProgress(100);
         setActionLog(prev => [...prev, 'OTA Firmware Update Applied!', `Running build: ${selectedDevice.latestFirmware}`]);
         setIsProcessingAction(false);
-        const updated: DeviceItem = { 
-          ...selectedDevice, 
-          firmware: selectedDevice.latestFirmware, 
+        const updated: DeviceItem = {
+          ...selectedDevice,
+          firmware: selectedDevice.latestFirmware,
           otaStatus: 'Up to Date',
           status: 'online'
         };
@@ -451,7 +451,7 @@ export default function DevicesTab() {
 
   // Export JSON / CSV
   const handleExportDevices = (format: 'json' | 'csv') => {
-    const exportData = selectedDeviceIds.length > 0 
+    const exportData = selectedDeviceIds.length > 0
       ? devices.filter(d => selectedDeviceIds.includes(d.id))
       : devices;
 
@@ -525,10 +525,10 @@ export default function DevicesTab() {
     setIsScanning(true);
     setScanResults(null);
     const logs: string[] = ['Initiating full site-wide hardware telemetry scan...', 'Checking Ethernet socket interfaces & IP connectivity...'];
-    
+
     setTimeout(() => {
       logs.push('Verifying LoRaWAN & RFID gateway socket link noise floors...');
-      
+
       setTimeout(async () => {
         let issues = 0;
         for (const dev of devices) {
@@ -539,7 +539,7 @@ export default function DevicesTab() {
             logs.push(`✅ Hardware [${dev.id}] passed diagnostic response ping (${dev.pingMs}ms)`);
           }
         }
-        
+
         logs.push(`Scan Complete. Total Hardware Scanned: ${devices.length} | Issues Flagged: ${issues}`);
         setScanResults({ totalScanned: devices.length, issuesFound: issues, logs });
         setIsScanning(false);
@@ -585,16 +585,6 @@ export default function DevicesTab() {
         return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-[#007BC4] border border-blue-200"><Radio size={12} /> RFID Reader</span>;
       case 'ble':
         return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"><Radio size={12} /> Fixed Gateway</span>;
-      case 'gps':
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-purple-50 text-purple-700 border border-purple-200"><Satellite size={12} /> GPS Base</span>;
-      case 'iot':
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200"><Cpu size={12} /> IoT Sensor</span>;
-      case 'cctv':
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-800 border border-slate-300"><Video size={12} /> CCTV Cam</span>;
-      case 'ai_camera':
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-50 text-amber-800 border border-amber-200"><Eye size={12} /> AI Vision</span>;
-      case 'weather':
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-cyan-50 text-cyan-700 border border-cyan-200"><CloudSun size={12} /> Weather Station</span>;
       case 'rfid_tag':
         return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-300"><Radio size={12} /> RFID Tag</span>;
     }
@@ -626,7 +616,7 @@ export default function DevicesTab() {
 
   return (
     <div className="flex flex-col w-full h-full p-4 md:p-6 space-y-6 max-w-7xl mx-auto overflow-y-auto">
-      
+
       {/* 1. PAGE HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
@@ -752,11 +742,10 @@ export default function DevicesTab() {
                 <button
                   key={mode.id}
                   onClick={() => setStreamMode(mode.id as any)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${
-                    active
+                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 whitespace-nowrap cursor-pointer ${active
                       ? 'bg-[#007BC4] text-white shadow-sm'
                       : 'text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-800'
-                  }`}
+                    }`}
                 >
                   <Icon size={13} />
                   {mode.label}
@@ -769,18 +758,16 @@ export default function DevicesTab() {
         {/* Protocol Visual Status Indicators Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-slate-100 dark:border-slate-700/60">
           {/* WebSocket Protocol Status */}
-          <div className={`p-3 rounded-xl border transition ${
-            streamMode === 'WebSocket' || streamMode === 'Multi-Protocol'
+          <div className={`p-3 rounded-xl border transition ${streamMode === 'WebSocket' || streamMode === 'Multi-Protocol'
               ? 'bg-blue-50/70 border-blue-200 dark:bg-blue-950/30 dark:border-blue-800'
               : 'bg-slate-50/50 border-slate-200 dark:bg-slate-900/40 dark:border-slate-800 opacity-60'
-          }`}>
+            }`}>
             <div className="flex items-center justify-between">
               <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                 <Wifi size={14} className="text-blue-600" /> WebSocket Channel
               </span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                wsStatus === 'Connected' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-rose-100 text-rose-800'
-              }`}>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${wsStatus === 'Connected' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-rose-100 text-rose-800'
+                }`}>
                 {wsStatus}
               </span>
             </div>
@@ -791,18 +778,16 @@ export default function DevicesTab() {
           </div>
 
           {/* MQTT Protocol Status */}
-          <div className={`p-3 rounded-xl border transition ${
-            streamMode === 'MQTT' || streamMode === 'Multi-Protocol'
+          <div className={`p-3 rounded-xl border transition ${streamMode === 'MQTT' || streamMode === 'Multi-Protocol'
               ? 'bg-emerald-50/70 border-emerald-200 dark:bg-emerald-950/30 dark:border-emerald-800'
               : 'bg-slate-50/50 border-slate-200 dark:bg-slate-900/40 dark:border-slate-800 opacity-60'
-          }`}>
+            }`}>
             <div className="flex items-center justify-between">
               <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                 <Layers size={14} className="text-emerald-600" /> MQTT Broker Stream
               </span>
-              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                mqttStatus === 'Connected' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-rose-100 text-rose-800'
-              }`}>
+              <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${mqttStatus === 'Connected' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-rose-100 text-rose-800'
+                }`}>
                 {mqttStatus}
               </span>
             </div>
@@ -871,11 +856,10 @@ export default function DevicesTab() {
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id as any)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap ${
-                  active 
-                    ? 'bg-[#007BC4] text-white shadow-sm' 
+                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap ${active
+                    ? 'bg-[#007BC4] text-white shadow-sm'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-                }`}
+                  }`}
               >
                 <Icon size={14} />
                 {tab.label}
@@ -925,7 +909,7 @@ export default function DevicesTab() {
       {/* --- TAB A: DEVICE INVENTORY & HEALTH MATRIX --- */}
       {activeTab === 'inventory' && (
         <div className="space-y-4">
-          
+
           {/* Category Filter Pills & Status Filters */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 max-w-full">
@@ -935,21 +919,15 @@ export default function DevicesTab() {
               {[
                 { id: 'all', label: 'All Hardware' },
                 { id: 'rfid', label: 'RFID Readers' },
-                { id: 'ble', label: 'Fixed Gateways' },
-                { id: 'gps', label: 'GPS Base' },
-                { id: 'iot', label: 'IoT Sensors' },
-                { id: 'cctv', label: 'CCTV' },
-                { id: 'ai_camera', label: 'AI Cameras' },
-                { id: 'weather', label: 'Weather' }
+                { id: 'ble', label: 'Fixed Gateways' }
               ].map(cat => (
                 <button
                   key={cat.id}
                   onClick={() => setSelectedCategory(cat.id)}
-                  className={`px-3 py-1 rounded-xl text-xs font-bold transition whitespace-nowrap ${
-                    selectedCategory === cat.id 
-                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm' 
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition whitespace-nowrap ${selectedCategory === cat.id
+                      ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
                       : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 hover:bg-slate-100'
-                  }`}
+                    }`}
                 >
                   {cat.label}
                 </button>
@@ -963,11 +941,10 @@ export default function DevicesTab() {
                 <button
                   key={st}
                   onClick={() => setSelectedStatus(st)}
-                  className={`px-2.5 py-0.5 rounded-lg capitalize border ${
-                    selectedStatus === st
+                  className={`px-2.5 py-0.5 rounded-lg capitalize border ${selectedStatus === st
                       ? 'bg-blue-50 text-[#007BC4] border-blue-200 dark:bg-blue-950 dark:text-blue-300'
                       : 'border-slate-200 dark:border-slate-700 text-slate-500'
-                  }`}
+                    }`}
                 >
                   {st}
                 </button>
@@ -1061,7 +1038,7 @@ export default function DevicesTab() {
                                 {device.category === 'rfid_tag' && <Radio size={16} className="text-blue-600" />}
                               </div>
                               <div>
-                                <button 
+                                <button
                                   onClick={() => setInspectingDevice(device)}
                                   className="text-slate-900 dark:text-white font-bold block hover:text-[#007BC4] text-left"
                                 >
@@ -1127,10 +1104,9 @@ export default function DevicesTab() {
                                 <span className="text-[10px] text-slate-400">{device.pingMs}ms</span>
                               </div>
                               <div className="w-20 bg-slate-100 dark:bg-slate-700 h-1.5 rounded-full overflow-hidden">
-                                <div 
-                                  className={`h-full rounded-full ${
-                                    device.signalRssi > -65 ? 'bg-emerald-500' : device.signalRssi > -85 ? 'bg-amber-500' : 'bg-rose-500'
-                                  }`}
+                                <div
+                                  className={`h-full rounded-full ${device.signalRssi > -65 ? 'bg-emerald-500' : device.signalRssi > -85 ? 'bg-amber-500' : 'bg-rose-500'
+                                    }`}
                                   style={{ width: `${Math.min(100, Math.max(10, (100 + device.signalRssi) * 2))}%` }}
                                 />
                               </div>
@@ -1214,11 +1190,10 @@ export default function DevicesTab() {
               {filteredDevices.map(device => {
                 const isSelected = selectedDeviceIds.includes(device.id);
                 return (
-                  <div 
+                  <div
                     key={device.id}
-                    className={`bg-white dark:bg-slate-800 border rounded-2xl p-4 shadow-sm hover:shadow-md transition relative flex flex-col justify-between space-y-3 ${
-                      isSelected ? 'border-[#007BC4] ring-2 ring-blue-500/20' : 'border-slate-200 dark:border-slate-700'
-                    }`}
+                    className={`bg-white dark:bg-slate-800 border rounded-2xl p-4 shadow-sm hover:shadow-md transition relative flex flex-col justify-between space-y-3 ${isSelected ? 'border-[#007BC4] ring-2 ring-blue-500/20' : 'border-slate-200 dark:border-slate-700'
+                      }`}
                   >
                     <div>
                       <div className="flex items-start justify-between gap-2">
@@ -1231,7 +1206,7 @@ export default function DevicesTab() {
                         {getStatusBadge(device.status)}
                       </div>
 
-                      <h4 
+                      <h4
                         onClick={() => setInspectingDevice(device)}
                         className="text-sm font-bold text-slate-900 dark:text-white mt-2 cursor-pointer hover:text-[#007BC4]"
                       >
@@ -1340,7 +1315,7 @@ export default function DevicesTab() {
 
             {/* Spatial Canvas Map Representation */}
             <div className="relative w-full h-[450px] bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 p-4 flex flex-col justify-between select-none">
-              
+
               {/* Background Grid Lines */}
               <div className="absolute inset-0 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px] opacity-40" />
 
@@ -1363,28 +1338,26 @@ export default function DevicesTab() {
                   const isWeak = dev.signalRssi < -80;
                   const isSelectedForTuning = selectedDevice?.id === dev.id;
                   return (
-                    <div 
-                      key={dev.id} 
+                    <div
+                      key={dev.id}
                       onClick={() => setSelectedDevice(dev)}
                       className="relative group cursor-pointer"
                     >
                       {/* Pulse Radius Bubble */}
-                      <div 
-                        className={`absolute -inset-8 rounded-full animate-ping opacity-20 ${
-                          isWeak ? 'bg-rose-500' : 'bg-[#007BC4]'
-                        }`} 
+                      <div
+                        className={`absolute -inset-8 rounded-full animate-ping opacity-20 ${isWeak ? 'bg-rose-500' : 'bg-[#007BC4]'
+                          }`}
                         style={{ width: `${Math.max(40, dev.coverageRadiusMeters * 2.5)}px`, height: `${Math.max(40, dev.coverageRadiusMeters * 2.5)}px` }}
                       />
-                      <div 
-                        className={`absolute rounded-full border-2 transition-all ${
-                          isSelectedForTuning 
-                            ? 'border-yellow-400 bg-yellow-400/20 ring-4 ring-yellow-400/30' 
-                            : isWeak 
-                            ? 'border-rose-500/50 bg-rose-500/10' 
-                            : 'border-emerald-500/50 bg-emerald-500/10'
-                        }`} 
-                        style={{ 
-                          width: `${Math.max(48, dev.coverageRadiusMeters * 2.8)}px`, 
+                      <div
+                        className={`absolute rounded-full border-2 transition-all ${isSelectedForTuning
+                            ? 'border-yellow-400 bg-yellow-400/20 ring-4 ring-yellow-400/30'
+                            : isWeak
+                              ? 'border-rose-500/50 bg-rose-500/10'
+                              : 'border-emerald-500/50 bg-emerald-500/10'
+                          }`}
+                        style={{
+                          width: `${Math.max(48, dev.coverageRadiusMeters * 2.8)}px`,
                           height: `${Math.max(48, dev.coverageRadiusMeters * 2.8)}px`,
                           top: '50%',
                           left: '50%',
@@ -1424,11 +1397,11 @@ export default function DevicesTab() {
 
                     <div className="flex items-center gap-3">
                       <span className="text-slate-400 font-bold">Coverage Radius:</span>
-                      <input 
-                        type="range" 
-                        min="5" 
-                        max="200" 
-                        value={selectedDevice.coverageRadiusMeters} 
+                      <input
+                        type="range"
+                        min="5"
+                        max="200"
+                        value={selectedDevice.coverageRadiusMeters}
                         onChange={async (e) => {
                           const val = Number(e.target.value);
                           const updated = { ...selectedDevice, coverageRadiusMeters: val };
@@ -1456,7 +1429,7 @@ export default function DevicesTab() {
       {activeTab === 'deadzones' && (
         <div className="space-y-4">
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            
+
             <div className="lg:col-span-8 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm space-y-4">
               <div className="flex items-center justify-between">
                 <div>
@@ -1485,7 +1458,7 @@ export default function DevicesTab() {
                   </p>
                   <div className="pt-2 border-t border-rose-200/60 dark:border-rose-900/40 flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
                     <span>💡 Recommended Remedy: Install 1x UHF Repeater Gateway at Scaffold Joint #14</span>
-                    <button 
+                    <button
                       onClick={() => {
                         setEditForm({
                           id: `GW-UHF-B2-${Math.floor(100 + Math.random() * 900)}`,
@@ -1519,7 +1492,7 @@ export default function DevicesTab() {
                   </p>
                   <div className="pt-2 border-t border-amber-200/60 dark:border-amber-900/40 flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
                     <span>💡 Recommended Remedy: Recalibrate antenna gain +3dB or re-orient patch antenna</span>
-                    <button 
+                    <button
                       onClick={() => handleTriggerCalibration(devices[0])}
                       className="px-3 py-1 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition"
                     >
@@ -1659,7 +1632,7 @@ export default function DevicesTab() {
       {inspectingDevice && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end">
           <div className="bg-white dark:bg-slate-800 w-full max-w-xl h-full shadow-2xl p-6 flex flex-col justify-between space-y-4 animate-in slide-in-from-right overflow-y-auto">
-            
+
             <div className="space-y-4">
               <div className="flex justify-between items-start border-b border-slate-100 dark:border-slate-700 pb-3">
                 <div>
@@ -1766,7 +1739,7 @@ export default function DevicesTab() {
       {actionModalType && (
         <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl p-6 space-y-4 animate-in zoom-in-95 max-h-[90vh] overflow-y-auto">
-            
+
             {/* Modal Header */}
             <div className="flex justify-between items-center border-b border-slate-100 dark:border-slate-700 pb-3">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -1836,7 +1809,7 @@ export default function DevicesTab() {
                     </button>
                   )}
                 </div>
-                    <p className="text-xs text-slate-500">Deploy encrypted binary updates across all site RFID and IoT hardware into MongoDB</p>
+                <p className="text-xs text-slate-500">Deploy encrypted binary updates across all site RFID and IoT hardware into MongoDB</p>
               </div>
             )}
 

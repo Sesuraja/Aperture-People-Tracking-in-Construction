@@ -143,12 +143,12 @@ export default function LiveTrackingTab({
 
   const [visibleLayers, setVisibleLayers] = useState<VisibleLayers>({
     workers: true,
-    assets: true,
+    assets: false,
     vehicles: true,
-    readers: true,
+    readers: false,
     zones: true,
-    cameras: true,
-    sensors: true,
+    cameras: false,
+    sensors: false,
     heatmapOverlay: false,
   });
   const [isLayerMenuOpen, setIsLayerMenuOpen] = useState(false);
@@ -294,10 +294,7 @@ export default function LiveTrackingTab({
 
   const activeZones = useMemo(() => {
     if (trackingCtx?.zonesDict && Object.keys(trackingCtx.zonesDict).length > 0) {
-      return {
-        ...customZonesState,
-        ...trackingCtx.zonesDict
-      };
+      return trackingCtx.zonesDict;
     }
     return projectMeta?.customZones || localProjectProps?.customZones || currentProject.customZones || customZonesState;
   }, [trackingCtx?.zonesDict, projectMeta, localProjectProps, currentProject, customZonesState]);
@@ -420,26 +417,24 @@ export default function LiveTrackingTab({
   }, [localProjectProps]);
 
   const assets = useMemo(() => {
-    const combined = [...(trackingCtx?.assets || []), ...dbAssets];
-    localAssets.forEach((la: any) => {
-      if (!combined.find(a => a.id === la.id)) combined.push(la);
-    });
-    propAssets.forEach(simA => {
-      if (!combined.find(a => a.id === simA.id)) combined.push(simA);
-    });
-    return combined;
-  }, [trackingCtx?.assets, propAssets, dbAssets, localAssets]);
+    if (trackingCtx?.assets && trackingCtx.assets.length > 0) {
+      return trackingCtx.assets;
+    }
+    if (dbAssets && dbAssets.length > 0) {
+      return dbAssets;
+    }
+    return localAssets;
+  }, [trackingCtx?.assets, dbAssets, localAssets]);
 
   const vehicles = useMemo(() => {
-    const combined = [...(trackingCtx?.vehicles || []), ...dbVehicles];
-    localVehicles.forEach((lv: any) => {
-      if (!combined.find(v => v.id === lv.id)) combined.push(lv);
-    });
-    propVehicles.forEach(simV => {
-      if (!combined.find(v => v.id === simV.id)) combined.push(simV);
-    });
-    return combined;
-  }, [trackingCtx?.vehicles, propVehicles, dbVehicles, localVehicles]);
+    if (trackingCtx?.vehicles && trackingCtx.vehicles.length > 0) {
+      return trackingCtx.vehicles;
+    }
+    if (dbVehicles && dbVehicles.length > 0) {
+      return dbVehicles;
+    }
+    return localVehicles;
+  }, [trackingCtx?.vehicles, dbVehicles, localVehicles]);
 
   const localHardwareDevices = useMemo(() => {
     if (localProjectProps?.hardwareDevices && Array.isArray(localProjectProps.hardwareDevices)) {
@@ -543,14 +538,52 @@ export default function LiveTrackingTab({
     );
   }, [vehicles, searchQuery]);
 
+  const FLOOR_OPTIONS = useMemo(() => [
+    { id: 'ALL', label: 'All Levels', short: 'All Floors', desc: 'Composite Master Site Map' },
+    { id: 'Floor 1', label: 'Level 1 - Ground Logistics', short: 'L1 Ground', desc: 'Main Gate & Logistics' },
+    { id: 'Floor 2', label: 'Level 2 - Substation & MEP', short: 'L2 Substation', desc: '440V High Voltage' },
+    { id: 'Floor 3', label: 'Level 3 - Concrete Slab', short: 'L3 Rebar', desc: 'Core Slab & Pour' },
+    { id: 'Floor 4', label: 'Level 4 - Steel Framing', short: 'L4 Framing', desc: 'Interior Risers' },
+    { id: 'Floor 5', label: 'Level 5 - Facade Deck', short: 'L5 Facade', desc: 'Mast Climber Deck' },
+    { id: 'Floor 6', label: 'Level 6 - Penthouse', short: 'L6 Penthouse', desc: 'Lift Motor Room' },
+    { id: 'Floor 7', label: 'Level 7 - Tower Core & Crane', short: 'L7 Crane Core', desc: 'Crane Radius' },
+  ], []);
+
+  const getWorkerFloor = useCallback((p: Person): string => {
+    if ((p as any).floor) return (p as any).floor;
+    if ((p as any).currentFloor) return (p as any).currentFloor;
+    const zone = (p.currentZone || '').toLowerCase();
+    const role = (p.role || '').toLowerCase();
+    if (zone.includes('crane') || zone.includes('tower core') || role.includes('crane')) return 'Floor 7';
+    if (zone.includes('penthouse') || zone.includes('chiller') || zone.includes('elevator')) return 'Floor 6';
+    if (zone.includes('facade') || zone.includes('glazing') || zone.includes('scaffold') || role.includes('scaffold')) return 'Floor 5';
+    if (zone.includes('framing') || zone.includes('drywall') || zone.includes('mep')) return 'Floor 4';
+    if (zone.includes('concrete') || zone.includes('rebar') || role.includes('concrete')) return 'Floor 3';
+    if (zone.includes('voltage') || zone.includes('substation') || role.includes('electric')) return 'Floor 2';
+    return 'Floor 1';
+  }, []);
+
   const displayedPeople = useMemo(() => {
     let result = filteredPeople;
     if (selectedTrade !== 'ALL') {
       const tradeLower = (selectedTrade || "").toLowerCase();
       result = result.filter(p => (p.role || "").toLowerCase().includes(tradeLower));
     }
+    if (activeFloor !== 'ALL') {
+      result = result.filter(p => getWorkerFloor(p) === activeFloor);
+    }
     return result;
-  }, [filteredPeople, selectedTrade]);
+  }, [filteredPeople, selectedTrade, activeFloor, getWorkerFloor]);
+
+  const floorWorkerCounts = useMemo(() => {
+    const counts: Record<string, number> = { ALL: people.length };
+    FLOOR_OPTIONS.forEach(f => {
+      if (f.id !== 'ALL') {
+        counts[f.id] = people.filter(p => getWorkerFloor(p) === f.id).length;
+      }
+    });
+    return counts;
+  }, [people, FLOOR_OPTIONS, getWorkerFloor]);
 
   const TRADE_OPTIONS = useMemo(() => {
     const list = [
@@ -579,26 +612,32 @@ export default function LiveTrackingTab({
     <div className="w-full flex flex-col bg-slate-50 p-4 md:p-6 max-w-[1800px] mx-auto min-h-screen space-y-4 font-sans transition-all">
       
       {/* 1. TOP BAR DASHBOARD HEADER */}
-      <div className="bg-white rounded-2xl p-4 shadow-md border border-slate-200 flex flex-col xl:flex-row justify-between items-stretch xl:items-center gap-4">
+      <div className="bg-white rounded-2xl p-4 md:px-5 md:py-3.5 shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
+        {/* Project Branding & Site Location */}
         <div className="flex items-center gap-3.5 xl:border-r xl:border-slate-200 xl:pr-6 shrink-0">
-          <div className="w-11 h-11 bg-slate-900 rounded-xl text-white inline-flex items-center justify-center shrink-0 shadow-sm">
+          <div className="w-11 h-11 bg-[#007BC4] rounded-2xl text-white inline-flex items-center justify-center shrink-0 shadow-sm">
             <Building2 className="w-5 h-5" />
           </div>
-          <div>
+          <div className="flex flex-col justify-center">
             <div className="flex items-center gap-2">
-              <h1 className="text-lg font-black text-slate-900 tracking-tight leading-tight">{projectMeta?.name || currentProject.name}</h1>
-              <ChevronDown className="w-4 h-4 text-slate-400 shrink-0" />
+              <h1 className="text-base sm:text-lg font-black text-slate-900 dark:text-white tracking-tight leading-none whitespace-nowrap">
+                {projectMeta?.name || currentProject.name}
+              </h1>
+              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap">
+                Live 2D Map
+              </span>
             </div>
-            <div className="flex items-center gap-3 text-xs font-bold text-slate-500 mt-0.5">
-               <span className="inline-flex items-center gap-1"><MapIcon className="w-3 h-3 text-slate-400" /> Area A Sector 4</span>
-               <span className="inline-flex items-center gap-1 border-l pl-3 border-slate-200"><Info className="w-3 h-3 text-slate-400" /> {currentProject.contractor}</span>
+            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mt-1 whitespace-nowrap">
+               <span className="inline-flex items-center gap-1"><MapIcon className="w-3.5 h-3.5 text-[#007BC4]" /> Area A Sector 4</span>
+               <span className="text-slate-300">•</span>
+               <span className="inline-flex items-center gap-1 text-slate-600 font-medium"><Info className="w-3.5 h-3.5 text-slate-400" /> {currentProject.contractor}</span>
             </div>
           </div>
         </div>
 
         {/* Search Bar with Autocomplete & Dynamic Focus */}
-        <div className="flex-1 flex items-center min-w-0 max-w-xl relative">
-          <div className="w-full h-10 flex items-center bg-slate-100 border border-slate-200 rounded-xl overflow-hidden focus-within:bg-white focus-within:ring-2 focus-within:ring-sky-500/50 focus-within:border-sky-500 transition-all">
+        <div className="flex-1 flex items-center min-w-0 max-w-xl relative w-full xl:w-auto">
+          <div className="w-full h-10 flex items-center bg-slate-100/90 border border-slate-200 rounded-xl overflow-hidden focus-within:bg-white focus-within:ring-2 focus-within:ring-[#007BC4]/30 focus-within:border-[#007BC4] transition-all">
             <div className="pl-3.5 text-slate-400 flex items-center justify-center shrink-0">
               <Search className="w-4 h-4" />
             </div>
@@ -612,7 +651,7 @@ export default function LiveTrackingTab({
             {searchQuery && (
               <button 
                 onClick={() => setSearchQuery('')}
-                className="absolute right-3 text-slate-400 hover:text-slate-600 p-1"
+                className="absolute right-3 text-slate-400 hover:text-slate-600 p-1 cursor-pointer"
                 title="Clear Search"
               >
                 <X className="w-3.5 h-3.5" />
@@ -623,16 +662,16 @@ export default function LiveTrackingTab({
 
         {/* Top Header Action Buttons Cluster */}
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
-          <span className={`h-10 px-3 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 border shadow-sm shrink-0 select-none ${
+          <span className={`h-10 px-3 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 border shadow-2xs shrink-0 select-none ${
             isWsConnected 
               ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
               : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
           }`}>
             {isWsConnected ? <Wifi className="w-3.5 h-3.5 text-emerald-500 animate-pulse shrink-0" /> : <WifiOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-            <span className="hidden lg:inline whitespace-nowrap">{isWsConnected ? 'WS 0ms Live' : 'WS Syncing...'}</span>
+            <span className="hidden lg:inline whitespace-nowrap">{isWsConnected ? 'Telemetry Live' : 'Syncing...'}</span>
           </span>
 
-          <span className={`h-10 px-3 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 border shadow-sm shrink-0 select-none ${
+          <span className={`h-10 px-3 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 border shadow-2xs shrink-0 select-none ${
             mongoDbStatus.connected && mongoDbStatus.storageType === 'mongodb'
               ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
               : 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-300 dark:border-sky-800'
@@ -645,29 +684,29 @@ export default function LiveTrackingTab({
 
           <button 
             onClick={handleExportAttendancePDF}
-            className="h-10 px-3.5 bg-white border border-slate-200 hover:bg-slate-50 active:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold shadow-sm inline-flex items-center justify-center gap-2 shrink-0 transition"
+            className="h-10 px-3.5 bg-white border border-slate-200 hover:bg-slate-50 active:bg-slate-100 text-slate-700 rounded-xl text-xs font-bold shadow-2xs inline-flex items-center justify-center gap-2 shrink-0 transition cursor-pointer"
             title="Generate and Download Shift Attendance & Zone Presence PDF Log"
           >
             <FileText className="w-4 h-4 text-sky-600 shrink-0" />
-            <span className="hidden md:inline whitespace-nowrap">PDF Compliance Log</span>
+            <span className="hidden md:inline whitespace-nowrap">PDF Log</span>
           </button>
 
           <button
             onClick={() => setIsDrawingGeofence(!isDrawingGeofence)}
-            className={`h-10 px-3.5 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 shrink-0 transition shadow-sm border ${
+            className={`h-10 px-3.5 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 shrink-0 transition shadow-2xs border cursor-pointer ${
               isDrawingGeofence 
-                ? 'bg-sky-600 text-white border-sky-600 ring-2 ring-sky-300' 
+                ? 'bg-[#007BC4] text-white border-[#007BC4] ring-2 ring-sky-300' 
                 : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 active:bg-slate-100'
             }`}
             title="Draw custom geofence polygon directly on map"
           >
             <PenTool className="w-4 h-4 text-amber-500 shrink-0" />
-            <span className="hidden md:inline whitespace-nowrap">{isDrawingGeofence ? 'Drawing Mode' : 'Draw Geofence'}</span>
+            <span className="hidden md:inline whitespace-nowrap">{isDrawingGeofence ? 'Drawing Mode' : 'Draw Zone'}</span>
           </button>
 
           <button
             onClick={() => setIsAudioMuted(prev => !prev)}
-            className={`h-10 px-3.5 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 shrink-0 transition shadow-sm border ${
+            className={`h-10 px-3.5 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-2 shrink-0 transition shadow-2xs border cursor-pointer ${
               isAudioMuted 
                 ? 'bg-slate-100 hover:bg-slate-200 text-slate-600 border-slate-300' 
                 : 'bg-amber-100 hover:bg-amber-200 text-amber-800 border-amber-400'
@@ -687,7 +726,7 @@ export default function LiveTrackingTab({
               );
               handleToggleEmergencySOS();
             }}
-            className={`h-10 px-4 rounded-xl text-xs font-black uppercase tracking-wider inline-flex items-center justify-center gap-2 shrink-0 transition shadow-md whitespace-nowrap ${
+            className={`h-10 px-4 rounded-xl text-xs font-black uppercase tracking-wider inline-flex items-center justify-center gap-2 shrink-0 transition shadow-sm whitespace-nowrap cursor-pointer ${
               emergencySosState?.active || isEmergencyMode 
                 ? 'bg-rose-600 text-white ring-4 ring-rose-400 animate-pulse' 
                 : 'bg-rose-600 hover:bg-rose-700 active:bg-rose-800 text-white border border-rose-500'
@@ -702,17 +741,17 @@ export default function LiveTrackingTab({
       {/* 2. KPI STATUS DASHBOARD */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         {[
-          { label: 'Personnel Onsite', val: people.length, icon: Users, color: 'text-sky-600', bg: 'bg-sky-50' },
+          { label: 'Personnel Onsite', val: people.length, icon: Users, color: 'text-[#007BC4]', bg: 'bg-blue-50' },
           { label: 'Heavy Equipment', val: vehicles.length, icon: Truck, color: 'text-amber-600', bg: 'bg-amber-50' },
-          { label: 'Active Materials', val: MOCK_MATERIALS.length, icon: Box, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+          { label: 'Tracked Geofences', val: Object.keys(activeZones).length, icon: Layout, color: 'text-emerald-600', bg: 'bg-emerald-50' },
           { label: 'Hazard Breaches', val: highRiskZoneCount, icon: AlertTriangle, color: highRiskZoneCount > 0 ? 'text-rose-600' : 'text-slate-400', bg: highRiskZoneCount > 0 ? 'bg-rose-50 animate-pulse' : 'bg-slate-50' },
-          { label: 'System Health', val: '98%', icon: Zap, color: 'text-emerald-600', bg: 'bg-emerald-50' }
+          { label: 'System Health', val: '99%', icon: Zap, color: 'text-emerald-600', bg: 'bg-emerald-50' }
         ].map((kpi, i) => (
-          <div key={i} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex items-center gap-4">
-             <div className={`p-3 ${kpi.bg} ${kpi.color} rounded-xl`}><kpi.icon className="w-5 h-5" /></div>
-             <div>
-                <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider">{kpi.label}</div>
-                <div className="text-xl font-black text-slate-900">{kpi.val}</div>
+          <div key={i} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex items-center gap-4">
+             <div className={`p-3 ${kpi.bg} ${kpi.color} rounded-xl shrink-0`}><kpi.icon className="w-5 h-5" /></div>
+             <div className="flex flex-col min-w-0">
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">{kpi.label}</div>
+                <div className="text-xl font-black text-slate-900 leading-none mt-0.5">{kpi.val}</div>
              </div>
           </div>
         ))}
@@ -1185,25 +1224,35 @@ export default function LiveTrackingTab({
               </div>
             </div>
 
-            {/* Floor Selector (Floor 1 to Floor 7) */}
-            <div className="flex items-center gap-1.5 shrink-0">
-              <div className="h-7 inline-flex items-center gap-1 text-[10px] font-black text-slate-500 uppercase tracking-widest mr-1">
+            {/* Floor Selector (All Floors & Floor 1 to Floor 7) */}
+            <div className="flex items-center gap-1.5 shrink-0 overflow-x-auto no-scrollbar py-0.5">
+              <div className="h-7 inline-flex items-center gap-1 text-[10px] font-black text-slate-500 uppercase tracking-widest mr-1 shrink-0">
                 <Building2 className="w-3.5 h-3.5 text-indigo-600 shrink-0" />
-                <span>Level:</span>
+                <span>Floor Maps:</span>
               </div>
-              {['Floor 7', 'Floor 6', 'Floor 5', 'Floor 4', 'Floor 3', 'Floor 2', 'Floor 1'].map(floor => (
-                <button
-                  key={floor}
-                  onClick={() => setActiveFloor(floor)}
-                  className={`h-7 px-2.5 rounded-lg text-[10px] font-mono font-bold inline-flex items-center justify-center transition border ${
-                    activeFloor === floor
-                      ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm ring-1 ring-indigo-400'
-                      : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                  }`}
-                >
-                  {floor}
-                </button>
-              ))}
+              {FLOOR_OPTIONS.map(floor => {
+                const isSelected = activeFloor === floor.id;
+                const count = floorWorkerCounts[floor.id] ?? 0;
+                return (
+                  <button
+                    key={floor.id}
+                    onClick={() => setActiveFloor(floor.id)}
+                    className={`h-7 px-2.5 rounded-lg text-[10px] font-mono font-bold inline-flex items-center justify-center gap-1.5 transition border shrink-0 ${
+                      isSelected
+                        ? 'bg-indigo-600 text-white border-indigo-600 shadow-sm ring-2 ring-indigo-300'
+                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100 hover:border-slate-300'
+                    }`}
+                    title={floor.desc}
+                  >
+                    <span>{floor.short}</span>
+                    <span className={`px-1.5 py-0.5 rounded-full text-[9px] font-black leading-none ${
+                      isSelected ? 'bg-white/20 text-white' : 'bg-slate-100 text-slate-600'
+                    }`}>
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -1306,6 +1355,7 @@ export default function LiveTrackingTab({
                 contractor={projectMeta?.contractor || currentProject.contractor}
                 dimensions={projectMeta?.dimensions || currentProject.dimensions}
                 mode={mapMode}
+                activeFloor={activeFloor}
                 visibleLayers={visibleLayers}
                 zoneCapacities={zoneCapacities}
                 emergencySosState={emergencySosState}
