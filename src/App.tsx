@@ -506,7 +506,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
             <Routes>
               <Route path="/" element={
                  <ProtectedRoute 
-                   element={<DashboardTab people={people || []} alerts={alerts || []} zones={ZONES || []} highlightedPersonId={highlightedPersonId} vehicles={vehicles || []} />}
+                   element={<DashboardTab people={people || []} alerts={alerts || []} zones={ZONES || []} highlightedPersonId={highlightedPersonId} vehicles={vehicles || []} assets={assets || []} />}
                    userRole={userRole}
                    userUid="default"
                    permissionKey="dashboard"
@@ -517,7 +517,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
               } />
               <Route path="/dashboard" element={
                  <ProtectedRoute 
-                   element={<DashboardTab people={people || []} alerts={alerts || []} zones={ZONES || []} highlightedPersonId={highlightedPersonId} vehicles={vehicles || []} />}
+                   element={<DashboardTab people={people || []} alerts={alerts || []} zones={ZONES || []} highlightedPersonId={highlightedPersonId} vehicles={vehicles || []} assets={assets || []} />}
                    userRole={userRole}
                    userUid="default"
                    permissionKey="dashboard"

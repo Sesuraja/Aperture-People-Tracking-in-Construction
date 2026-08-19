@@ -201,31 +201,37 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   // Toast Notification State
   const [toastMsg, setToastMsg] = useState<{ type: 'success' | 'info' | 'error'; text: string } | null>(null);
 
-  // Database Workers state (from MongoDB / Firestore)
-  const [dbWorkers, setDbWorkers] = useState<DBWorker[]>([]);
-  const [isDbLoading, setIsDbLoading] = useState(true);
-  const [mongoStatus, setMongoStatus] = useState({ connected: true, latencyMs: 24, databaseName: 'Lat-Aperture-People-Tracking' });
+  // MongoDB Atlas Connection Status
+  const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
+    connected: true,
+    engine: 'MongoDB Atlas',
+    database: 'Lat-Aperture-People-Tracking',
+    totalRecords: 0
+  });
 
   useEffect(() => {
     const checkMongo = async () => {
       try {
-        const start = performance.now();
         const res = await fetch('/api/mongodb/status');
-        const latency = Math.round(performance.now() - start);
         if (res.ok) {
           const data = await res.json();
           setMongoStatus({
-            connected: data.connected ?? true,
-            latencyMs: latency,
-            databaseName: data.databaseName || 'Lat-Aperture-People-Tracking'
+            connected: Boolean(data.connected),
+            engine: data.engine || 'MongoDB Atlas',
+            database: 'Lat-Aperture-People-Tracking',
+            totalRecords: data.totalRecords || 0
           });
         }
       } catch {}
     };
     checkMongo();
-    const interval = setInterval(checkMongo, 8000);
-    return () => clearInterval(interval);
+    const intv = setInterval(checkMongo, 5000);
+    return () => clearInterval(intv);
   }, []);
+
+  // Database Workers state (from MongoDB / Firestore)
+  const [dbWorkers, setDbWorkers] = useState<DBWorker[]>([]);
+  const [isDbLoading, setIsDbLoading] = useState(true);
 
   // Worker Movement History state
   const [workerHistory, setWorkerHistory] = useState<TagHistoryEntry[]>([]);
@@ -1032,14 +1038,19 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               <Users className="w-7 h-7 text-[#007BC4]" />
               Enterprise Workforce & Personnel Center
             </h2>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs ${
-              mongoStatus.connected
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
-                : 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800'
-            }`}>
-              <Database size={13} className={mongoStatus.connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'} />
-              <span>MongoDB Atlas: {mongoStatus.databaseName} ({mongoStatus.connected ? `Connected • ${mongoStatus.latencyMs}ms` : 'Offline'})</span>
-            </span>
+            {mongoStatus.connected ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
+                <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800">
+                <span className="w-2 h-2 rounded-full bg-rose-500" />
+                <Database size={13} className="text-rose-600 dark:text-rose-400" />
+                <span>MongoDB Disconnected</span>
+              </span>
+            )}
             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200">
               Live UHF Tracking Active
             </span>

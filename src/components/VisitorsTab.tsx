@@ -57,6 +57,32 @@ export default function VisitorsTab() {
   const [statusFilter, setStatusFilter] = useState<string>('All');
   const [visitors, setVisitors] = useState<VisitorRecord[]>([]);
   const [securityList, setSecurityList] = useState<SecurityListItem[]>([]);
+  const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
+    connected: true,
+    engine: 'MongoDB Atlas',
+    database: 'Lat-Aperture-People-Tracking',
+    totalRecords: 0
+  });
+
+  useEffect(() => {
+    const checkMongo = async () => {
+      try {
+        const res = await fetch('/api/mongodb/status');
+        if (res.ok) {
+          const data = await res.json();
+          setMongoStatus({
+            connected: Boolean(data.connected),
+            engine: data.engine || 'MongoDB Atlas',
+            database: 'Lat-Aperture-People-Tracking',
+            totalRecords: data.totalRecords || 0
+          });
+        }
+      } catch {}
+    };
+    checkMongo();
+    const intv = setInterval(checkMongo, 5000);
+    return () => clearInterval(intv);
+  }, []);
   
   // Modals
   const [isPreRegisterModalOpen, setIsPreRegisterModalOpen] = useState(false);
@@ -89,29 +115,6 @@ export default function VisitorsTab() {
     reason: '',
     riskLevel: 'HIGH' as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
   });
-
-  const [mongoStatus, setMongoStatus] = useState({ connected: true, latencyMs: 24, databaseName: 'Lat-Aperture-People-Tracking' });
-
-  useEffect(() => {
-    const checkMongo = async () => {
-      try {
-        const start = performance.now();
-        const res = await fetch('/api/mongodb/status');
-        const latency = Math.round(performance.now() - start);
-        if (res.ok) {
-          const data = await res.json();
-          setMongoStatus({
-            connected: data.connected ?? true,
-            latencyMs: latency,
-            databaseName: data.databaseName || 'Lat-Aperture-People-Tracking'
-          });
-        }
-      } catch {}
-    };
-    checkMongo();
-    const interval = setInterval(checkMongo, 8000);
-    return () => clearInterval(interval);
-  }, []);
 
   // Firestore Subscription
   useEffect(() => {
@@ -450,14 +453,19 @@ export default function VisitorsTab() {
               <ClipboardCheck className="w-7 h-7 text-[#007BC4]" />
               Enterprise Visitor Management
             </h2>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs ${
-              mongoStatus.connected
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
-                : 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800'
-            }`}>
-              <Database size={13} className={mongoStatus.connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'} />
-              <span>MongoDB Atlas: {mongoStatus.databaseName} ({mongoStatus.connected ? `Connected • ${mongoStatus.latencyMs}ms` : 'Offline'})</span>
-            </span>
+            {mongoStatus.connected ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
+                <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800">
+                <span className="w-2 h-2 rounded-full bg-rose-500" />
+                <Database size={13} className="text-rose-600 dark:text-rose-400" />
+                <span>MongoDB Disconnected</span>
+              </span>
+            )}
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">
               Gatehouse Sync Active
             </span>

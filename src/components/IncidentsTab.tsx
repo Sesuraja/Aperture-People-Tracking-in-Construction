@@ -50,32 +50,181 @@ function formatIncidentTimestamp(ts: any): string {
   }
 }
 
+const DEFAULT_ENTERPRISE_INCIDENTS: EnterpriseIncident[] = [
+  {
+    id: 'INC-2026-101',
+    title: 'Confined Shaft B2 Toxic Gas & Heat Anomaly Detection',
+    category: 'Near Miss',
+    severity: 'High',
+    workflowStatus: 'Investigation',
+    locationZone: 'Sub-Basement Shaft B2 (Zone B)',
+    reportedAt: '2026-08-08T09:30:00.000Z',
+    reportedBy: 'Field Safety Officer (Elena Rostova)',
+    assignedOfficer: 'Marcus Vance (EHS Director)',
+    assignedRole: 'Lead Investigator',
+    equipmentInvolved: 'Gas Sensor SENS-09 / Excavator EX-04',
+    hazardClass: 'Airborne Contaminants & Confined Space',
+    injuredPersonnelCount: 0,
+    description: 'Autonomous environmental telemetry detected localized gas accumulation spike (CO > 45ppm) during deep foundation drilling. Auto-evacuation alarm triggered; 6 workers exited within 2 minutes safely.',
+    aiAnalysis: {
+      severityScore: 82,
+      aiSummary: 'Autonomous environmental telemetry detected localized gas accumulation spike during deep foundation drilling.',
+      probableRootCause: 'Faulty auxiliary ventilation blower damper flap failed to open during high-output excavator trenching.',
+      contributingFactors: [
+        'High ambient humidity and reduced natural air exchange in sub-basement chamber.',
+        'Simultaneous excavation engine idling near unvented intake duct.'
+      ],
+      capaRecommendations: [
+        'Replace mechanical airflow solenoid on Blower System #4.',
+        'Mandate continuous 4-gas portable wearable monitors for all personnel entering Level B2.',
+        'Implement automated engine-cutoff interlock on stationary plant in enclosed shafts.'
+      ],
+      regulatoryImpact: 'OSHA 1926.1204 Confined Space Hazard Protocol - Internal investigation and log required.'
+    },
+    witnessStatements: [
+      {
+        id: 'ws_1',
+        witnessName: 'David Kim',
+        witnessRole: 'Concrete Operator',
+        company: 'BuildCorp Structural',
+        interviewedBy: 'Marcus Vance',
+        timestamp: '10:05 AM',
+        statement: 'Heard the audible siren chirp from the fixed reader and our hardhat beacons flashed amber. Everyone proceeded immediately to the hoist.'
+      }
+    ],
+    attachments: [
+      {
+        id: 'att_1',
+        fileName: 'Gas_Sensor_Telemtry_Log_Aug8.pdf',
+        fileType: 'Telemetry Log',
+        fileUrl: 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=600&auto=format&fit=crop&q=80',
+        uploadedBy: 'Elena Rostova',
+        uploadedAt: '09:45 AM',
+        fileSize: '2.4 MB'
+      }
+    ],
+    timeline: [
+      { id: 't_1', timestamp: '09:30 AM', title: 'Gas Anomaly Detected', description: 'Sensor SENS-09 triggered high threshold alert in Zone B.', actor: 'System IoT Anchor', statusChange: 'Open' },
+      { id: 't_2', timestamp: '09:32 AM', title: 'Evacuation Completed', description: '6 personnel logged at Gate 1 muster point.', actor: 'EHS Safety Team' },
+      { id: 't_3', timestamp: '09:45 AM', title: 'Investigation Assigned', description: 'Marcus Vance assigned as lead EHS investigator.', actor: 'Marcus Vance', statusChange: 'Investigation' }
+    ],
+    correctiveActions: [
+      { id: 'ca_1', actionItem: 'Inspect auxiliary intake fan ducting in Sub-Basement B2', assignedTo: 'Maintenance Lead', dueDate: '2026-08-10', isCompleted: true },
+      { id: 'ca_2', actionItem: 'Install secondary redundant gas sensor node at shaft entrance', assignedTo: 'IoT Systems Team', dueDate: '2026-08-12', isCompleted: false }
+    ]
+  },
+  {
+    id: 'INC-2026-102',
+    title: 'Scaffolding Level 3 Loose Plank Fall Hazard Near Miss',
+    category: 'Near Miss',
+    severity: 'Critical',
+    workflowStatus: 'Corrective Action',
+    locationZone: 'Structure & Scaffolding (L1-L4)',
+    reportedAt: '2026-08-07T14:15:00.000Z',
+    reportedBy: 'Site Inspector (Marcus Brody)',
+    assignedOfficer: 'Elena Rostova (Field Safety Lead)',
+    assignedRole: 'Structural Safety Lead',
+    equipmentInvolved: 'Tower Scaffold Module 3B',
+    hazardClass: 'Working at Heights & Dropped Objects',
+    injuredPersonnelCount: 0,
+    description: 'During crane lifting operation, a loose toe-board and staging plank shifted on Level 3 scaffolding. Dislodged plank fell 8 meters into drop zone netting.',
+    aiAnalysis: {
+      severityScore: 89,
+      aiSummary: 'Unsecured scaffolding toe-board dislodged due to wind vibration and crane wash.',
+      probableRootCause: 'Subcontractor crew omitted secondary locking pin during morning platform extension.',
+      contributingFactors: [
+        'Sudden wind gust exceeding 35 km/h.',
+        'Inadequate pre-shift daily scaffolding handover sign-off.'
+      ],
+      capaRecommendations: [
+        'Implement daily digital QR scaffolding tag check prior to shift start.',
+        'Enforce secondary safety tethering on all tools and loose timbers above 2 meters.'
+      ],
+      regulatoryImpact: 'OSHA 1926.451 Scaffolding General Safety Criteria.'
+    },
+    witnessStatements: [],
+    attachments: [],
+    timeline: [
+      { id: 't_1', timestamp: '02:15 PM', title: 'Near Miss Reported', description: 'Plank caught in safety netting.', actor: 'Marcus Brody', statusChange: 'Open' },
+      { id: 't_2', timestamp: '03:00 PM', title: 'Scaffold Closed for Inspection', description: 'Red Tag applied to Tower 3B.', actor: 'Elena Rostova', statusChange: 'Corrective Action' }
+    ],
+    correctiveActions: [
+      { id: 'ca_1', actionItem: 'Full structural clamp audit of Scaffolding Tower 3', assignedTo: 'Scaffold Subcontractor', dueDate: '2026-08-08', isCompleted: true }
+    ]
+  },
+  {
+    id: 'INC-2026-103',
+    title: 'Hydraulic Fluid Spill on Crane Loading Pad',
+    category: 'Equipment Damage',
+    severity: 'Medium',
+    workflowStatus: 'Closed',
+    locationZone: 'Heavy Crane & Exclusion Area',
+    reportedAt: '2026-08-06T11:00:00.000Z',
+    reportedBy: 'Crane Operator (Carlos Mendez)',
+    assignedOfficer: 'Frank Reynolds (Equipment Lead)',
+    assignedRole: 'Plant & Equipment Lead',
+    equipmentInvolved: 'Mobile Hydraulic Crane TC-02',
+    hazardClass: 'Environmental & Slip Hazard',
+    injuredPersonnelCount: 0,
+    description: 'Hydraulic high-pressure hose fitting ruptured during boom extension, releasing approximately 15 liters of biodegradable hydraulic oil on concrete apron.',
+    aiAnalysis: {
+      severityScore: 42,
+      aiSummary: 'Controlled hydraulic line burst contained with spill kit within 10 minutes.',
+      probableRootCause: 'Hose fatigue after exceeding 2,000 continuous duty cycle hours.',
+      contributingFactors: ['High operating temperature.'],
+      capaRecommendations: ['Replace hydraulic feed lines across all 50-ton cranes.'],
+      regulatoryImpact: 'EPA Tier 1 Minor Spill Logged.'
+    },
+    witnessStatements: [],
+    attachments: [],
+    timeline: [
+      { id: 't_1', timestamp: '11:00 AM', title: 'Spill Reported', description: 'Spill kit deployed immediately.', actor: 'Carlos Mendez', statusChange: 'Open' },
+      { id: 't_2', timestamp: '12:30 PM', title: 'Containment Complete', description: 'Absorbent pads disposed of.', actor: 'Frank Reynolds', statusChange: 'Closed' }
+    ],
+    correctiveActions: [
+      { id: 'ca_1', actionItem: 'Replace hose fitting and pressure test', assignedTo: 'Hydraulics Tech', dueDate: '2026-08-06', isCompleted: true }
+    ],
+    approvalSignOff: {
+      approvedBy: 'Marcus Vance (EHS Director)',
+      approvedAt: '2026-08-06T15:00:00.000Z',
+      comments: 'Satisfactory cleanup and preventative hose replacement verified.'
+    }
+  }
+];
+
 export default function IncidentsTab() {
   const [incidents, setIncidents] = useState<EnterpriseIncident[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<EnterpriseIncident | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [mongoStatus, setMongoStatus] = useState({ connected: true, latencyMs: 24, databaseName: 'Lat-Aperture-People-Tracking' });
+  const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
+    connected: true,
+    engine: 'MongoDB Atlas',
+    database: 'Lat-Aperture-People-Tracking',
+    totalRecords: 0
+  });
 
+  // Polling MongoDB connection status
   useEffect(() => {
     const checkMongo = async () => {
       try {
-        const start = performance.now();
         const res = await fetch('/api/mongodb/status');
-        const latency = Math.round(performance.now() - start);
         if (res.ok) {
           const data = await res.json();
           setMongoStatus({
-            connected: data.connected ?? true,
-            latencyMs: latency,
-            databaseName: data.databaseName || 'Lat-Aperture-People-Tracking'
+            connected: Boolean(data.connected),
+            engine: data.engine || 'MongoDB Atlas',
+            database: 'Lat-Aperture-People-Tracking',
+            totalRecords: data.totalRecords || 0
           });
         }
       } catch {}
     };
     checkMongo();
-    const interval = setInterval(checkMongo, 8000);
-    return () => clearInterval(interval);
+    const intv = setInterval(checkMongo, 5000);
+    return () => clearInterval(intv);
   }, []);
+
+
 
   // Filters & Sorting
   const [selectedCategory, setSelectedCategory] = useState<IncidentCategory | 'All'>('All');
@@ -879,14 +1028,19 @@ export default function IncidentsTab() {
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-[#007BC4]/10 text-[#007BC4] border border-[#007BC4]/20">
               EHS Command Live
             </span>
-            <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs ${
-              mongoStatus.connected
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
-                : 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800'
-            }`}>
-              <Database size={13} className={mongoStatus.connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'} />
-              <span>MongoDB Atlas: {mongoStatus.databaseName} ({mongoStatus.connected ? `Connected • ${mongoStatus.latencyMs}ms` : 'Offline'})</span>
-            </span>
+            {mongoStatus.connected ? (
+              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
+                <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800">
+                <span className="w-2 h-2 rounded-full bg-rose-500" />
+                <Database size={13} className="text-rose-600 dark:text-rose-400" />
+                <span>MongoDB Disconnected</span>
+              </span>
+            )}
           </div>
           <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-0.5">
             Full incident lifecycle management: near misses, injuries, fires, witness statements, RCA, CAPA actions, and MongoDB Atlas persistence.
