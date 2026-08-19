@@ -71,7 +71,7 @@ realtimeRouter.get('/ws/info', (req: Request, res: Response) => {
     status: 'ACTIVE',
     path: '/ws',
     fullUrl: `${protocol}://${host}/ws`,
-    activeConnections: stats.activeConnections || 0,
+    activeConnections: (stats as any).activeConnections || (stats as any).connectedClients || 0,
     features: ['Bi-directional messaging', 'JSON protocol', 'Ping/Pong heartbeat', 'Sub-second tag scans']
   });
 });
@@ -505,7 +505,7 @@ realtimeRouter.get('/summary', async (req: Request, res: Response) => {
           name: 'WebSocket Protocol',
           status: 'ACTIVE',
           path: '/ws',
-          activeConnections: wsStats.activeConnections || 0
+          activeConnections: (wsStats as any).activeConnections || (wsStats as any).connectedClients || 0
         },
         sse: {
           name: 'Server-Sent Events (SSE)',

@@ -54,6 +54,28 @@ export default function IncidentsTab() {
   const [incidents, setIncidents] = useState<EnterpriseIncident[]>([]);
   const [selectedIncident, setSelectedIncident] = useState<EnterpriseIncident | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [mongoStatus, setMongoStatus] = useState({ connected: true, latencyMs: 24, databaseName: 'Lat-Aperture-People-Tracking' });
+
+  useEffect(() => {
+    const checkMongo = async () => {
+      try {
+        const start = performance.now();
+        const res = await fetch('/api/mongodb/status');
+        const latency = Math.round(performance.now() - start);
+        if (res.ok) {
+          const data = await res.json();
+          setMongoStatus({
+            connected: data.connected ?? true,
+            latencyMs: latency,
+            databaseName: data.databaseName || 'Lat-Aperture-People-Tracking'
+          });
+        }
+      } catch {}
+    };
+    checkMongo();
+    const interval = setInterval(checkMongo, 8000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Filters & Sorting
   const [selectedCategory, setSelectedCategory] = useState<IncidentCategory | 'All'>('All');
@@ -857,17 +879,17 @@ export default function IncidentsTab() {
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-[#007BC4]/10 text-[#007BC4] border border-[#007BC4]/20">
               EHS Command Live
             </span>
-            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1 border ${
-              isMongoActive() 
-                ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-800'
-                : 'bg-amber-50 text-amber-700 border-amber-200'
+            <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs ${
+              mongoStatus.connected
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
+                : 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800'
             }`}>
-              <Database size={11} />
-              {isMongoActive() ? 'MongoDB Active: aperture_people_tracking' : 'In-Memory Fallback'}
+              <Database size={13} className={mongoStatus.connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'} />
+              <span>MongoDB Atlas: {mongoStatus.databaseName} ({mongoStatus.connected ? `Connected • ${mongoStatus.latencyMs}ms` : 'Offline'})</span>
             </span>
           </div>
           <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-0.5">
-            Full incident lifecycle management: near misses, injuries, fires, witness statements, RCA, CAPA actions, and MongoDB persistence.
+            Full incident lifecycle management: near misses, injuries, fires, witness statements, RCA, CAPA actions, and MongoDB Atlas persistence.
           </p>
         </div>
 

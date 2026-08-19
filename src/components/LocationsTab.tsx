@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, MapPin, Map as MapIcon, Image as ImageIcon, Save, X, Radio } from 'lucide-react';
+import { Plus, Edit2, Trash2, MapPin, Map as MapIcon, Image as ImageIcon, Save, X, Radio, Database } from 'lucide-react';
 import { collection, addDoc, onSnapshot, doc, deleteDoc, updateDoc, db } from '../lib/db';
 
 interface FloorPlan {
@@ -168,13 +168,19 @@ export default function LocationsTab() {
     <div className="flex flex-col gap-6 w-full p-6 max-w-7xl mx-auto">
       <div className="flex justify-between items-center shrink-0">
         <div>
-          <h2 className="text-2xl font-bold tracking-tight text-slate-900">Location Management</h2>
-          <p className="text-slate-500 font-medium">Manage buildings, floor plans, and device placements.</p>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">Location & Building Management</h2>
+            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+              <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
+              <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
+            </span>
+          </div>
+          <p className="text-slate-500 font-medium mt-0.5">Manage buildings, CAD blueprints, floor plans, and RTLS device placements synced to MongoDB Atlas.</p>
         </div>
         <div className="flex gap-2">
           <div className="flex items-center gap-2 bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-2 rounded-lg text-xs font-bold shadow-sm">
              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-             Aperture Building Registry Locked
+             Aperture Building Registry Live
           </div>
         </div>
       </div>

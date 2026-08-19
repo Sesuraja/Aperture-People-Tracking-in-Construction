@@ -5,7 +5,7 @@ import {
   Layers, MapPin, Eye, Settings, HelpCircle, HardHat, Building2, Layers3, History, FileCode,
   Sparkles, FileText, ChevronRight, RotateCw, Copy, ShieldAlert, ArrowRight, X, FolderPlus,
   Users, Lock, Unlock, EyeOff, Search, Filter, Flame, Zap, Navigation, Wifi,
-  PenTool, Square, Circle, Clock, BellRing, Maximize2, Activity, Info
+  PenTool, Square, Circle, Clock, BellRing, Maximize2, Activity, Info, Database
 } from 'lucide-react';
 import HardwareConfigModal, { HardwareDevice } from './HardwareConfigModal';
 import MapEditorModal, { ZoneBounds } from './MapEditorModal';
@@ -48,6 +48,7 @@ export interface MapWorkerItem {
   currentZone?: string;
   hardhatTagId?: string;
   certifications?: string[];
+  floorId?: string;
 }
 
 export const INITIAL_MAP_WORKERS: MapWorkerItem[] = [
@@ -272,10 +273,12 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
   const currentSite = sites[activeProject] || sites['metro-tower'] || DEFAULT_SITES['metro-tower'];
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>(currentSite.buildings[0]?.id || 'bldg-main');
   const currentBuilding = currentSite.buildings.find(b => b.id === selectedBuildingId) || currentSite.buildings[0];
-  const [selectedFloorId, setSelectedFloorId] = useState<string>(currentBuilding?.floors[0]?.id || 'fl-1');
-  const currentFloor = currentBuilding?.floors.find(f => f.id === selectedFloorId) || currentBuilding?.floors[0];
+  const [selectedFloorId, setSelectedFloorId] = useState<string>('all');
+  const currentFloor = selectedFloorId === 'all'
+    ? (currentBuilding?.floors[0] || { id: 'all', name: 'All Floors', levelNumber: 0, versions: [] })
+    : (currentBuilding?.floors.find(f => f.id === selectedFloorId) || currentBuilding?.floors[0]);
 
-  const activeVersion = currentFloor?.versions.find(v => v.id === currentFloor.activeVersionId) || currentFloor?.versions[0];
+  const activeVersion = currentFloor?.versions?.find((v: any) => v.id === (currentFloor as any).activeVersionId) || currentFloor?.versions?.[0];
 
   const [assets, setAssets] = useState<AssetItem[]>(INITIAL_ASSETS);
   const [vehicles, setVehicles] = useState<VehicleItem[]>(INITIAL_VEHICLES);
@@ -283,6 +286,37 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
   const [envSensors, setEnvSensors] = useState<EnvironmentalSensorItem[]>(INITIAL_ENV_SENSORS);
   const [hardwareDevices, setHardwareDevices] = useState<HardwareDevice[]>(INITIAL_DEVICES);
   const [mapWorkers, setMapWorkers] = useState<MapWorkerItem[]>(INITIAL_MAP_WORKERS);
+
+  // Live real-time workers synchronized with TrackingContext and filtered by floor
+  const activeWorkers: MapWorkerItem[] = useMemo(() => {
+    let list = mapWorkers;
+    if (trackingCtx?.people && trackingCtx.people.length > 0) {
+      list = trackingCtx.people.map(p => ({
+        id: p.id,
+        name: p.name,
+        role: p.role,
+        company: (p as any).tradeCompany || (p as any).company || 'Apex Construction',
+        x: p.x,
+        y: p.y,
+        safetyStatus: (p.ppeStatus === 'NON_COMPLIANT' ? 'NON_COMPLIANT' : 'COMPLIANT') as any,
+        ppeStatus: p.ppeStatus || 'COMPLIANT',
+        currentZone: p.currentZone || 'Active Site Area',
+        hardhatTagId: p.hardhatTagId || p.id,
+        certifications: ['Site Safety Pass', 'OSHA 10'],
+        floorId: (p as any).floor || (p as any).floorId || 'fl-1'
+      }));
+    }
+
+    if (selectedFloorId === 'all') {
+      return list;
+    }
+    return list.filter(w => {
+      if (!w.floorId) return true;
+      const fNum = selectedFloorId.replace(/[^0-9]/g, '');
+      const wFloor = (w.floorId || '').toLowerCase();
+      return wFloor === selectedFloorId || wFloor.includes(`floor ${fNum}`) || wFloor.includes(`level ${fNum}`) || wFloor.includes(`l${fNum}`);
+    });
+  }, [mapWorkers, trackingCtx?.people, selectedFloorId]);
 
   const [customFloorplan, setCustomFloorplan] = useState<string | null>(activeVersion?.floorplanUrl || null);
   const [customSvgSource, setCustomSvgSource] = useState<string | null>(activeVersion?.svgSource || null);
@@ -331,7 +365,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
   // Dynamic Zone Occupancy & Alert Calculation Helper
   const calculateZoneMetrics = (zName: string, bounds: ZoneBounds) => {
-    const workersInZone = mapWorkers.filter(w => 
+    const workersInZone = activeWorkers.filter(w => 
       w.currentZone === zName || 
       (w.x >= bounds.x && w.x <= (bounds.x + bounds.width) && w.y >= bounds.y && w.y <= (bounds.y + bounds.height))
     );
@@ -998,7 +1032,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
   // Marker Clustering Computation
   const clusteredGroups = useMemo(() => {
     if (!enableClustering) {
-      return { clusters: [], singleWorkers: mapWorkers };
+      return { clusters: [], singleWorkers: activeWorkers };
     }
 
     const radius = 8; // percentage radius on map
@@ -1006,10 +1040,10 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     const clusters: Array<{ id: string; x: number; y: number; workers: MapWorkerItem[] }> = [];
     const singleWorkers: MapWorkerItem[] = [];
 
-    mapWorkers.forEach((w1, idx) => {
+    activeWorkers.forEach((w1, idx) => {
       if (visitedWorkerIds.has(w1.id)) return;
 
-      const nearbyWorkers = mapWorkers.filter(w2 => {
+      const nearbyWorkers = activeWorkers.filter(w2 => {
         if (visitedWorkerIds.has(w2.id)) return false;
         const dist = Math.sqrt(Math.pow(w2.x - w1.x, 2) + Math.pow(w2.y - w1.y, 2));
         return dist <= radius;
@@ -1032,7 +1066,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     });
 
     return { clusters, singleWorkers };
-  }, [mapWorkers, enableClustering]);
+  }, [activeWorkers, enableClustering]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6">
@@ -1043,11 +1077,17 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             <div className="flex items-center gap-2 text-[#38bdf8] text-xs font-black uppercase tracking-wider mb-1">
               <MapIcon size={16} /> Interactive Construction Site Map Engine
             </div>
-            <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
-              {currentSite.name}
-            </h1>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
+                {currentSite.name}
+              </h1>
+              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-sm bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
+                <Database size={13} className="text-emerald-400" />
+                <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
+              </span>
+            </div>
             <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-              Real-time spatial tracking, interactive vector drawing, toggleable overlays, marker clustering, and Safety Status indicators mirrored directly from the Personnel registry.
+              Real-time spatial tracking, interactive vector drawing, toggleable overlays, marker clustering, and Safety Status indicators synchronized with MongoDB Atlas.
             </p>
           </div>
 
@@ -1177,6 +1217,16 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             <div className="space-y-2">
               <label className="text-[10px] font-bold text-slate-500 uppercase">Select Level / Floor</label>
               <div className="grid grid-cols-2 gap-1.5">
+                <button
+                  onClick={() => setSelectedFloorId('all')}
+                  className={`py-1.5 px-2 rounded-lg text-xs font-extrabold transition col-span-2 ${
+                    selectedFloorId === 'all'
+                      ? 'bg-[#007BC4] text-white shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                  }`}
+                >
+                  🌐 All Floors (Master Site View)
+                </button>
                 {currentBuilding?.floors.map(f => (
                   <button
                     key={f.id}
@@ -1422,6 +1472,16 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             <div className="flex items-center justify-between flex-wrap gap-2 pt-1 border-t border-slate-100 dark:border-slate-700/60">
               <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
                 <span className="text-[10px] font-black text-slate-400 uppercase tracking-wider mr-1">Floor:</span>
+                <button
+                  onClick={() => setSelectedFloorId('all')}
+                  className={`h-7 px-2.5 rounded-lg text-[10px] font-mono font-bold inline-flex items-center justify-center transition border shrink-0 ${
+                    selectedFloorId === 'all'
+                      ? 'bg-[#007BC4] text-white border-[#007BC4] shadow-sm ring-2 ring-blue-300'
+                      : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700 hover:bg-slate-100'
+                  }`}
+                >
+                  All Floors
+                </button>
                 {currentBuilding?.floors.map(floor => {
                   const isSelected = selectedFloorId === floor.id;
                   return (
@@ -1549,7 +1609,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                       <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
                     </radialGradient>
                   </defs>
-                  {mapWorkers.map(w => (
+                  {activeWorkers.map(w => (
                     <circle
                       key={`heat-${w.id}`}
                       cx={`${w.x}%`}

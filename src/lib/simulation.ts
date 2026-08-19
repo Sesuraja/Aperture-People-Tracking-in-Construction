@@ -466,28 +466,53 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
                 }
              });
 
-             nextPeople.forEach(p => {
-               p.dwellTime += 2; 
+              // Staggered realistic movement: limit active moving workers to 1 or 2
+              const activeMovers = nextPeople.filter(p => (p as any).isMovingTarget || p.presenceState === 'MOVING').length;
 
-               p.trail = p.trail || [];
-               p.trail.push({ x: p.x, y: p.y });
-               if (p.trail.length > 60) p.trail.shift();
+              nextPeople.forEach((p, pIdx) => {
+                p.dwellTime += 2; 
 
-               const zoneRect = getZoneRect(p.currentZone, activeProjectId, dynamicZones);
-               const targetX = zoneRect.x + Math.random() * zoneRect.width;
-               const targetY = zoneRect.y + Math.random() * zoneRect.height;
-               
-               p.x += (targetX - p.x) * 0.1;
-               p.y += (targetY - p.y) * 0.1;
+                p.trail = p.trail || [];
+                if (p.trail.length > 30) p.trail.shift();
 
-               if (Math.abs(targetX - p.x) < 2 && Math.abs(targetY - p.y) < 2) {
-                  p.presenceState = 'IDLE';
-               } else {
-                  p.presenceState = 'MOVING';
-               }
-             });
+                let targetX = (p as any).targetX;
+                let targetY = (p as any).targetY;
+                let idleTicks = (p as any).idleRemaining || 0;
 
-             return nextPeople;
+                if (targetX === undefined || targetY === undefined || (Math.abs(targetX - p.x) < 1.0 && Math.abs(targetY - p.y) < 1.0)) {
+                  if (idleTicks > 0) {
+                    idleTicks -= 1;
+                    p.presenceState = 'IDLE';
+                    (p as any).targetX = p.x;
+                    (p as any).targetY = p.y;
+                  } else if (activeMovers < 2 && Math.random() < 0.25) {
+                    const zoneRect = getZoneRect(p.currentZone, activeProjectId, dynamicZones);
+                    (p as any).targetX = zoneRect.x + 2 + Math.random() * Math.max(2, zoneRect.width - 4);
+                    (p as any).targetY = zoneRect.y + 2 + Math.random() * Math.max(2, zoneRect.height - 4);
+                    (p as any).idleRemaining = Math.floor(Math.random() * 15) + 10;
+                    p.presenceState = 'MOVING';
+                  } else {
+                    p.presenceState = 'IDLE';
+                    (p as any).idleRemaining = Math.floor(Math.random() * 10) + 6;
+                  }
+                } else {
+                  // Gentle walking speed
+                  const dx = targetX - p.x;
+                  const dy = targetY - p.y;
+                  const dist = Math.hypot(dx, dy);
+                  if (dist > 0.4) {
+                    const step = Math.min(0.35, dist);
+                    p.x += (dx / dist) * step;
+                    p.y += (dy / dist) * step;
+                    p.presenceState = 'MOVING';
+                    p.trail.push({ x: p.x, y: p.y });
+                  } else {
+                    p.presenceState = 'IDLE';
+                  }
+                }
+              });
+
+              return nextPeople;
            });
          } catch (e: any) {
            console.warn('Realtime tag sync warning:', e?.message || e);

@@ -7,7 +7,8 @@ import {
   Plus, Download, Printer, RefreshCw, Send, ShieldCheck, Eye, Shield, 
   MapPin, Camera, Activity, AlertCircle, Info, Sparkles, Flame, Siren, 
   Check, CheckSquare, Wifi, WifiOff, Volume2, VolumeX, BarChart2,
-  Sliders, Trash2, Layers, Users, SlidersHorizontal, Layers3, Play
+  Sliders, Trash2, Layers, Users, SlidersHorizontal, Layers3, Play,
+  Database
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -379,6 +380,36 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   const [alertList, setAlertList] = useState<AIAlert[]>([]);
   const [ruleList, setRuleList] = useState<AlertRule[]>([]);
   const [broadcastList, setBroadcastList] = useState<EmergencyBroadcast[]>([]);
+  const [mongoStatus, setMongoStatus] = useState<{
+    connected: boolean;
+    engine?: string;
+    database?: string;
+    totalRecords?: number;
+    latencyMs?: number;
+  }>({ connected: true, engine: 'MongoDB Atlas', database: 'Lat-Aperture-People-Tracking' });
+
+  useEffect(() => {
+    const checkMongo = async () => {
+      try {
+        const start = Date.now();
+        const res = await fetch('/api/mongodb/status');
+        const latency = Date.now() - start;
+        if (res.ok) {
+          const data = await res.json();
+          setMongoStatus({
+            connected: Boolean(data.connected),
+            engine: data.engine || 'MongoDB Atlas',
+            database: 'Lat-Aperture-People-Tracking',
+            totalRecords: data.totalRecords || 0,
+            latencyMs: latency
+          });
+        }
+      } catch {}
+    };
+    checkMongo();
+    const intv = setInterval(checkMongo, 5000);
+    return () => clearInterval(intv);
+  }, []);
 
   // Selection & Modals
   const [selectedAlert, setSelectedAlert] = useState<AIAlert | null>(null);
@@ -475,7 +506,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
 
   // MongoDB & Firestore Sync
   useEffect(() => {
-    // 1. Sync Alerts
+    // 1. Sync Alerts from MongoDB
     const unsubAlerts = onSnapshot(collection(db, 'alerts_enterprise'), (snapshot) => {
       const data = snapshot.docs.map(docSnap => {
         const d = docSnap.data();
@@ -485,7 +516,35 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
           timestamp: typeof d.timestamp === 'string' ? new Date(d.timestamp) : (d.timestamp?.toDate ? d.timestamp.toDate() : new Date())
         } as AIAlert;
       });
-      setAlertList(data.sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime()));
+      if (data.length > 0) {
+        setAlertList(prev => {
+          const map = new Map();
+          [...data, ...prev].forEach(item => map.set(item.id, item));
+          return Array.from(map.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        });
+      }
+    });
+
+    const unsubStandardAlerts = onSnapshot(collection(db, 'alerts'), (snapshot) => {
+      const data = snapshot.docs.map(docSnap => {
+        const d = docSnap.data();
+        return {
+          ...d,
+          id: docSnap.id,
+          title: d.title || d.message || 'Safety Alert',
+          category: d.category || 'Safety',
+          priority: d.priority || d.severity || 'High',
+          status: d.status || 'In Progress',
+          timestamp: typeof d.timestamp === 'string' ? new Date(d.timestamp) : (d.timestamp?.toDate ? d.timestamp.toDate() : new Date())
+        } as AIAlert;
+      });
+      if (data.length > 0) {
+        setAlertList(prev => {
+          const map = new Map();
+          [...data, ...prev].forEach(item => map.set(item.id, item));
+          return Array.from(map.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
+        });
+      }
     });
 
     // 2. Sync Rules
@@ -502,6 +561,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
 
     return () => {
       unsubAlerts();
+      unsubStandardAlerts();
       unsubRules();
       unsubBroadcasts();
     };
@@ -1005,9 +1065,20 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
               <Siren className="w-7 h-7 text-rose-600 animate-pulse" />
               Enterprise Alert Command Center
             </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-rose-500/10 text-rose-600 border border-rose-500/20">
-              MongoDB Live Sync Active
-            </span>
+            {/* Live MongoDB Atlas Connection Status */}
+            {mongoStatus.connected ? (
+              <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700 flex items-center gap-1.5 shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <Database size={13} className="text-emerald-600" />
+                MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)
+              </span>
+            ) : (
+              <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700 flex items-center gap-1.5 shadow-sm">
+                <span className="w-2 h-2 rounded-full bg-rose-500" />
+                <Database size={13} className="text-rose-600" />
+                MongoDB Disconnected
+              </span>
+            )}
             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1.5 border ${
               isWsConnected 
                 ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'

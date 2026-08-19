@@ -63,7 +63,8 @@ import {
   Download,
   StickyNote,
   Filter,
-  Building2
+  Building2,
+  Database
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import AIFeed from './AIFeed';
@@ -2120,11 +2121,17 @@ export default function DashboardTab({
       {/* Premium Operations custom header bar with Configuration button */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0 border-b border-slate-200/60 pb-4">
         <div>
-          <h2 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-            <LayoutDashboard className="w-5 h-5 text-[#007BC4]" />
-            Operations Control Panel
-          </h2>
-          <p className="text-xs text-slate-500 font-medium dark:text-slate-400">Manage real-time personnel analytics, alerts, and facility tracking.</p>
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <h2 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
+              <LayoutDashboard className="w-5 h-5 text-[#007BC4]" />
+              Operations Control Panel
+            </h2>
+            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+              <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
+              <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 font-medium dark:text-slate-400 mt-0.5">Manage real-time personnel analytics, alerts, and facility tracking synced with MongoDB Atlas.</p>
         </div>
         <div className="flex items-center gap-2">
            <button 

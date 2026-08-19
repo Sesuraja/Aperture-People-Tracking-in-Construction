@@ -135,7 +135,7 @@ export default function LiveTrackingTab({
   const [isEmergencyMode, setIsEmergencyMode] = useState(false);
   const [activeTab, setActiveTab] = useState<'people' | 'assets' | 'hardware' | 'zones'>('people');
   const [mapMode, setMapMode] = useState<MapMode>('standard');
-  const [activeFloor, setActiveFloor] = useState('Floor 3');
+  const [activeFloor, setActiveFloor] = useState('ALL');
   const [timelineTime, setTimelineTime] = useState('NOW (Live)');
   const [isReplaying, setIsReplaying] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<string>('ALL');

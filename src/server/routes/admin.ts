@@ -30,6 +30,7 @@ const createUserSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   name: z.string().optional(),
+  displayName: z.string().optional(),
   role: z.string().optional().default('viewer')
 });
 
@@ -74,8 +75,9 @@ adminRouter.post('/create-user', requirePermission('settings'), async (req: Auth
     });
   }
 
-  const { email, password, name, role } = parseResult.data;
+  const { email, password, name, displayName, role } = parseResult.data;
   const lowerEmail = email.toLowerCase();
+  const resolvedName = displayName || name || lowerEmail.split('@')[0];
 
   try {
     const users = await getCollectionDocs('users');
@@ -87,8 +89,9 @@ adminRouter.post('/create-user', requirePermission('settings'), async (req: Auth
     const newUser = {
       id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       email: lowerEmail,
-      name: name || lowerEmail.split('@')[0],
-      role,
+      name: resolvedName,
+      displayName: resolvedName,
+      role: role || 'operator',
       passwordHash,
       createdAt: new Date().toISOString(),
       invited: true,

@@ -18,6 +18,7 @@ import {
   Unlock,
   User,
   UserCheck,
+  UserPlus,
   ShieldCheck,
   Server,
   Terminal,
@@ -51,6 +52,7 @@ import { RfidApiConfiguration } from "./RfidApiConfiguration";
 import DeveloperApiTab from "./DeveloperApiTab";
 import ThirdPartyApiIntegrationSection from "./ThirdPartyApiIntegrationSection";
 import DirectHardwareIntegrationSection from "./DirectHardwareIntegrationSection";
+import MongoDbConfigurationSection from "./MongoDbConfigurationSection";
 import { gaoApi, DEFAULT_HOST } from "../lib/gaoApi";
 import { doc, getDoc, setDoc, isMongoActive, db } from "../lib/db";
 import { AppModeContext } from "../App";
@@ -1053,7 +1055,11 @@ export default function SettingsTab() {
   };
 
   const handleCreateUser = async (e: React.FormEvent) => {
-    if (mode === "demo") return; // Keep demo guard
+    e.preventDefault();
+    if (!createEmail || !createPassword) {
+      setCreationError("Please enter both email and password.");
+      return;
+    }
     setCreationSuccess(null);
     setCreationError(null);
     setIsCreatingUser(true);
@@ -1067,20 +1073,21 @@ export default function SettingsTab() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          email: createEmail,
+          email: createEmail.trim(),
           password: createPassword,
-          displayName: createDisplayName,
+          name: createDisplayName.trim() || createEmail.trim().split('@')[0],
+          displayName: createDisplayName.trim() || createEmail.trim().split('@')[0],
           role: createRole,
         }),
       });
 
       const data = await res.json();
       if (res.ok) {
-        setCreationSuccess(`Provisioned user ${createEmail} with role '${createRole}'`);
+        setCreationSuccess(`User '${createEmail}' successfully created and saved with role '${createRole}' in MongoDB!`);
         setCreateEmail("");
         setCreatePassword("");
         setCreateDisplayName("");
-        loadManagementData();
+        await loadManagementData();
       } else {
         setCreationError(data.error || "Failed to provision account");
       }
@@ -1685,6 +1692,18 @@ export default function SettingsTab() {
           </button>
 
           <button
+            onClick={() => setActiveSection("database")}
+            id="settings_database_tab"
+            className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeSection === "database" || activeSection === "mongodb"
+                ? "bg-[#007BC4] text-white shadow-sm"
+                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            }`}
+          >
+            <Database className="w-4 h-4 text-emerald-500" /> Database & MongoDB Cluster
+          </button>
+
+          <button
             onClick={() => setActiveSection("general")}
             id="settings_general_tab"
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
@@ -1842,6 +1861,13 @@ export default function SettingsTab() {
           {(activeSection === "direct_hardware" || activeSection === "hardware_integration" || activeSection === "hardware") && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <DirectHardwareIntegrationSection />
+            </div>
+          )}
+
+          {/* DATABASE & MONGODB CLUSTER CONFIGURATION */}
+          {(activeSection === "database" || activeSection === "mongodb") && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <MongoDbConfigurationSection />
             </div>
           )}
 
@@ -2931,104 +2957,156 @@ export default function SettingsTab() {
               {/* SUBTAB 2: STAFF ACCOUNTS & INDIVIDUAL OVERRIDES */}
               {activeAccessTab === "staff" && (
                 <div className="space-y-6">
-                  {/* User Provisioning Form */}
-                  <div className="bg-white border border-slate-200 shadow-sm rounded-xl p-6 space-y-4">
-                    <h4 className="font-bold text-slate-900 text-sm flex items-center gap-2">
-                      <User className="w-4 h-4 text-[#007BC4]" /> Provision Staff User Account
-                    </h4>
-
-                    <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end">
+                  {/* User Provisioning Form Card */}
+                  <div className="bg-white border border-slate-200 shadow-sm rounded-2xl p-6 space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
                       <div>
-                        <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">Display Name</label>
-                        <input
-                          type="text"
-                          value={createDisplayName}
-                          onChange={(e) => setCreateDisplayName(e.target.value)}
-                          placeholder="e.g. John Doe"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold outline-none focus:border-[#007BC4]"
-                        />
+                        <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                          <User className="w-4 h-4 text-[#007BC4]" /> Provision Staff User Account
+                        </h4>
+                        <p className="text-xs text-slate-500 mt-0.5">
+                          Create a new team member login, assign default role claims, and grant granular dashboard permissions.
+                        </p>
                       </div>
+                      <span className="text-[10px] font-bold px-2.5 py-1 rounded-full bg-blue-50 text-[#007BC4] border border-blue-100 self-start sm:self-auto">
+                        MongoDB Atlas Auth
+                      </span>
+                    </div>
 
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">Email *</label>
-                        <input
-                          type="email"
-                          required
-                          value={createEmail}
-                          onChange={(e) => setCreateEmail(e.target.value)}
-                          placeholder="john@gaostaff.com"
-                          className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold outline-none focus:border-[#007BC4]"
-                        />
-                      </div>
-
-                      <div className="relative">
-                        <div className="flex justify-between items-center mb-1">
-                          <label className="block text-[11px] font-bold text-slate-500 uppercase">Password *</label>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const pass = generateRandomPassword();
-                              setCreatePassword(pass);
-                              setCreatePasswordType("text");
-                            }}
-                            className="text-[10px] text-[#007BC4] hover:underline font-bold flex items-center gap-0.5 cursor-pointer"
-                          >
-                            <Sparkles className="w-3 h-3" /> Auto-Generate
-                          </button>
+                    {/* Success & Error Feedback Banners */}
+                    {creationSuccess && (
+                      <div className="p-3.5 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl text-xs font-bold flex items-center justify-between animate-in fade-in">
+                        <div className="flex items-center gap-2">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                          <span>{creationSuccess}</span>
                         </div>
-                        <div className="relative">
+                        <button onClick={() => setCreationSuccess(null)} className="text-emerald-600 hover:text-emerald-800 text-xs">✕</button>
+                      </div>
+                    )}
+
+                    {creationError && (
+                      <div className="p-3.5 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs font-bold flex items-center justify-between animate-in fade-in">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                          <span>{creationError}</span>
+                        </div>
+                        <button onClick={() => setCreationError(null)} className="text-rose-600 hover:text-rose-800 text-xs">✕</button>
+                      </div>
+                    )}
+
+                    <form onSubmit={handleCreateUser} className="space-y-4">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
+                        {/* Field 1: Display Name */}
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                            Full Name / Display Name
+                          </label>
                           <input
-                            type={createPasswordType}
-                            required
-                            value={createPassword}
-                            onChange={(e) => setCreatePassword(e.target.value)}
-                            placeholder="Min 6 characters"
-                            className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-3 pr-10 py-2 text-xs font-semibold outline-none focus:border-[#007BC4]"
+                            type="text"
+                            value={createDisplayName}
+                            onChange={(e) => setCreateDisplayName(e.target.value)}
+                            placeholder="e.g. Marcus Vance"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-slate-900 outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition"
                           />
-                          <button
-                            type="button"
-                            onClick={() => setCreatePasswordType(createPasswordType === "password" ? "text" : "password")}
-                            className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
-                          >
-                            {createPasswordType === "password" ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                          </button>
                         </div>
-                        {createPassword && (() => {
-                          const strength = getPasswordStrength(createPassword);
-                          return (
-                            <div className="mt-1.5 space-y-1">
-                              <div className="flex items-center justify-between text-[10px] font-bold">
-                                <span className="text-slate-400">Password Strength:</span>
-                                <span className={strength.textColor}>{strength.text}</span>
-                              </div>
-                              <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                                <div className={`h-full ${strength.color} ${strength.width} transition-all duration-300`} />
-                              </div>
-                            </div>
-                          );
-                        })()}
-                      </div>
 
-                      <div>
-                        <label className="block text-[11px] font-bold text-slate-500 uppercase mb-1">Assigned Role</label>
-                        <div className="flex gap-2">
+                        {/* Field 2: Email */}
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                            Work Email Address <span className="text-rose-500">*</span>
+                          </label>
+                          <input
+                            type="email"
+                            required
+                            value={createEmail}
+                            onChange={(e) => setCreateEmail(e.target.value)}
+                            placeholder="marcus.vance@company.com"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-slate-900 outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition"
+                          />
+                        </div>
+
+                        {/* Field 3: Assigned Role */}
+                        <div>
+                          <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider mb-1.5">
+                            Assigned Security Role <span className="text-rose-500">*</span>
+                          </label>
                           <select
                             value={createRole}
                             onChange={(e) => setCreateRole(e.target.value)}
-                            className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-2 text-xs font-semibold flex-1 cursor-pointer outline-none focus:border-[#007BC4]"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-semibold text-slate-900 outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition cursor-pointer"
                           >
                             {customRoles.map((r) => (
                               <option key={r.id} value={r.id}>{r.label}</option>
                             ))}
                           </select>
-                          <button
-                            type="submit"
-                            disabled={isCreatingUser}
-                            className="bg-[#007BC4] hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer shrink-0"
-                          >
-                            {isCreatingUser ? "..." : "Create Account"}
-                          </button>
                         </div>
+
+                        {/* Field 4: Password */}
+                        <div>
+                          <div className="flex justify-between items-center mb-1.5">
+                            <label className="block text-[11px] font-bold text-slate-700 uppercase tracking-wider">
+                              Access Password <span className="text-rose-500">*</span>
+                            </label>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const pass = generateRandomPassword();
+                                setCreatePassword(pass);
+                                setCreatePasswordType("text");
+                              }}
+                              className="text-[10px] text-[#007BC4] hover:text-blue-800 font-bold flex items-center gap-1 cursor-pointer transition"
+                            >
+                              <Sparkles className="w-3 h-3" /> Auto-Generate
+                            </button>
+                          </div>
+                          <div className="relative">
+                            <input
+                              type={createPasswordType}
+                              required
+                              value={createPassword}
+                              onChange={(e) => setCreatePassword(e.target.value)}
+                              placeholder="Minimum 6 characters"
+                              className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-3.5 pr-10 py-2.5 text-xs font-semibold text-slate-900 outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition font-mono"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setCreatePasswordType(createPasswordType === "password" ? "text" : "password")}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer p-1"
+                            >
+                              {createPasswordType === "password" ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                            </button>
+                          </div>
+                          {createPassword && (() => {
+                            const strength = getPasswordStrength(createPassword);
+                            return (
+                              <div className="mt-2 space-y-1">
+                                <div className="flex items-center justify-between text-[10px] font-bold">
+                                  <span className="text-slate-400">Password Strength:</span>
+                                  <span className={strength.textColor}>{strength.text}</span>
+                                </div>
+                                <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                                  <div className={`h-full ${strength.color} ${strength.width} transition-all duration-300`} />
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
+                      {/* Card Footer Submit Row */}
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                        <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1.5">
+                          <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Credentials are salted & hashed with bcrypt before saving to MongoDB.</span>
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={isCreatingUser}
+                          className="bg-[#007BC4] hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl text-xs font-bold shadow-sm transition disabled:opacity-50 cursor-pointer flex items-center justify-center gap-2 shrink-0 self-end sm:self-auto"
+                        >
+                          <UserPlus className="w-3.5 h-3.5" />
+                          <span>{isCreatingUser ? "Creating Account..." : "Create Staff Account"}</span>
+                        </button>
                       </div>
                     </form>
                   </div>

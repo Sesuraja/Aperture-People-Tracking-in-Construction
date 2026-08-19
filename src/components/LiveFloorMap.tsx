@@ -1625,7 +1625,7 @@ export default function LiveFloorMap({
                     left: `${person.displayX}%`, 
                     top: `${person.displayY}%`, 
                     transform: 'translate(-50%, -50%)',
-                    transition: 'left 0.6s linear, top 0.6s linear'
+                    transition: 'left 1.0s linear, top 1.0s linear'
                   }}
                   onClick={(e) => {
                     e.stopPropagation();

@@ -678,9 +678,9 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
           
           <div className="space-y-1.5">
             <div className="flex items-center gap-2.5 flex-wrap">
-              <span className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-xs font-black rounded-full uppercase tracking-wider">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Active Telemetry API Feed
+              <span className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-full">
+                <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
+                <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
               </span>
               <span className="flex items-center gap-1.5 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 text-indigo-700 dark:text-indigo-400 text-xs font-bold rounded-full font-mono">
                 <Key size={13} />

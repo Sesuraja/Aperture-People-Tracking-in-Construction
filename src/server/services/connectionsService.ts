@@ -75,8 +75,37 @@ export function buildUrl(config: ApiConnectionConfig): string {
 }
 
 export async function getAllConnections(): Promise<ApiConnectionConfig[]> {
-  const list = await getCollectionDocs('third_party_apis');
-  return list as ApiConnectionConfig[];
+  const list = (await getCollectionDocs('third_party_apis')) as ApiConnectionConfig[];
+  
+  const hasPostman = list.some(c => c.endpointUrl?.includes('c72fe02c-76af-4b77-b300-74aeb1abc7e8') || c.id === 'postman_mock_rfid_api');
+  if (!hasPostman) {
+    const postmanMock: ApiConnectionConfig = {
+      id: 'postman_mock_rfid_api',
+      name: 'Postman Mock RFID Telemetry Feed',
+      description: 'Live Postman Mock Server for GAO People Tracking RFID telemetry stream',
+      endpointUrl: 'https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io/api/GetTagsInRealtime',
+      method: 'GET',
+      authType: 'none',
+      pollingEnabled: true,
+      pollingIntervalSeconds: 10,
+      dataMapping: {
+        tagIdField: 'TagID',
+        locationField: 'LocationName',
+        timestampField: 'Timestamp',
+        nameField: 'FirstName',
+        rssiField: 'rssi'
+      },
+      lastStatus: 'IDLE',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    try {
+      await upsertDoc('third_party_apis', postmanMock);
+      list.push(postmanMock);
+    } catch {}
+  }
+
+  return list;
 }
 
 export async function getConnectionById(id: string): Promise<ApiConnectionConfig | null> {

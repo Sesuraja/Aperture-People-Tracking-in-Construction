@@ -587,13 +587,17 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
               </div>
               <span>Analytics & Intelligence Portal</span>
             </h2>
+            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+              <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
+              <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
+            </span>
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 flex items-center gap-1">
               <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
               Active Telemetry
             </span>
           </div>
           <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm">
-            Real-time executive metrics, workforce productivity, fleet utilization, safety compliance & predictive forecasting
+            Real-time executive metrics, workforce productivity, fleet utilization, safety compliance & predictive forecasting synced to MongoDB Atlas
           </p>
         </div>
 

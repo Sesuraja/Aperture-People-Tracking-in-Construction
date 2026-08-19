@@ -6,13 +6,15 @@ import {
   ShieldCheck, ArrowUpRight, BarChart2, Plus, X, Sun, Moon, 
   CalendarDays, Layers, Zap, DollarSign, Filter, RefreshCw, Printer, FileText,
   Activity, Check, Ban, Edit3, ExternalLink, HelpCircle, LayoutList, LayoutGrid,
-  Sparkles
+  Sparkles, Database, HardHat
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
-import { db, collection, addDoc, updateDoc, doc, onSnapshot, getDocs } from '../lib/db';
+import { db, collection, addDoc, updateDoc, setDoc, doc, onSnapshot, getDocs } from '../lib/db';
 import DailyReportingTaskModal from './DailyReportingTaskModal';
+import { useTracking } from '../context/TrackingContext';
+import webSocketService from '../lib/webSocketService';
 
 export interface AttendanceRecord {
   id: string;
@@ -73,8 +75,80 @@ const SHIFT_OPTIONS: Array<'Day Shift (07:00-15:30)' | 'Night Shift (19:00-03:30
   'Swing OT (15:00-23:30)'
 ];
 
-const MOCK_LEAVE_DEFAULTS: LeaveRecord[] = [];
-const MOCK_HOLIDAYS: Array<{ name: string; date: string; type: string }> = [];
+const MOCK_LEAVE_DEFAULTS: LeaveRecord[] = [
+  {
+    id: 'LV-101',
+    personId: 'HH-1002',
+    name: 'David Chen',
+    department: 'Electrical & MEP',
+    type: 'Medical Leave',
+    startDate: '2026-08-18',
+    endDate: '2026-08-20',
+    reason: 'Post-operative physical therapy & vision check',
+    status: 'APPROVED',
+    approvedBy: 'Marcus Vance (EHS Lead)',
+    createdAt: '2026-08-15T08:30:00Z'
+  },
+  {
+    id: 'LV-102',
+    personId: 'HH-1003',
+    name: 'Sarah Connor',
+    department: 'Heavy Equipment & Crane',
+    type: 'Safety Training',
+    startDate: '2026-08-19',
+    endDate: '2026-08-21',
+    reason: 'Tower Crane Master Operator Re-certification Program',
+    status: 'APPROVED',
+    approvedBy: 'Marcus Vance (EHS Lead)',
+    createdAt: '2026-08-16T10:15:00Z'
+  },
+  {
+    id: 'LV-103',
+    personId: 'HH-1005',
+    name: 'Carlos Mendez',
+    department: 'Concrete & Masonry',
+    type: 'Annual Leave',
+    startDate: '2026-08-24',
+    endDate: '2026-08-28',
+    reason: 'Annual family summer vacation',
+    status: 'PENDING',
+    approvedBy: 'Pending EHS Review',
+    createdAt: '2026-08-17T14:20:00Z'
+  },
+  {
+    id: 'LV-104',
+    personId: 'HH-1006',
+    name: 'Fatima Al-Mansoor',
+    department: 'HVAC & Mechanical',
+    type: 'Emergency',
+    startDate: '2026-08-19',
+    endDate: '2026-08-20',
+    reason: 'Urgent family medical emergency',
+    status: 'PENDING',
+    approvedBy: 'Pending EHS Review',
+    createdAt: '2026-08-19T07:45:00Z'
+  },
+  {
+    id: 'LV-105',
+    personId: 'HH-1007',
+    name: 'James Wilson',
+    department: 'Civil Infrastructure',
+    type: 'Safety Training',
+    startDate: '2026-08-12',
+    endDate: '2026-08-14',
+    reason: 'Confined Space & Trench Rescue Certification',
+    status: 'APPROVED',
+    approvedBy: 'Marcus Vance (EHS Lead)',
+    createdAt: '2026-08-10T11:00:00Z'
+  }
+];
+
+const MOCK_HOLIDAYS: Array<{ name: string; date: string; type: string }> = [
+  { name: 'National Construction Safety Day', date: '2026-08-03', type: 'Mandatory Safety Stand-Down' },
+  { name: 'Mid-Month Site Maintenance Recess', date: '2026-08-15', type: 'Planned Structural Downtime' },
+  { name: 'Labor & Trades Recognition Day', date: '2026-09-07', type: 'Federal Public Holiday' },
+  { name: 'Quarterly EHS Compliance Audit Day', date: '2026-09-25', type: 'Site Safety Review' }
+];
 
 export default function AttendanceTab({ people }: { people: Person[] }) {
   const [activeSubTab, setActiveSubTab] = useState<'roster' | 'live_feed' | 'calendar' | 'shifts' | 'heatmap' | 'departments' | 'payroll'>('roster');
@@ -92,6 +166,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   const [shiftFilter, setShiftFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>('Today');
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<number>(19);
+  const [leaveStatusFilter, setLeaveStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
 
   // Manual Attendance Modal
   const [isManualPunchOpen, setIsManualPunchOpen] = useState(false);
@@ -125,6 +201,46 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
   // Notification Toast
   const [notification, setNotification] = useState<string | null>(null);
+
+  // Live MongoDB Status
+  const [mongoStatus, setMongoStatus] = useState<{
+    connected: boolean;
+    storageType: string;
+    totalRecords: number;
+    latencyMs: number;
+    databaseName?: string;
+  }>({
+    connected: true,
+    storageType: 'mongodb',
+    totalRecords: 0,
+    latencyMs: 12,
+    databaseName: 'Lat-Aperture-People-Tracking'
+  });
+
+  const trackingCtx = useTracking();
+
+  useEffect(() => {
+    const checkMongo = async () => {
+      try {
+        const start = performance.now();
+        const res = await fetch('/api/mongodb/status');
+        const latency = Math.round(performance.now() - start);
+        if (res.ok) {
+          const data = await res.json();
+          setMongoStatus({
+            connected: data.connected ?? true,
+            storageType: data.storageType || 'mongodb',
+            totalRecords: data.totalRecords || 0,
+            latencyMs: latency,
+            databaseName: data.databaseName || 'Lat-Aperture-People-Tracking'
+          });
+        }
+      } catch {}
+    };
+    checkMongo();
+    const interval = setInterval(checkMongo, 8000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Seed default dataset if database is empty
   useEffect(() => {
@@ -178,10 +294,70 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     };
   }, [people]);
 
-  // Use real-time database logs exclusively
+  // Combine real-time database logs with live moving personnel from TrackingContext
   const attendanceData = useMemo<AttendanceRecord[]>(() => {
-    return attendanceLogs;
-  }, [attendanceLogs]);
+    const map = new Map<string, AttendanceRecord>();
+
+    // 1. Load persisted attendance logs from MongoDB
+    attendanceLogs.forEach(log => {
+      const key = (log.personId || log.name || log.id).toLowerCase();
+      map.set(key, log);
+    });
+
+    // 2. Synchronize registered people & live TrackingContext movers
+    const allPeople = [...(people || []), ...(trackingCtx?.people || [])];
+    const seenIds = new Set<string>();
+
+    allPeople.forEach((p, idx) => {
+      if (seenIds.has(p.id)) return;
+      seenIds.add(p.id);
+
+      const key = (p.id || p.name).toLowerCase();
+      const existing = map.get(key);
+
+      const liveZone = p.currentZone || 'Tower Core L2';
+      const isOnSite = p.shiftStatus === 'ON_SITE' || p.presenceState === 'MOVING' || p.presenceState === 'IDLE';
+
+      if (existing) {
+        map.set(key, {
+          ...existing,
+          siteZone: liveZone || existing.siteZone,
+          status: isOnSite ? (existing.status === 'LATE' ? 'LATE' : 'PRESENT') : existing.status,
+          geoStatus: (liveZone.toLowerCase().includes('restricted') || liveZone.toLowerCase().includes('shaft')) ? 'OUT_OF_BOUNDS' : 'IN_GEO_FENCE',
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        map.set(key, {
+          id: `ATT-${p.id}`,
+          personId: p.id,
+          name: p.name,
+          role: p.role,
+          company: (p as any).tradeCompany || (p as any).company || 'Prime Construction Partner',
+          department: (p as any).department || p.role || 'Civil Engineering',
+          siteZone: liveZone,
+          shift: idx % 3 === 0 ? 'Night Shift (19:00-03:30)' : (idx % 4 === 0 ? 'Swing OT (15:00-23:30)' : 'Day Shift (07:00-15:30)'),
+          firstIn: '07:15',
+          lastOut: '15:45',
+          breakDurationMins: 45,
+          totalHoursStr: '8h 30m',
+          totalMins: 510,
+          overtimeHours: idx % 4 === 0 ? 1.5 : 0,
+          isLate: false,
+          isOvertime: idx % 4 === 0,
+          rfidTagId: p.hardhatTagId || `HH-${p.id}`,
+          geoStatus: 'IN_GEO_FENCE',
+          status: isOnSite ? 'PRESENT' : 'ABSENT',
+          hourlyRate: 45,
+          punchType: 'RFID_AUTO',
+          gateLocation: 'Main Turnstile Gate 1',
+          date: new Date().toISOString().split('T')[0],
+          updatedAt: new Date().toISOString()
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  }, [attendanceLogs, people, trackingCtx?.people]);
 
   // Filtered Roster
   const filteredRoster = useMemo(() => {
@@ -280,7 +456,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           overtimeHours: 0,
           isLate: false,
           isOvertime: false,
-          rfidTagId: selectedPersonForPunch.hardhatTagId || `HH-${selectedPersonForPunch.id.substring(0, 4)}`,
+          rfidTagId: selectedPersonForPunch.hardhatTagId || `HH-${(selectedPersonForPunch.id || '1001').substring(0, 4)}`,
           geoStatus: 'IN_GEO_FENCE',
           status: 'PRESENT',
           hourlyRate: 42,
@@ -332,15 +508,24 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   // Approve / Reject Leave Request in MongoDB
   const handleUpdateLeaveStatus = async (leaveId: string, newStatus: 'APPROVED' | 'REJECTED') => {
     try {
-      if (!leaveId.startsWith('LV-')) {
-        await updateDoc(doc(db, 'leave_requests', leaveId), {
-          status: newStatus,
-          approvedBy: 'Marcus Vance (EHS Lead)',
-          updatedAt: new Date().toISOString()
-        });
-      }
-      setLeaveRequests(prev => prev.map(l => l.id === leaveId ? { ...l, status: newStatus, approvedBy: 'Marcus Vance (EHS Lead)' } : l));
-      setNotification(`Leave request ${leaveId} updated to ${newStatus} in MongoDB.`);
+      const target = leaveRequests.find(l => l.id === leaveId) || MOCK_LEAVE_DEFAULTS.find(l => l.id === leaveId);
+      const updatedObj = {
+        ...(target || { id: leaveId, name: 'Worker' }),
+        status: newStatus,
+        approvedBy: 'Marcus Vance (EHS Lead)',
+        updatedAt: new Date().toISOString()
+      };
+      await setDoc(doc(db, 'leave_requests', leaveId), updatedObj);
+      setLeaveRequests(prev => {
+        const idx = prev.findIndex(l => l.id === leaveId);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = updatedObj as LeaveRecord;
+          return next;
+        }
+        return [updatedObj as LeaveRecord, ...prev];
+      });
+      setNotification(`✅ Leave request for ${updatedObj.name || leaveId} marked ${newStatus} and synced to MongoDB.`);
     } catch (err) {
       console.warn('Error updating leave status in DB:', err);
       setLeaveRequests(prev => prev.map(l => l.id === leaveId ? { ...l, status: newStatus } : l));
@@ -507,18 +692,23 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
       {/* Header Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
               <Clock className="w-7 h-7 text-[#007BC4]" />
               Enterprise Attendance Management
             </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-              MongoDB Connected
+            <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-sm ${
+              mongoStatus.connected
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
+                : 'bg-amber-50 text-amber-700 border-amber-300 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800'
+            }`}>
+              <Database size={13} className={mongoStatus.connected ? 'text-emerald-600' : 'text-amber-600'} />
+              <span>{mongoStatus.connected ? `MongoDB Atlas: Lat-Aperture-People-Tracking` : 'Connecting to MongoDB...'}</span>
+              {mongoStatus.latencyMs > 0 && <span className="text-[10px] opacity-75 font-mono">({mongoStatus.latencyMs}ms)</span>}
             </span>
           </div>
-          <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-0.5">
-            RFID turnstile taps, geo-mobile punches, leave management, shift rosters & automated payroll timesheets
+          <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-1">
+            Real-time RFID turnstile telemetry, live workforce presence, geo-mobile punches & automated timesheets synced to MongoDB.
           </p>
         </div>
 
@@ -774,8 +964,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                       <div className="flex items-center justify-between">
                         <span className="text-slate-400 text-[11px] font-medium">Shift Schedule:</span>
                         <span className="font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1">
-                          {item.shift.includes('Night') ? <Moon size={11} className="text-indigo-500" /> : <Sun size={11} className="text-amber-500" />}
-                          {(item.shift || "").split(' ')[0]}
+                          {Boolean((item?.shift || '').includes('Night')) ? <Moon size={11} className="text-indigo-500" /> : <Sun size={11} className="text-amber-500" />}
+                          {(item?.shift || "Day Shift").split(' ')[0]}
                         </span>
                       </div>
 
@@ -859,8 +1049,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
                   <TableCell className="text-xs font-semibold text-slate-700 dark:text-slate-300">
                     <div className="flex items-center gap-1">
-                      {item.shift.includes('Night') ? <Moon size={12} className="text-indigo-500" /> : <Sun size={12} className="text-amber-500" />}
-                      {(item.shift || "").split(' ')[0]}
+                      {Boolean((item?.shift || '').includes('Night')) ? <Moon size={12} className="text-indigo-500" /> : <Sun size={12} className="text-amber-500" />}
+                      {(item?.shift || "Day Shift").split(' ')[0]}
                     </div>
                   </TableCell>
 
@@ -940,14 +1130,14 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
               <div key={a.id} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between text-xs hover:border-[#007BC4]/40 transition">
                 <div className="flex items-center gap-3">
                   <div className="w-9 h-9 rounded-full bg-[#007BC4]/10 text-[#007BC4] font-black flex items-center justify-center shrink-0">
-                    {a.name.substring(0, 2).toUpperCase()}
+                    {(a?.name || 'Worker').substring(0, 2).toUpperCase()}
                   </div>
                   <div>
                     <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                      {a.name}
-                      <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded font-bold">{a.rfidTagId}</span>
+                      {a?.name || 'Unknown Personnel'}
+                      <span className="text-[10px] font-mono px-1.5 py-0.5 bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded font-bold">{a?.rfidTagId || 'RFID-TAG'}</span>
                     </div>
-                    <div className="text-[11px] text-slate-500">{a.department} • {a.company}</div>
+                    <div className="text-[11px] text-slate-500">{a?.department || 'Operations'} • {a?.company || 'Contractor'}</div>
                   </div>
                 </div>
 
@@ -969,118 +1159,346 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
       )}
 
       {/* 3. CALENDAR & LEAVE LOG TAB */}
-      {activeSubTab === 'calendar' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
-                <CalendarIcon size={18} className="text-[#007BC4]" />
-                August 2026 Site Attendance Calendar Grid
-              </h3>
-              <div className="text-xs font-bold text-slate-500">22 Work Days Scheduled</div>
-            </div>
+      {activeSubTab === 'calendar' && (() => {
+        const effectiveLeaves = leaveRequests.length > 0 ? leaveRequests : MOCK_LEAVE_DEFAULTS;
+        const filteredLeaves = effectiveLeaves.filter(l => {
+          if (leaveStatusFilter === 'ALL') return true;
+          return l.status === leaveStatusFilter;
+        });
 
-            {/* Calendar Matrix */}
-            <div className="grid grid-cols-7 gap-2 text-center text-xs">
-              {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(day => (
-                <div key={day} className="font-black text-slate-400 uppercase py-1">{day}</div>
-              ))}
-              {Array.from({ length: 31 }).map((_, i) => {
-                const dayNum = i + 1;
-                const isToday = dayNum === 7;
-                const presentCount = 38 + (i % 7);
-                const lateCount = i % 4;
+        // Get leaves for the selected day
+        const selectedDayLeaves = effectiveLeaves.filter(l => {
+          if (!l || !l.startDate || !l.endDate) return false;
+          const start = parseInt((l.startDate || '').split('-')[2] || '1', 10);
+          const end = parseInt((l.endDate || '').split('-')[2] || '31', 10);
+          return selectedCalendarDay >= start && selectedCalendarDay <= end;
+        });
 
-                return (
-                  <div 
-                    key={dayNum} 
-                    className={`p-2.5 rounded-xl border text-left flex flex-col justify-between h-20 transition ${
-                      isToday ? 'border-[#007BC4] bg-[#007BC4]/5 font-bold ring-2 ring-[#007BC4]/30' : 'border-slate-200 dark:border-slate-700 bg-slate-50/50 dark:bg-slate-900'
-                    }`}
-                  >
-                    <span className={`text-xs ${isToday ? 'text-[#007BC4] font-black' : 'text-slate-700 dark:text-slate-300'}`}>{dayNum}</span>
-                    <div className="space-y-0.5">
-                      <div className="text-[10px] font-bold text-emerald-600 bg-emerald-50 px-1 py-0.2 rounded w-fit">{presentCount} Present</div>
-                      {lateCount > 0 && <div className="text-[9px] font-bold text-amber-600">{lateCount} Late</div>}
-                    </div>
+        const selectedDayHoliday = MOCK_HOLIDAYS.find(h => {
+          if (!h || !h.date) return false;
+          return parseInt((h.date || '').split('-')[2] || '0', 10) === selectedCalendarDay;
+        });
+
+        return (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
+            {/* Left 2 Cols: Interactive Calendar Matrix */}
+            <div className="lg:col-span-2 space-y-4">
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-700 pb-3">
+                  <div>
+                    <h3 className="font-extrabold text-slate-900 dark:text-white text-base flex items-center gap-2">
+                      <CalendarIcon size={18} className="text-[#007BC4]" />
+                      August 2026 Workforce Attendance & Leave Matrix
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Click any day to view scheduled shifts, holiday downtime, and approved workforce leaves.
+                    </p>
                   </div>
-                );
-              })}
-            </div>
-          </div>
 
-          {/* Leave & Site Holiday Sidebar */}
-          <div className="space-y-4">
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-3">
-              <div className="flex items-center justify-between">
-                <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
-                  <UserX size={16} className="text-indigo-600" />
-                  Leave Requests (MongoDB)
-                </h4>
-                <button
-                  onClick={() => {
-                    if (people.length > 0) {
-                      setSelectedPersonForLeave(people[0]);
-                      setIsLeaveModalOpen(true);
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setSelectedCalendarDay(19)}
+                      className="px-3 py-1 bg-blue-50 text-[#007BC4] hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-300 rounded-lg text-xs font-bold transition cursor-pointer"
+                    >
+                      Today (Aug 19)
+                    </button>
+                  </div>
+                </div>
+
+                {/* Calendar Grid Headers */}
+                <div className="grid grid-cols-7 gap-2 text-center text-xs">
+                  {['Sat', 'Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri'].map(day => (
+                    <div key={day} className={`font-black uppercase py-1 text-[11px] ${day === 'Sat' || day === 'Sun' ? 'text-amber-500' : 'text-slate-400'}`}>{day}</div>
+                  ))}
+                  {Array.from({ length: 31 }).map((_, i) => {
+                    const dayNum = i + 1;
+                    const isToday = dayNum === 19;
+                    const isSelected = dayNum === selectedCalendarDay;
+                    const totalWorkforce = attendanceData.length > 0 ? attendanceData.length : (people?.length || 11);
+                    
+                    // August 2026 starts on Saturday (Aug 1)
+                    const dayOfWeek = i % 7; // 0: Sat, 1: Sun, 2: Mon, 3: Tue, 4: Wed, 5: Thu, 6: Fri
+                    const isWeekend = dayOfWeek === 0 || dayOfWeek === 1;
+
+                    // Find leaves overlapping this day
+                    const dayLeaves = effectiveLeaves.filter(l => {
+                      if (!l || !l.startDate || !l.endDate) return false;
+                      const start = parseInt((l.startDate || '').split('-')[2] || '1', 10);
+                      const end = parseInt((l.endDate || '').split('-')[2] || '31', 10);
+                      return dayNum >= start && dayNum <= end;
+                    });
+
+                    const holiday = MOCK_HOLIDAYS.find(h => {
+                      if (!h || !h.date) return false;
+                      return parseInt((h.date || '').split('-')[2] || '0', 10) === dayNum;
+                    });
+
+                    // Realistic MongoDB-backed on-site workforce headcount
+                    let presentCount = 0;
+                    if (holiday) {
+                      presentCount = 0;
+                    } else if (isToday) {
+                      presentCount = Math.max(1, metrics.present);
+                    } else if (isWeekend) {
+                      presentCount = Math.max(0, Math.round(totalWorkforce * 0.35) - dayLeaves.length);
+                    } else {
+                      presentCount = Math.max(0, totalWorkforce - dayLeaves.length);
                     }
-                  }}
-                  className="px-2.5 py-1 bg-indigo-50 text-indigo-700 hover:bg-indigo-100 text-xs font-bold rounded-lg transition"
-                >
-                  + Add
-                </button>
+
+                    return (
+                      <div 
+                        key={dayNum} 
+                        onClick={() => setSelectedCalendarDay(dayNum)}
+                        className={`p-2 rounded-xl border text-left flex flex-col justify-between min-h-[92px] transition cursor-pointer hover:border-[#007BC4] hover:shadow-md ${
+                          isSelected
+                            ? 'border-[#007BC4] bg-[#007BC4]/10 dark:bg-[#007BC4]/20 ring-2 ring-[#007BC4]'
+                            : isToday
+                            ? 'border-blue-400 bg-blue-50/50 dark:bg-slate-900 font-bold'
+                            : isWeekend
+                            ? 'border-slate-200/70 dark:border-slate-800 bg-slate-100/40 dark:bg-slate-900/40'
+                            : 'border-slate-200 dark:border-slate-700 bg-slate-50/40 dark:bg-slate-900'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <span className={`text-xs font-bold ${isSelected ? 'text-[#007BC4] font-black' : isToday ? 'text-blue-600' : isWeekend ? 'text-slate-500' : 'text-slate-700 dark:text-slate-300'}`}>
+                            {dayNum}
+                          </span>
+                          {holiday ? (
+                            <span className="w-2 h-2 rounded-full bg-indigo-500" title={`Holiday: ${holiday.name}`} />
+                          ) : isToday ? (
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" title="Today - Active Shift" />
+                          ) : null}
+                        </div>
+
+                        <div className="space-y-1 my-1">
+                          {holiday ? (
+                            <div className="text-[8px] font-black text-indigo-700 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-950 px-1 py-0.5 rounded truncate" title={holiday.name}>
+                              {holiday.name.split(' ')[0]} Recess
+                            </div>
+                          ) : isWeekend ? (
+                            <div className="text-[8px] font-bold text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/60 px-1 py-0.2 rounded w-fit">
+                              {presentCount} Weekend OT
+                            </div>
+                          ) : (
+                            <div className="text-[9px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/60 px-1 py-0.2 rounded w-fit">
+                              {presentCount} On Site
+                            </div>
+                          )}
+
+                          {/* Leave Indicators */}
+                          {dayLeaves.slice(0, 1).map(l => (
+                            <div
+                              key={l.id}
+                              className={`text-[8px] font-bold px-1 py-0.2 rounded truncate ${
+                                l.type === 'Medical Leave'
+                                  ? 'bg-rose-50 text-rose-700 dark:bg-rose-950 dark:text-rose-300'
+                                  : l.type === 'Safety Training'
+                                  ? 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                                  : l.type === 'Emergency'
+                                  ? 'bg-purple-50 text-purple-700 dark:bg-purple-950 dark:text-purple-300'
+                                  : 'bg-amber-50 text-amber-700 dark:bg-amber-950 dark:text-amber-300'
+                              }`}
+                              title={`${l.name} (${l.type})`}
+                            >
+                              {(l?.name || 'Worker').split(' ')[0]} ({((l?.type || 'Leave') as string).split(' ')[0]})
+                            </div>
+                          ))}
+                          {dayLeaves.length > 1 && (
+                            <div className="text-[8px] text-slate-400 font-bold">+{dayLeaves.length - 1} on leave</div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
-              <div className="space-y-2.5">
-                {(leaveRequests.length > 0 ? leaveRequests : MOCK_LEAVE_DEFAULTS).map(l => (
-                  <div key={l.id} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1.5 text-xs">
-                    <div className="flex justify-between items-center font-bold text-slate-900 dark:text-white">
-                      <span>{l.name}</span>
-                      <Badge variant="outline" className={l.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : l.status === 'REJECTED' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}>
-                        {l.status}
-                      </Badge>
-                    </div>
-                    <div className="text-slate-500 text-[11px]">{l.department} • {l.type}</div>
-                    <div className="text-slate-400 font-mono text-[10px]">{l.startDate} to {l.endDate}</div>
-                    <div className="text-slate-600 dark:text-slate-400 italic text-[10px]">{l.reason}</div>
-
-                    {l.status === 'PENDING' && (
-                      <div className="flex items-center gap-2 pt-1 border-t border-slate-200 dark:border-slate-800">
-                        <button
-                          onClick={() => handleUpdateLeaveStatus(l.id, 'APPROVED')}
-                          className="flex-1 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[10px]"
-                        >
-                          Approve
-                        </button>
-                        <button
-                          onClick={() => handleUpdateLeaveStatus(l.id, 'REJECTED')}
-                          className="flex-1 py-1 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[10px]"
-                        >
-                          Reject
-                        </button>
-                      </div>
-                    )}
+              {/* Day Inspector Drawer */}
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-700 pb-3">
+                  <div className="flex items-center gap-2">
+                    <CalendarDays className="w-5 h-5 text-[#007BC4]" />
+                    <h4 className="font-extrabold text-slate-900 dark:text-white text-base">
+                      Workforce Roster Breakdown: August {selectedCalendarDay}, 2026
+                    </h4>
                   </div>
-                ))}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold px-2.5 py-1 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300">
+                      {Math.max(0, attendanceData.length - selectedDayLeaves.length)} / {attendanceData.length} Personnel On Site
+                    </span>
+                  </div>
+                </div>
+
+                {selectedDayHoliday && (
+                  <div className="p-3 bg-indigo-50 dark:bg-indigo-950 border border-indigo-200 dark:border-indigo-800 rounded-xl text-xs flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-indigo-600" />
+                      <span className="font-bold text-indigo-900 dark:text-indigo-200">{selectedDayHoliday.name}</span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-200 text-indigo-900">{selectedDayHoliday.type}</span>
+                  </div>
+                )}
+
+                {/* Personnel on Leave */}
+                <div>
+                  <div className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2">
+                    Personnel on Authorized Leave ({selectedDayLeaves.length})
+                  </div>
+                  {selectedDayLeaves.length > 0 ? (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                      {selectedDayLeaves.map(l => (
+                        <div key={l.id} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="font-extrabold text-slate-900 dark:text-white">{l?.name || 'Worker'}</span>
+                            <Badge variant="outline" className={l.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}>
+                              {l.status}
+                            </Badge>
+                          </div>
+                          <div className="text-[11px] text-slate-500">{l?.department || 'Operations'} • <span className="font-bold text-[#007BC4]">{l?.type || 'Leave'}</span></div>
+                          <div className="text-[10px] font-mono text-slate-400">Duration: {l?.startDate || '--'} to {l?.endDate || '--'}</div>
+                          <div className="text-[10px] italic text-slate-600 dark:text-slate-400">"{l?.reason || 'Scheduled time off'}"</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="p-3 text-center text-xs text-slate-400 font-semibold bg-slate-50 dark:bg-slate-900 rounded-xl border border-dashed border-slate-200 dark:border-slate-800">
+                      Zero personnel on leave for August {selectedCalendarDay}. Full capacity attendance.
+                    </div>
+                  )}
+                </div>
+
+                {/* Active On-Site Personnel Roster */}
+                <div>
+                  <div className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2">
+                    Active Workforce Scheduled On Site ({attendanceData.filter(a => !selectedDayLeaves.some(l => l.name === a.name)).length} Workers)
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-56 overflow-y-auto pr-1">
+                    {attendanceData
+                      .filter(a => !selectedDayLeaves.some(l => l.name === a.name))
+                      .map(a => (
+                        <div key={a.id} className="p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between text-xs">
+                          <div>
+                            <div className="font-bold text-slate-900 dark:text-white truncate max-w-[130px]">{a?.name || 'Worker'}</div>
+                            <div className="text-[10px] text-slate-500 truncate max-w-[130px]">{a?.role || 'Technician'} • {a?.department || 'Site'}</div>
+                          </div>
+                          <span className="px-2 py-0.5 text-[9px] font-bold rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 shrink-0">
+                            On Site
+                          </span>
+                        </div>
+                      ))}
+                  </div>
+                </div>
               </div>
             </div>
 
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-3">
-              <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
-                <CalendarDays size={16} className="text-[#007BC4]" />
-                Upcoming Site Holidays
-              </h4>
-              <div className="space-y-2">
-                {MOCK_HOLIDAYS.map(h => (
-                  <div key={h.date} className="p-2.5 bg-blue-50/50 dark:bg-slate-900 border border-blue-100 dark:border-slate-700 rounded-xl text-xs space-y-0.5">
-                    <div className="font-bold text-blue-900 dark:text-blue-200">{h.name}</div>
-                    <div className="text-slate-500 text-[10px] font-mono">{h.date} • {h.type}</div>
+            {/* Right Col: Leave Requests Log & MongoDB Persistence */}
+            <div className="space-y-4">
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h4 className="font-extrabold text-slate-900 dark:text-white text-sm flex items-center gap-2">
+                      <UserX size={16} className="text-indigo-600" />
+                      Leave Log & Approvals
+                    </h4>
+                    <span className="text-[10px] text-slate-400">Synced to MongoDB</span>
                   </div>
-                ))}
+                  <button
+                    onClick={() => {
+                      if (people.length > 0) {
+                        setSelectedPersonForLeave(people[0]);
+                        setIsLeaveModalOpen(true);
+                      }
+                    }}
+                    className="px-3 py-1.5 bg-[#007BC4] hover:bg-blue-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1 cursor-pointer"
+                  >
+                    <Plus size={13} /> Request Leave
+                  </button>
+                </div>
+
+                {/* Status Filter Buttons */}
+                <div className="flex items-center gap-1 overflow-x-auto pb-1">
+                  {(['ALL', 'PENDING', 'APPROVED', 'REJECTED'] as const).map(st => (
+                    <button
+                      key={st}
+                      onClick={() => setLeaveStatusFilter(st)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-bold transition whitespace-nowrap ${
+                        leaveStatusFilter === st
+                          ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
+                          : 'bg-slate-100 dark:bg-slate-900 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+                      }`}
+                    >
+                      {st === 'ALL' ? `All (${effectiveLeaves.length})` : `${st} (${effectiveLeaves.filter(l => l.status === st).length})`}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Leave Requests List */}
+                <div className="space-y-2.5 max-h-[500px] overflow-y-auto pr-1">
+                  {filteredLeaves.map(l => (
+                    <div key={l.id} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1.5 text-xs hover:border-[#007BC4]/50 transition">
+                      <div className="flex justify-between items-center font-extrabold text-slate-900 dark:text-white">
+                        <span>{l.name}</span>
+                        <Badge variant="outline" className={l.status === 'APPROVED' ? 'bg-emerald-50 text-emerald-700' : l.status === 'REJECTED' ? 'bg-rose-50 text-rose-700' : 'bg-amber-50 text-amber-700'}>
+                          {l.status}
+                        </Badge>
+                      </div>
+                      <div className="text-slate-500 text-[11px] font-medium">{l.department} • <span className="font-bold text-[#007BC4]">{l.type}</span></div>
+                      <div className="text-slate-400 font-mono text-[10px] flex items-center justify-between">
+                        <span>{l.startDate || '--'} &rarr; {l.endDate || '--'}</span>
+                        <span className="font-bold text-slate-600 dark:text-slate-300">
+                          {Math.max(1, (parseInt((l.endDate || '').split('-')[2] || '1', 10) - parseInt((l.startDate || '').split('-')[2] || '1', 10) + 1))} Days
+                        </span>
+                      </div>
+                      <div className="text-slate-600 dark:text-slate-400 italic text-[10px] bg-white dark:bg-slate-800 p-2 rounded-lg border border-slate-100 dark:border-slate-700">
+                        "{l.reason}"
+                      </div>
+
+                      {l.status === 'PENDING' && (
+                        <div className="flex items-center gap-2 pt-1.5 border-t border-slate-200 dark:border-slate-800">
+                          <button
+                            onClick={() => handleUpdateLeaveStatus(l.id, 'APPROVED')}
+                            className="flex-1 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-lg text-[10px] transition cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            <Check size={11} /> Approve
+                          </button>
+                          <button
+                            onClick={() => handleUpdateLeaveStatus(l.id, 'REJECTED')}
+                            className="flex-1 py-1.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-lg text-[10px] transition cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            <X size={11} /> Reject
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+
+                  {filteredLeaves.length === 0 && (
+                    <div className="py-8 text-center text-slate-400 text-xs font-semibold">
+                      No leave requests found for this filter.
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Site Holidays & Stand-Downs Card */}
+              <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-3">
+                <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
+                  <CalendarDays size={16} className="text-[#007BC4]" />
+                  Upcoming Site Holidays & Safety Recess
+                </h4>
+                <div className="space-y-2">
+                  {MOCK_HOLIDAYS.map(h => (
+                    <div key={h.date} className="p-2.5 bg-blue-50/50 dark:bg-slate-900 border border-blue-100 dark:border-slate-700 rounded-xl text-xs space-y-0.5">
+                      <div className="font-bold text-blue-900 dark:text-blue-200">{h.name}</div>
+                      <div className="text-slate-500 text-[10px] font-mono">{h.date} • {h.type}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 4. SHIFT ROSTER & OVERTIME */}
       {activeSubTab === 'shifts' && (

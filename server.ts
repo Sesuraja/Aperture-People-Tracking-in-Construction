@@ -15,6 +15,7 @@ import { createServer as createViteServer } from 'vite';
 import { initDatabase, startRealTimeTagsCleanupJob } from './src/server/services/db.js';
 import { connectionsRouter } from './src/server/routes/connections.js';
 import { startPollingService } from './src/server/services/connectionPoller.js';
+import { initWebSocketServer } from './src/server/services/websocket.js';
 import { authRouter, bootstrapAdminUser } from './src/server/routes/auth.js';
 import { adminRouter } from './src/server/routes/admin.js';
 import { rfidRouter } from './src/server/routes/rfid.js';
@@ -39,6 +40,7 @@ async function startServer() {
   startRealTimeTagsCleanupJob(15, 60);
   startPollingService();
   await bootstrapAdminUser();
+  initWebSocketServer(httpServer);
 
   // Helmet HTTP security headers (configured for iframe & SPA compatibility)
   app.use(helmet({

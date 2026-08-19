@@ -1881,6 +1881,7 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
     await seedCollection('leave_requests', DEFAULT_LEAVE_REQUESTS);
     await seedCollection('shift_schedules', DEFAULT_SHIFT_SCHEDULES);
     await seedCollection('alerts', DEFAULT_ALERTS);
+    await seedCollection('alerts_enterprise', DEFAULT_ALERTS);
     await seedCollection('incidents_enterprise', DEFAULT_INCIDENTS_ENTERPRISE);
     await seedCollection('alert_rules', DEFAULT_ALERT_RULES);
     await seedCollection('emergency_broadcasts', DEFAULT_EMERGENCY_BROADCASTS);

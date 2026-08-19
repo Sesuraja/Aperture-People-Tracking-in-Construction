@@ -881,9 +881,19 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
     const ZONE_KEYS = Object.keys(ZONES_GRAPH);
 
+    // Realistic pacing: 1000ms tick with staggered, human-like worker movement
     const moveInterval = setInterval(() => {
       setPeople(prevPeople => {
         if (!prevPeople || prevPeople.length === 0) return prevPeople;
+
+        // Count how many workers are currently in transit between zones
+        const activeMoversCount = prevPeople.filter(p => 
+          ((p as any).waypoints && (p as any).waypoints.length > 0) || 
+          p.presenceState === 'MOVING'
+        ).length;
+
+        // Concurrency budget: Only 1 or 2 workers moving simultaneously across site corridors
+        const maxConcurrentMovers = 2;
 
         return prevPeople.map((p, idx) => {
           let currX = p.x;
@@ -891,57 +901,52 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
           let targetX = (p as any).targetX;
           let targetY = (p as any).targetY;
           let waypoints: { x: number; y: number }[] = (p as any).waypoints || [];
-          let idleTicks = (p as any).idleRemaining || 0;
+          let idleTicks = (p as any).idleRemaining !== undefined ? (p as any).idleRemaining : (idx * 5 + 8);
           let currentZone = p.currentZone || 'Tower Core';
 
-          // If no active destination or reached current waypoint
-          if (targetX === undefined || targetY === undefined || Math.hypot(targetX - currX, targetY - currY) < 1.0) {
+          const hasReachedTarget = targetX === undefined || targetY === undefined || Math.hypot(targetX - currX, targetY - currY) < 0.8;
+
+          // If reached current waypoint or stationary
+          if (hasReachedTarget) {
             if (waypoints.length > 0) {
-              // Proceed to next corridor waypoint
+              // Move to next waypoint in the route
               const nextWp = waypoints[0];
               waypoints = waypoints.slice(1);
               targetX = nextWp.x;
               targetY = nextWp.y;
             } else if (idleTicks > 0) {
-              // Worker is working/dwelling at current spot
+              // Worker is currently stationary working/dwelling at their station
               idleTicks -= 1;
               targetX = currX;
               targetY = currY;
-            } else if (Math.random() < 0.35) {
-              // Pause to perform task
-              idleTicks = Math.floor(Math.random() * 5) + 3;
+            } else if (activeMoversCount < maxConcurrentMovers && Math.random() < 0.25) {
+              // Worker finished task and is selected to move to a new zone
+              const otherZones = ZONE_KEYS.filter(z => z !== currentZone);
+              const nextZone = otherZones[Math.floor(Math.random() * otherZones.length)] || currentZone;
+              const srcInfo = ZONES_GRAPH[currentZone] || ZONES_GRAPH['Tower Core'];
+              const destInfo = ZONES_GRAPH[nextZone] || ZONES_GRAPH['Tower Core'];
+
+              const destRandomX = destInfo.x + (Math.random() - 0.5) * 5;
+              const destRandomY = destInfo.y + (Math.random() - 0.5) * 5;
+
+              // Route through designated corridor hubs
+              waypoints = [
+                srcInfo.corridorHub,
+                destInfo.corridorHub,
+                { x: destRandomX, y: destRandomY }
+              ];
+              const first = waypoints[0];
+              waypoints = waypoints.slice(1);
+              targetX = first.x;
+              targetY = first.y;
+              currentZone = nextZone;
+              // Reset idle counter for when they arrive at the new zone (15-35s dwell time)
+              idleTicks = Math.floor(Math.random() * 20) + 15;
+            } else {
+              // Remain working in place
+              idleTicks = Math.floor(Math.random() * 12) + 8;
               targetX = currX;
               targetY = currY;
-            } else {
-              // Decide next movement: small local wander or travel to another zone/reader
-              const willTravel = Math.random() < 0.45;
-              if (willTravel) {
-                // Pick a new zone to travel to
-                const otherZones = ZONE_KEYS.filter(z => z !== currentZone);
-                const nextZone = otherZones[Math.floor(Math.random() * otherZones.length)] || currentZone;
-                const srcInfo = ZONES_GRAPH[currentZone] || ZONES_GRAPH['Tower Core'];
-                const destInfo = ZONES_GRAPH[nextZone] || ZONES_GRAPH['Tower Core'];
-
-                // Route: current pos -> current corridor hub -> dest corridor hub -> dest zone point
-                const destRandomX = destInfo.x + (Math.random() - 0.5) * 6;
-                const destRandomY = destInfo.y + (Math.random() - 0.5) * 6;
-
-                waypoints = [
-                  srcInfo.corridorHub,
-                  destInfo.corridorHub,
-                  { x: destRandomX, y: destRandomY }
-                ];
-                const first = waypoints[0];
-                waypoints = waypoints.slice(1);
-                targetX = first.x;
-                targetY = first.y;
-                currentZone = nextZone;
-              } else {
-                // Local movement within zone
-                const zoneInfo = ZONES_GRAPH[currentZone] || ZONES_GRAPH['Tower Core'];
-                targetX = zoneInfo.x + (Math.random() - 0.5) * 8;
-                targetY = zoneInfo.y + (Math.random() - 0.5) * 8;
-              }
             }
           }
 
@@ -956,25 +961,25 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
             const dy = targetY - currY;
             const dist = Math.hypot(dx, dy);
 
-            if (dist > 0.3) {
+            if (dist > 0.4) {
               isMoving = true;
-              const step = Math.min(0.75, dist); // Smooth realistic step
+              // Gentle, realistic human walking step (~ 1.1 m/s)
+              const step = Math.min(0.32, dist);
               nextX += (dx / dist) * step;
               nextY += (dy / dist) * step;
               heading = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360);
-              speed = 1.4;
+              speed = 1.1;
             }
           }
 
-          // Hard bounds clamping
+          // Boundary clamping
           nextX = Math.max(4, Math.min(96, Math.round(nextX * 100) / 100));
           nextY = Math.max(6, Math.min(94, Math.round(nextY * 100) / 100));
 
           const currentTrail = p.trail || [];
-          // Record continuous trail when moving
           const newTrail = isMoving 
-            ? [...currentTrail.slice(-25), { x: nextX, y: nextY }] 
-            : (currentTrail.length > 20 ? currentTrail.slice(1) : currentTrail);
+            ? [...currentTrail.slice(-20), { x: nextX, y: nextY }] 
+            : (currentTrail.length > 10 ? currentTrail.slice(1) : currentTrail);
 
           return {
             ...p,
@@ -995,23 +1000,23 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         });
       });
 
-      // Smooth heavy vehicle corridor movement
+      // Smooth realistic construction vehicle movement (slow crawler speed)
       setVehicles(prevVehicles => {
         if (!prevVehicles || prevVehicles.length === 0) return prevVehicles;
         return prevVehicles.map((v, vIdx) => {
-          const speed = 0.5;
-          const t = (Date.now() / 4000 + vIdx * 2.1) % (Math.PI * 2);
+          const speed = 0.25;
+          const t = (Date.now() / 6000 + vIdx * 2.1) % (Math.PI * 2);
           const nextX = Math.max(10, Math.min(90, v.x + Math.sin(t) * speed));
           const nextY = Math.max(15, Math.min(85, v.y + Math.cos(t * 0.8) * speed * 0.3));
           return {
             ...v,
             x: Math.round(nextX * 100) / 100,
             y: Math.round(nextY * 100) / 100,
-            trail: [...(v.trail || []).slice(-12), { x: nextX, y: nextY }]
+            trail: [...(v.trail || []).slice(-10), { x: nextX, y: nextY }]
           };
         });
       });
-    }, 600);
+    }, 1000);
 
     return () => clearInterval(moveInterval);
   }, []);

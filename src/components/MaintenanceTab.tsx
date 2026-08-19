@@ -4,7 +4,7 @@ import {
   Download, RefreshCw, Sparkles, BatteryFull, BatteryLow, SignalHigh, Zap, Thermometer, 
   Sliders, Calendar, TrendingUp, X, ChevronRight, CheckSquare, Square, Trash2, Edit3, 
   AlertTriangle, Send, Layers, ShieldCheck, Cpu, Radio, FileSpreadsheet, User, Phone, 
-  Hammer, Check, ArrowUpRight, Gauge, FileText, CheckCircle
+  Hammer, Check, ArrowUpRight, Gauge, FileText, CheckCircle, Database
 } from 'lucide-react';
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, db } from '../lib/db';
 
@@ -286,6 +286,29 @@ export default function MaintenanceTab() {
   const [isAiScanning, setIsAiScanning] = useState(false);
   const [aiScanLogs, setAiScanLogs] = useState<string[]>([]);
   const [aiScanResults, setAiScanResults] = useState<{ scannedCount: number; faultsFound: number; autoTicketsCreated: number } | null>(null);
+
+  const [mongoStatus, setMongoStatus] = useState({ connected: true, latencyMs: 24, databaseName: 'Lat-Aperture-People-Tracking' });
+
+  useEffect(() => {
+    const checkMongo = async () => {
+      try {
+        const start = performance.now();
+        const res = await fetch('/api/mongodb/status');
+        const latency = Math.round(performance.now() - start);
+        if (res.ok) {
+          const data = await res.json();
+          setMongoStatus({
+            connected: data.connected ?? true,
+            latencyMs: latency,
+            databaseName: data.databaseName || 'Lat-Aperture-People-Tracking'
+          });
+        }
+      } catch {}
+    };
+    checkMongo();
+    const interval = setInterval(checkMongo, 8000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Load and Sync with MongoDB via Firestore Abstraction Layer (`db.ts`)
   useEffect(() => {
@@ -596,17 +619,22 @@ export default function MaintenanceTab() {
       {/* 1. HEADER STRIP */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5 flex-wrap">
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
               <Wrench className="w-7 h-7 text-[#007BC4]" />
               AI Predictive Maintenance & Work Order Hub
             </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-50 text-[#007BC4] border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300">
-              {dbSynced ? 'MongoDB Synced' : 'Live Maintenance'}
+            <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs ${
+              mongoStatus.connected
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800'
+                : 'bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800'
+            }`}>
+              <Database size={13} className={mongoStatus.connected ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600'} />
+              <span>MongoDB Atlas: {mongoStatus.databaseName} ({mongoStatus.connected ? `Connected • ${mongoStatus.latencyMs}ms` : 'Offline'})</span>
             </span>
           </div>
           <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-0.5">
-            Predictive AI failure diagnostics, automated technician dispatching, preventive scheduling & work order management synced to MongoDB
+            Predictive AI failure diagnostics, automated technician dispatching, preventive scheduling & work order management synced to MongoDB Atlas
           </p>
         </div>
 

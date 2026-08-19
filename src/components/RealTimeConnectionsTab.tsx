@@ -257,14 +257,18 @@ export default function RealTimeConnectionsTab() {
       {/* HEADER BAR */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
         <div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <span className="p-2 bg-[#007BC4]/10 text-[#007BC4] rounded-xl font-bold">
               <Zap className="w-5 h-5" />
             </span>
             <h2 className="text-xl font-extrabold text-slate-900 dark:text-white tracking-tight">WebSocket & MQTT Real-Time Connections Hub</h2>
+            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
+              <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
+              <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
+            </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Centralized credentials configuration, topic management, API key authentication, and live testing for WebSocket and MQTT streaming protocols.
+            Centralized credentials configuration, topic management, API key authentication, and live testing for WebSocket and MQTT streaming protocols synced with MongoDB Atlas.
           </p>
         </div>
 
