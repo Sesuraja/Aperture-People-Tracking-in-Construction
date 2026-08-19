@@ -16,8 +16,7 @@ import {
   Plus, Trash2, Power, Database, Share2, Eye, Server, RadioTower,
   CheckSquare, Square, ChevronRight, X
 } from 'lucide-react';
-import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
-import { db, collection, getDocs, addDoc, updateDoc, deleteDoc, doc, serverTimestamp } from '../lib/db';
+import { db, collection, getDocs, onSnapshot } from '../lib/db';
 
 const PALETTE = ['#007BC4', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4'];
 
@@ -60,15 +59,15 @@ const DEFAULT_SCHEDULED_REPORTS: ScheduledReportItem[] = [
   { id: 'rep-1', name: 'Daily EHS & Safety Compliance Summary', format: 'PDF', frequency: 'Daily at 06:00 AM', recipients: 'ehs-team@buildcorp.com', status: 'Active', lastRun: 'Today, 06:00 AM' },
   { id: 'rep-2', name: 'Weekly Executive Operations & Headcount Digest', format: 'PDF + CSV', frequency: 'Mondays at 08:00 AM', recipients: 'execs@buildcorp.com', status: 'Active', lastRun: 'Aug 14, 2026' },
   { id: 'rep-3', name: 'Subcontractor Attendance & Overtime Ledger', format: 'CSV', frequency: 'Weekly on Friday 05:00 PM', recipients: 'payroll@buildcorp.com', status: 'Active', lastRun: 'Aug 11, 2026' },
-  { id: 'rep-4', name: 'Equipment Heavy Machinery Runtime & Maintenance Log', format: 'PDF', frequency: 'Monthly 1st Day', recipients: 'fleet@buildcorp.com', status: 'Active', lastRun: 'Aug 01, 2026' }
+  { id: 'rep-4', name: 'Personnel RFID Scan & Shift Hours Ledger', format: 'PDF', frequency: 'Monthly 1st Day', recipients: 'safety@buildcorp.com', status: 'Active', lastRun: 'Aug 01, 2026' }
 ];
 
 const DEFAULT_EQUIPMENT: EquipmentItem[] = [
-  { id: 'eq-1', name: 'Tower Crane TC-01 (Potain MDT 389)', type: 'Crane', activeHours: 7.2, idleHours: 0.8, loadFactorPct: 84, fuelLiters: 180, maintDueDays: 14, status: 'Optimal' },
-  { id: 'eq-2', name: 'CAT 336 Heavy Crawler Excavator', type: 'Excavator', activeHours: 6.5, idleHours: 1.5, loadFactorPct: 78, fuelLiters: 240, maintDueDays: 3, status: 'Service Soon' },
-  { id: 'eq-3', name: 'Mobile Rough Terrain Crane MC-02', type: 'Crane', activeHours: 4.8, idleHours: 3.2, loadFactorPct: 62, fuelLiters: 130, maintDueDays: 22, status: 'Optimal' },
-  { id: 'eq-4', name: 'Schwing Stetter Concrete Pumping Rig', type: 'Pump', activeHours: 5.5, idleHours: 2.5, loadFactorPct: 90, fuelLiters: 195, maintDueDays: 8, status: 'Optimal' },
-  { id: 'eq-5', name: 'Bobcat T770 Compact Track Loader', type: 'Loader', activeHours: 6.1, idleHours: 1.9, loadFactorPct: 72, fuelLiters: 110, maintDueDays: 18, status: 'Optimal' }
+  { id: 'eq-1', name: 'Main Gate 1 UHF Turnstile Portal', type: 'Fixed UHF Portal', activeHours: 7.2, idleHours: 0.8, loadFactorPct: 98, fuelLiters: 250, maintDueDays: 14, status: 'Optimal' },
+  { id: 'eq-2', name: 'Tower Core Level 2 Scaffold Portal', type: 'UHF RFID Reader', activeHours: 6.5, idleHours: 1.5, loadFactorPct: 94, fuelLiters: 200, maintDueDays: 3, status: 'Service Soon' },
+  { id: 'eq-3', name: 'Deep Shaft Sector B Entry Gateway', type: 'UHF RFID Reader', activeHours: 4.8, idleHours: 3.2, loadFactorPct: 88, fuelLiters: 180, maintDueDays: 22, status: 'Optimal' },
+  { id: 'eq-4', name: 'Laydown Yard Personnel Perimeter Reader', type: 'Long-Range UHF', activeHours: 5.5, idleHours: 2.5, loadFactorPct: 92, fuelLiters: 210, maintDueDays: 8, status: 'Optimal' },
+  { id: 'eq-5', name: 'Site Welfare Container Portal Reader', type: 'Fixed UHF Portal', activeHours: 6.1, idleHours: 1.9, loadFactorPct: 90, fuelLiters: 190, maintDueDays: 18, status: 'Optimal' }
 ];
 
 export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps) {
@@ -132,6 +131,139 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     checkMongo();
     const intv = setInterval(checkMongo, 5000);
     return () => clearInterval(intv);
+  }, []);
+
+  const [portalReaders, setPortalReaders] = useState<any[]>([]);
+
+  useEffect(() => {
+    let hwDevs: any[] = [];
+    let stdDevs: any[] = [];
+
+    const syncPortals = () => {
+      const combined = [
+        ...hwDevs.map(d => ({
+          id: d.id || d.readerId || d.name,
+          name: d.name || d.readerName || 'GAO UHF 4-Port Reader',
+          zone: d.location || d.zone || 'Gate 1 Portal',
+          status: String(d.status || 'ONLINE').toUpperCase().trim(),
+          type: 'GAO UHF Fixed Portal',
+          rssi: d.rssi ? `${d.rssi} dBm` : `${-38 - Math.floor(Math.random() * 15)} dBm`,
+          rate: d.rate || '250 Hz',
+          scans: d.scans || d.totalScans || Math.floor(Math.random() * 80) + 110
+        })),
+        ...stdDevs.map(d => ({
+          id: d.id || d.name,
+          name: d.name || 'Portal Gateway Device',
+          zone: d.zone || d.location || 'Site Perimeter Gate',
+          status: String(d.status || 'ONLINE').toUpperCase().trim(),
+          type: 'Portal Gateway Anchor',
+          rssi: d.rssi ? `${d.rssi} dBm` : `${-42 - Math.floor(Math.random() * 20)} dBm`,
+          rate: d.rate || '200 Hz',
+          scans: d.scans || Math.floor(Math.random() * 60) + 90
+        }))
+      ];
+
+      const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
+      setPortalReaders(unique);
+    };
+
+    const unsub1 = onSnapshot(collection(db, 'hardware_readers'), (snapshot) => {
+      hwDevs = [];
+      snapshot.forEach(doc => hwDevs.push({ id: doc.id, ...doc.data() }));
+      syncPortals();
+    });
+
+    const unsub2 = onSnapshot(collection(db, 'devices'), (snapshot) => {
+      stdDevs = [];
+      snapshot.forEach(doc => stdDevs.push({ id: doc.id, ...doc.data() }));
+      syncPortals();
+    });
+
+    return () => {
+      unsub1();
+      unsub2();
+    };
+  }, []);
+
+  const [dbAttendanceData, setDbAttendanceData] = useState<any[]>([]);
+
+  useEffect(() => {
+    let logs: any[] = [];
+    let regPeople: any[] = [];
+
+    const computeTrend = () => {
+      if (logs.length > 0) {
+        const buckets: Record<string, { onTime: number; late: number; overtime: number }> = {
+          '06:00': { onTime: 0, late: 0, overtime: 0 },
+          '07:00': { onTime: 0, late: 0, overtime: 0 },
+          '08:00': { onTime: 0, late: 0, overtime: 0 },
+          '09:00': { onTime: 0, late: 0, overtime: 0 },
+          '12:00': { onTime: 0, late: 0, overtime: 0 },
+          '15:00': { onTime: 0, late: 0, overtime: 0 },
+          '18:00': { onTime: 0, late: 0, overtime: 0 },
+          '21:00': { onTime: 0, late: 0, overtime: 0 }
+        };
+
+        logs.forEach(log => {
+          const timeStr = log.checkInTime || log.timestamp || log.time || '08:00';
+          const hour = parseInt(String(timeStr).split(':')[0], 10) || 8;
+          let bucketKey = '08:00';
+          if (hour <= 6) bucketKey = '06:00';
+          else if (hour === 7) bucketKey = '07:00';
+          else if (hour === 8) bucketKey = '08:00';
+          else if (hour <= 10) bucketKey = '09:00';
+          else if (hour <= 13) bucketKey = '12:00';
+          else if (hour <= 16) bucketKey = '15:00';
+          else if (hour <= 19) bucketKey = '18:00';
+          else bucketKey = '21:00';
+
+          const st = String(log.status || '').toUpperCase();
+          if (st.includes('LATE')) buckets[bucketKey].late++;
+          else if (st.includes('OVERTIME')) buckets[bucketKey].overtime++;
+          else buckets[bucketKey].onTime++;
+        });
+
+        const chartArr = Object.entries(buckets).map(([time, counts]) => ({
+          time,
+          onTime: counts.onTime,
+          late: counts.late,
+          overtime: counts.overtime
+        }));
+
+        setDbAttendanceData(chartArr);
+      } else if (regPeople.length > 0) {
+        const activeCount = regPeople.filter(p => p.status === 'on-site' || p.status === 'ACTIVE' || p.present).length;
+        const exitedCount = Math.max(0, regPeople.length - activeCount);
+
+        setDbAttendanceData([
+          { time: '06:00', onTime: Math.max(1, Math.round(activeCount * 0.2)), late: 0, overtime: 0 },
+          { time: '07:00', onTime: Math.max(2, Math.round(activeCount * 0.6)), late: 1, overtime: 0 },
+          { time: '08:00', onTime: activeCount, late: Math.min(2, exitedCount), overtime: 0 },
+          { time: '09:00', onTime: activeCount, late: Math.min(3, exitedCount), overtime: 1 },
+          { time: '12:00', onTime: Math.max(1, activeCount - 1), late: 2, overtime: 2 },
+          { time: '15:00', onTime: Math.max(1, activeCount - 1), late: 2, overtime: 3 },
+          { time: '18:00', onTime: Math.max(1, Math.round(activeCount * 0.5)), late: 1, overtime: 4 },
+          { time: '21:00', onTime: Math.max(0, Math.round(activeCount * 0.2)), late: 0, overtime: 2 }
+        ]);
+      }
+    };
+
+    const unsub1 = onSnapshot(collection(db, 'attendance_logs'), (snap) => {
+      logs = [];
+      snap.forEach(d => logs.push({ id: d.id, ...d.data() }));
+      computeTrend();
+    });
+
+    const unsub2 = onSnapshot(collection(db, 'registered_people'), (snap) => {
+      regPeople = [];
+      snap.forEach(d => regPeople.push({ id: d.id, ...d.data() }));
+      computeTrend();
+    });
+
+    return () => {
+      unsub1();
+      unsub2();
+    };
   }, []);
 
   const [isDbLoading, setIsDbLoading] = useState(false);
@@ -399,16 +531,16 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         `2. Safety Index & PPE Compliance:\n` +
         `   • 0 lost-time incidents recorded across the site. Safety helmet & vest compliance is at 99.2%.\n` +
         `   • Sub-Basement B1 Trench reached 93% zone capacity threshold at 11:30 AM — auto-alert successfully cleared staging perimeter.\n\n` +
-        `3. Heavy Machinery & Infrastructure:\n` +
-        `   • Heavy machinery fleet operated at 84% average load factor with 7.2h active runtime.\n` +
-        `   • Gateway GW-03 in Sub-Basement B1 exhibits battery degradation (32%) — scheduled for battery hot-swap during night shift.\n\n` +
+        `3. Personnel Tracking Telemetry & UHF Hardware:\n` +
+        `   • 42 registered personnel hardhat tags transmitting continuously with 99.4% packet delivery rate.\n` +
+        `   • Gateway GW-03 in Sub-Basement B1 exhibits low RSSI signal strength (-78 dBm) — scheduled for antenna re-alignment.\n\n` +
         `4. Executive Recommendations:\n` +
         `   • Maintain current 12-minute staggered crew shifts to prevent gate turnstile bottlenecks.\n` +
-        `   • Authorize scheduled preventative maintenance for CAT 336 Excavator before upcoming heavy pour phase.`
+        `   • Authorize scheduled preventative calibration for Shaft B2 UHF reader prior to upcoming pour phase.`
       );
       setAiAnomalies([
         'Sub-Basement B1 Trench 93% capacity threshold reached',
-        'Reader GW-03 battery level degraded to 32%'
+        'Reader GW-03 RSSI signal level degraded to -78 dBm'
       ]);
     } finally {
       setIsAiLoading(false);
@@ -459,16 +591,19 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     };
   }, [people, dateRange, multiplier]);
 
-  const attendanceTrendData = useMemo(() => [
-    { time: '06:00', onTime: Math.round(12 * multiplier), late: 1, absent: 0, overtime: 0 },
-    { time: '07:00', onTime: Math.round(38 * multiplier), late: 3, absent: 1, overtime: 0 },
-    { time: '08:00', onTime: Math.round(45 * multiplier), late: 5, absent: 2, overtime: 1 },
-    { time: '09:00', onTime: Math.round(48 * multiplier), late: 6, absent: 2, overtime: 2 },
-    { time: '12:00', onTime: Math.round(46 * multiplier), late: 6, absent: 2, overtime: 4 },
-    { time: '15:00', onTime: Math.round(44 * multiplier), late: 6, absent: 2, overtime: 8 },
-    { time: '18:00', onTime: Math.round(22 * multiplier), late: 2, absent: 2, overtime: 12 },
-    { time: '21:00', onTime: Math.round(8 * multiplier), late: 0, absent: 0, overtime: 6 }
-  ], [multiplier]);
+  const attendanceTrendData = useMemo(() => {
+    if (dbAttendanceData.length > 0) return dbAttendanceData;
+    return [
+      { time: '06:00', onTime: Math.round(12 * multiplier), late: 1, absent: 0, overtime: 0 },
+      { time: '07:00', onTime: Math.round(38 * multiplier), late: 3, absent: 1, overtime: 0 },
+      { time: '08:00', onTime: Math.round(45 * multiplier), late: 5, absent: 2, overtime: 1 },
+      { time: '09:00', onTime: Math.round(48 * multiplier), late: 6, absent: 2, overtime: 2 },
+      { time: '12:00', onTime: Math.round(46 * multiplier), late: 6, absent: 2, overtime: 4 },
+      { time: '15:00', onTime: Math.round(44 * multiplier), late: 6, absent: 2, overtime: 8 },
+      { time: '18:00', onTime: Math.round(22 * multiplier), late: 2, absent: 2, overtime: 12 },
+      { time: '21:00', onTime: Math.round(8 * multiplier), late: 0, absent: 0, overtime: 6 }
+    ];
+  }, [dbAttendanceData, multiplier]);
 
   const movementFlowData = [
     { zone: 'Main Entrance Turnstile', hourlyFlow: 140, avgDwellMin: 2, congestionRisk: 'Low' },
@@ -522,12 +657,12 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   ];
 
   const forecastData = [
-    { day: 'Mon Aug 17', predictedWorkers: 54, optimalEquipment: 4, riskFactor: 'Low' },
-    { day: 'Tue Aug 18', predictedWorkers: 62, optimalEquipment: 5, riskFactor: 'Medium (Concrete Pour)' },
-    { day: 'Wed Aug 19', predictedWorkers: 68, optimalEquipment: 5, riskFactor: 'High (Crane Lift Phase)' },
-    { day: 'Thu Aug 20', predictedWorkers: 60, optimalEquipment: 4, riskFactor: 'Medium' },
-    { day: 'Fri Aug 21', predictedWorkers: 52, optimalEquipment: 3, riskFactor: 'Low' },
-    { day: 'Sat Aug 22', predictedWorkers: 28, optimalEquipment: 2, riskFactor: 'Low (Weekend Shift)' }
+    { day: 'Mon Aug 17', predictedWorkers: 54, activePortalsOnline: 4, riskFactor: 'Low' },
+    { day: 'Tue Aug 18', predictedWorkers: 62, activePortalsOnline: 5, riskFactor: 'Medium (Concrete Pour)' },
+    { day: 'Wed Aug 19', predictedWorkers: 68, activePortalsOnline: 5, riskFactor: 'High (Crane Lift Phase)' },
+    { day: 'Thu Aug 20', predictedWorkers: 60, activePortalsOnline: 4, riskFactor: 'Medium' },
+    { day: 'Fri Aug 21', predictedWorkers: 52, activePortalsOnline: 3, riskFactor: 'Low' },
+    { day: 'Sat Aug 22', predictedWorkers: 28, activePortalsOnline: 2, riskFactor: 'Low (Weekend Shift)' }
   ];
 
   // EXPORT HANDLERS
@@ -698,102 +833,43 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       {/* 2. STICKY ENTERPRISE HEAD MENU & DOMAIN NAVIGATION */}
       <div className="sticky top-0 z-20 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-1 pb-2 space-y-2 border-b border-slate-200/80 dark:border-slate-800">
         
-        {/* Tier 1: Primary Category Tabs */}
-        <div className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-2xl p-1.5 shadow-2xs flex items-center gap-1.5 overflow-x-auto">
+        {/* 3 Essential Working Analytics Tabs */}
+        <div className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-2xl p-1.5 shadow-2xs flex items-center gap-2 overflow-x-auto">
           {[
-            {
-              id: 'overview',
-              label: 'Executive & Overview',
-              icon: Building2,
-              modules: ['overview', 'executive']
-            },
             {
               id: 'operations',
               label: 'Workforce & Operations',
-              icon: Zap,
-              modules: ['operations', 'attendance', 'productivity', 'movement']
-            },
-            {
-              id: 'equipment',
-              label: 'Fleet & Gateways',
-              icon: Truck,
-              modules: ['equipment', 'readers']
+              icon: Zap
             },
             {
               id: 'safety',
               label: 'Safety, PPE & OSHA',
-              icon: ShieldCheck,
-              modules: ['occupancy', 'incidents', 'ppe', 'safety']
+              icon: ShieldCheck
             },
             {
-              id: 'forecasting',
-              label: 'Forecasting & AI',
-              icon: Compass,
-              modules: ['forecasting', 'ai_insights']
-            },
-            {
-              id: 'scheduled',
-              label: 'Reports & Builder',
-              icon: FileText,
-              modules: ['scheduled', 'custom']
+              id: 'equipment',
+              label: 'Portals & Reader Anchors',
+              icon: Radio
             }
-          ].map(category => {
-            const Icon = category.icon;
-            const isCategoryActive = category.modules.includes(activeModule);
+          ].map(tab => {
+            const Icon = tab.icon;
+            const isActive = activeModule === tab.id || 
+              (tab.id === 'operations' && (activeModule === 'overview' || activeModule === 'executive' || activeModule === 'productivity' || activeModule === 'attendance' || activeModule === 'movement')) ||
+              (tab.id === 'safety' && (activeModule === 'occupancy' || activeModule === 'incidents' || activeModule === 'ppe')) ||
+              (tab.id === 'equipment' && activeModule === 'readers');
+            
             return (
               <button
-                key={category.id}
-                onClick={() => setActiveModule(category.modules[0] as any)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 select-none cursor-pointer whitespace-nowrap ${
-                  isCategoryActive
+                key={tab.id}
+                onClick={() => setActiveModule(tab.id as any)}
+                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 select-none cursor-pointer whitespace-nowrap ${
+                  isActive
                     ? 'bg-[#007BC4] text-white shadow-xs'
                     : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60 hover:text-slate-900 dark:hover:text-white'
                 }`}
               >
-                <Icon size={15} className={isCategoryActive ? 'text-white' : 'text-slate-400'} />
-                <span>{category.label}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Tier 2: Sub-Module Navigation Pills for Selected Category */}
-        <div className="flex items-center gap-1.5 overflow-x-auto py-1 px-1">
-          <span className="text-[11px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider mr-1 hidden sm:inline shrink-0">
-            View Module:
-          </span>
-          {[
-            { id: 'overview', label: 'Master Overview', icon: Layers2 },
-            { id: 'executive', label: 'Executive KPIs', icon: Building2 },
-            { id: 'operations', label: 'Operations Feed', icon: Zap },
-            { id: 'attendance', label: 'Attendance Shifts', icon: Clock },
-            { id: 'productivity', label: 'Tool-Time Productivity', icon: TrendingUp },
-            { id: 'movement', label: 'Flow & Congestion', icon: Activity },
-            { id: 'equipment', label: 'Machinery Load', icon: Truck },
-            { id: 'readers', label: 'Reader Gateways', icon: Radio },
-            { id: 'occupancy', label: 'Zone Occupancy', icon: Users },
-            { id: 'incidents', label: 'Incident Trends', icon: ShieldAlert },
-            { id: 'ppe', label: 'PPE Compliance', icon: HardHat },
-            { id: 'safety', label: 'Safety & OSHA', icon: ShieldCheck },
-            { id: 'forecasting', label: 'Predictive Forecasting', icon: Compass },
-            { id: 'scheduled', label: 'Scheduled Reports', icon: Calendar },
-            { id: 'custom', label: 'Custom Builder', icon: Filter },
-            { id: 'ai_insights', label: 'AI Copilot Assistant', icon: BrainCircuit }
-          ].map(mod => {
-            const Icon = mod.icon;
-            const active = activeModule === mod.id;
-            return (
-              <button
-                key={mod.id}
-                onClick={() => setActiveModule(mod.id as any)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 select-none cursor-pointer whitespace-nowrap ${
-                  active 
-                    ? 'bg-blue-50 text-[#007BC4] border border-blue-300 dark:bg-blue-950/70 dark:text-blue-300 dark:border-blue-700 font-bold shadow-2xs' 
-                    : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-700 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <Icon size={13} className={active ? 'text-[#007BC4] dark:text-blue-300' : 'text-slate-400'} />
-                <span>{mod.label}</span>
+                <Icon size={16} className={isActive ? 'text-white' : 'text-slate-400'} />
+                <span>{tab.label}</span>
               </button>
             );
           })}
@@ -802,11 +878,11 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
 
       {/* 3. DYNAMIC MODULE CONTENTS */}
 
-      {/* --- MODULE A: MASTER OVERVIEW & EXECUTIVE KPIs --- */}
-      {(activeModule === 'overview' || activeModule === 'executive') && (
+      {/* --- MODULE A: WORKFORCE & OPERATIONS FEED --- */}
+      {(activeModule === 'operations' || activeModule === 'overview' || activeModule === 'executive' || activeModule === 'productivity' || activeModule === 'attendance' || activeModule === 'movement') && (
         <div className="space-y-6 animate-in fade-in duration-200">
           {/* Executive Top Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-3 gap-4">
             <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
               <CardContent className="p-4 flex items-center justify-between">
                 <div className="space-y-1">
@@ -840,31 +916,18 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
             <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
               <CardContent className="p-4 flex items-center justify-between">
                 <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Estimated Cost Savings</span>
-                  <div className="text-2xl font-black text-slate-900 dark:text-white">{executiveKPIs.costSavings}</div>
-                  <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Idle reduction optimization</span>
-                </div>
-                <div className="w-11 h-11 bg-purple-50 dark:bg-purple-950/50 border border-purple-200/60 dark:border-purple-800/60 rounded-2xl flex items-center justify-center text-purple-600 dark:text-purple-400 shadow-2xs">
-                  <Zap size={22} />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">OSHA TRIR Rate</span>
                   <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{executiveKPIs.trirScore}</div>
                   <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Industry Avg: 2.40</span>
                 </div>
                 <div className="w-11 h-11 bg-amber-50 dark:bg-amber-950/50 border border-amber-200/60 dark:border-amber-800/60 rounded-2xl flex items-center justify-center text-amber-600 dark:text-amber-400 shadow-2xs">
-                  <Gauge size={22} />
+                  <ShieldAlert size={22} />
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* Combined Productivity & Attendance Chart */}
+          {/* Combined Attendance & PPE Radar Section */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
             <Card className="lg:col-span-8 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
               <CardHeader className="pb-2 flex flex-row items-center justify-between border-b border-slate-100 dark:border-slate-700/60">
@@ -872,7 +935,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                   <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">Daily On-Site Headcount & Shift Attendance</CardTitle>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">On-time arrivals, late arrivals, and overtime worker counts</p>
                 </div>
-                <Badge variant="outline" className="text-[10px] font-bold text-[#007BC4] border-blue-200 dark:border-blue-800">Live RFID Feeds</Badge>
+                <Badge variant="outline" className="text-[10px] font-bold text-[#007BC4] border-blue-200 dark:border-blue-800">MongoDB Atlas Synced</Badge>
               </CardHeader>
               <CardContent className="p-4 h-72">
                 <ResponsiveContainer width="100%" height="100%">
@@ -912,36 +975,11 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         </div>
       )}
 
-      {/* --- MODULE B: OPERATIONS & PRODUCTIVITY --- */}
+      {/* --- MODULE B: OPERATIONS & THROUGHPUT --- */}
       {(activeModule === 'operations' || activeModule === 'productivity' || activeModule === 'attendance') && (
         <div className="space-y-6 animate-in fade-in duration-200">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
             
-            {/* Tool Time Efficiency by Trade */}
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-slate-700/60 pb-3">
-                <div>
-                  <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">Trade Productivity Breakdown (% Tool-Time)</CardTitle>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Active wrench time vs material transit and idle waiting</p>
-                </div>
-                <Badge variant="outline" className="text-[#007BC4] font-bold border-blue-200 dark:border-blue-800">Target: &gt;75%</Badge>
-              </CardHeader>
-              <CardContent className="p-4 h-80">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={productivityData} layout="vertical" margin={{ top: 10, right: 20, left: 20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" strokeOpacity={0.5} />
-                    <XAxis type="number" domain={[0, 100]} stroke="#64748b" fontSize={11} />
-                    <YAxis dataKey="role" type="category" stroke="#64748b" fontSize={11} width={120} tickLine={false} axisLine={false} />
-                    <Tooltip contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0' }} />
-                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                    <Bar dataKey="toolTimePct" name="Active Tool Time %" stackId="a" fill="#10B981" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="transitPct" name="Transit / Walking %" stackId="a" fill="#007BC4" radius={[0, 0, 0, 0]} />
-                    <Bar dataKey="idlePct" name="Idle / Waiting %" stackId="a" fill="#F59E0B" radius={[0, 4, 4, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
             {/* Zone Throughput & Congestion */}
             <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
               <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
@@ -988,115 +1026,161 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         </div>
       )}
 
-      {/* --- MODULE C: EQUIPMENT & READER HEALTH --- */}
+      {/* --- MODULE C: PORTALS & READER ANCHORS --- */}
       {(activeModule === 'equipment' || activeModule === 'readers' || activeModule === 'movement') && (
         <div className="space-y-6 animate-in fade-in duration-200">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
-            {/* Equipment Heavy Machinery Matrix */}
+          
+          {/* Reader Network Summary Bar */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-slate-700/60 pb-3">
-                <div>
-                  <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <Truck size={16} className="text-[#007BC4]" /> Heavy Machinery Utilization & Telemetry
-                  </CardTitle>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Runtime hours, load factor, and predictive maintenance schedules</p>
+              <CardContent className="p-4 flex items-center justify-between">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Total Active Portals</span>
+                  <div className="text-2xl font-black text-slate-900 dark:text-white">
+                    {portalReaders.length > 0 ? portalReaders.length : 10}
+                  </div>
+                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">MongoDB Atlas Synced</span>
                 </div>
-                <button
-                  onClick={() => setIsEquipmentModalOpen(true)}
-                  className="px-3 py-1.5 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-2xs cursor-pointer"
-                >
-                  <Plus size={14} /> Log Machinery
-                </button>
-              </CardHeader>
-              <CardContent className="p-0 overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100 dark:border-slate-700">
-                      <th className="p-3.5 pl-4">Equipment Unit</th>
-                      <th className="p-3.5 text-right">Runtime</th>
-                      <th className="p-3.5 text-right">Load %</th>
-                      <th className="p-3.5 text-center">Service Due</th>
-                      <th className="p-3.5 text-center pr-4">Health Status</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
-                    {equipmentList.map(eq => (
-                      <tr key={eq.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
+                <div className="w-11 h-11 bg-blue-50 dark:bg-blue-950/50 border border-blue-200/60 dark:border-blue-800/60 rounded-2xl flex items-center justify-center text-[#007BC4]">
+                  <Radio size={22} />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Online & Scanning</span>
+                  <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                    {portalReaders.length > 0 
+                      ? portalReaders.filter(p => String(p.status).toUpperCase() === 'ONLINE' || String(p.status).toUpperCase() === 'SCANNING').length 
+                      : 7}
+                  </div>
+                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Active Gate Scans</span>
+                </div>
+                <div className="w-11 h-11 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/60 dark:border-emerald-800/60 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400">
+                  <CheckCircle2 size={22} />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">In Warning State</span>
+                  <div className="text-2xl font-black text-amber-600 dark:text-amber-400">
+                    {portalReaders.length > 0 
+                      ? portalReaders.filter(p => String(p.status).toUpperCase() === 'WARNING').length 
+                      : 2}
+                  </div>
+                  <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">High Attenuation</span>
+                </div>
+                <div className="w-11 h-11 bg-amber-50 dark:bg-amber-950/50 border border-amber-200/60 dark:border-amber-800/60 rounded-2xl flex items-center justify-center text-amber-600 dark:text-amber-400">
+                  <AlertTriangle size={22} />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
+              <CardContent className="p-4 flex items-center justify-between">
+                <div className="space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Offline Readers</span>
+                  <div className="text-2xl font-black text-rose-600 dark:text-rose-400">
+                    {portalReaders.length > 0 
+                      ? portalReaders.filter(p => String(p.status).toUpperCase() === 'OFFLINE').length 
+                      : 1}
+                  </div>
+                  <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">Needs Inspection</span>
+                </div>
+                <div className="w-11 h-11 bg-rose-50 dark:bg-rose-950/50 border border-rose-200/60 dark:border-rose-800/60 rounded-2xl flex items-center justify-center text-rose-600 dark:text-rose-400">
+                  <XCircle size={22} />
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          {/* Unified UHF Reader Portal Matrix Table */}
+          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
+            <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3 flex flex-row items-center justify-between">
+              <div>
+                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Radio size={16} className="text-[#007BC4]" /> Personnel UHF Reader Portals & Network Anchors
+                </CardTitle>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Live MongoDB hardware telemetry, antenna RSSI quality, and personnel scan rates</p>
+              </div>
+              <Badge variant="outline" className="text-[#007BC4] font-bold border-blue-200 dark:border-blue-800">
+                MongoDB Live ({portalReaders.length > 0 ? portalReaders.length : 10} Nodes)
+              </Badge>
+            </CardHeader>
+            <CardContent className="p-0 overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100 dark:border-slate-700">
+                    <th className="p-3.5 pl-4">Reader Portal Name</th>
+                    <th className="p-3.5">Zone Location</th>
+                    <th className="p-3.5">Hardware Type</th>
+                    <th className="p-3.5 text-right">RSSI Signal</th>
+                    <th className="p-3.5 text-right">Read Rate</th>
+                    <th className="p-3.5 text-right">Scans Today</th>
+                    <th className="p-3.5 text-center">Status</th>
+                    <th className="p-3.5 text-center pr-4">Diagnostic</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
+                  {(portalReaders.length > 0 ? portalReaders : [
+                    { id: 'GAO-UHF-01', name: 'GAO UHF 4-Port Fixed Reader 01', zone: 'Gate 1 Main Entrance', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-42 dBm', rate: '250 Hz', scans: 184 },
+                    { id: 'GAO-UHF-02', name: 'GAO UHF 4-Port Fixed Reader 02', zone: 'Turnstile Portal Alpha', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-45 dBm', rate: '250 Hz', scans: 162 },
+                    { id: 'GAO-UHF-03', name: 'GAO UHF 4-Port Fixed Reader 03', zone: 'Tower Core Shaft B2', status: 'SCANNING', type: 'UHF RFID Portal Anchor', rssi: '-48 dBm', rate: '200 Hz', scans: 140 },
+                    { id: 'GAO-UHF-04', name: 'GAO UHF 4-Port Fixed Reader 04', zone: 'Sub-Basement Level 2', status: 'SCANNING', type: 'Fixed UHF Reader Portal', rssi: '-50 dBm', rate: '200 Hz', scans: 118 },
+                    { id: 'GAO-UHF-05', name: 'GAO UHF 4-Port Fixed Reader 05', zone: 'Laydown Yard East Portal', status: 'WARNING', type: 'Long-Range UHF Antenna', rssi: '-76 dBm', rate: '150 Hz', scans: 95 },
+                    { id: 'GAO-UHF-06', name: 'GAO UHF 4-Port Fixed Reader 06', zone: 'High Voltage Switchgear', status: 'OFFLINE', type: 'Fixed UHF Reader Portal', rssi: '-92 dBm', rate: '0 Hz', scans: 0 },
+                    { id: 'GAO-UHF-07', name: 'GAO UHF 4-Port Fixed Reader 07', zone: 'Welfare Container Gate', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-40 dBm', rate: '250 Hz', scans: 210 },
+                    { id: 'GAO-UHF-08', name: 'GAO UHF 4-Port Fixed Reader 08', zone: 'Crane Exclusion Radius North', status: 'WARNING', type: 'UHF Perimeter Anchor', rssi: '-72 dBm', rate: '180 Hz', scans: 74 },
+                    { id: 'GAO-UHF-09', name: 'GAO UHF 4-Port Fixed Reader 09', zone: 'Scaffolding Level 4 Access', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-46 dBm', rate: '250 Hz', scans: 132 },
+                    { id: 'GAO-UHF-10', name: 'GAO UHF 4-Port Fixed Reader 10', zone: 'Emergency Evacuation Gate', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-38 dBm', rate: '250 Hz', scans: 198 }
+                  ]).map(portal => {
+                    const isPinging = pingingReader === portal.id;
+                    const st = String(portal.status || 'ONLINE').toUpperCase();
+                    return (
+                      <tr key={portal.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
                         <td className="p-3.5 pl-4">
-                          <strong className="text-slate-800 dark:text-slate-200 block text-xs">{eq.name}</strong>
-                          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{eq.type}</span>
+                          <strong className="text-slate-800 dark:text-slate-200 block text-xs">{portal.name}</strong>
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{portal.id}</span>
                         </td>
-                        <td className="p-3.5 text-right font-mono font-bold text-slate-700 dark:text-slate-300">{eq.activeHours} hrs</td>
-                        <td className="p-3.5 text-right font-mono font-bold text-[#007BC4]">{eq.loadFactorPct}%</td>
-                        <td className="p-3.5 text-center font-mono text-slate-600 dark:text-slate-400">{eq.maintDueDays} days</td>
-                        <td className="p-3.5 text-center pr-4">
+                        <td className="p-3.5 font-bold text-slate-700 dark:text-slate-300">{portal.zone}</td>
+                        <td className="p-3.5 text-slate-500 dark:text-slate-400">{portal.type}</td>
+                        <td className="p-3.5 text-right font-mono font-bold text-slate-700 dark:text-slate-300">{portal.rssi}</td>
+                        <td className="p-3.5 text-right font-mono text-slate-600 dark:text-slate-400">{portal.rate}</td>
+                        <td className="p-3.5 text-right font-mono font-bold text-[#007BC4]">{portal.scans} scans</td>
+                        <td className="p-3.5 text-center">
                           <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                            eq.status === 'Service Soon' 
-                              ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800' 
-                              : 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
+                            st === 'ONLINE' || st === 'SCANNING'
+                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
+                              : st === 'WARNING'
+                              ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'
+                              : 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800'
                           }`}>
-                            {eq.status}
+                            {st}
                           </span>
                         </td>
+                        <td className="p-3.5 text-center pr-4">
+                          <button
+                            onClick={() => handlePingReader(portal.id)}
+                            disabled={isPinging}
+                            className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg font-bold text-[10px] transition flex items-center gap-1 mx-auto cursor-pointer shadow-2xs"
+                          >
+                            <RadioTower size={12} className={isPinging ? 'animate-pulse text-[#007BC4]' : 'text-slate-500'} />
+                            <span>{isPinging ? 'Testing...' : 'Ping Node'}</span>
+                          </button>
+                        </td>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </CardContent>
-            </Card>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </CardContent>
+          </Card>
 
-            {/* Reader Network Health */}
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
-                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Radio size={16} className="text-emerald-500" /> RFID Reader & Gateway Network Health
-                </CardTitle>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Signal strength (RSSI), packet rates, and active ping diagnostics</p>
-              </CardHeader>
-              <CardContent className="p-0 overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100 dark:border-slate-700">
-                      <th className="p-3.5 pl-4">Gateway Node</th>
-                      <th className="p-3.5">Hardware Type</th>
-                      <th className="p-3.5 text-right">RSSI Signal</th>
-                      <th className="p-3.5 text-right">Packets/s</th>
-                      <th className="p-3.5 text-center pr-4">Diagnostic Test</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
-                    {readerHealthData.map(rdr => {
-                      const dynamicState = readerStatuses[rdr.id] || { status: 'Online', rssi: -45, packets: 120 };
-                      const isPinging = pingingReader === rdr.id;
-                      return (
-                        <tr key={rdr.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
-                          <td className="p-3.5 pl-4">
-                            <strong className="text-slate-800 dark:text-slate-200 block text-xs">{rdr.name}</strong>
-                            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{rdr.id}</span>
-                          </td>
-                          <td className="p-3.5 text-slate-500 dark:text-slate-400">{rdr.type}</td>
-                          <td className="p-3.5 text-right font-mono font-bold text-slate-700 dark:text-slate-300">{dynamicState.rssi} dBm</td>
-                          <td className="p-3.5 text-right font-mono font-bold text-[#007BC4]">{dynamicState.packets}</td>
-                          <td className="p-3.5 text-center pr-4">
-                            <button
-                              onClick={() => handlePingReader(rdr.id)}
-                              disabled={isPinging}
-                              className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg font-bold text-[10px] transition flex items-center gap-1 mx-auto cursor-pointer shadow-2xs"
-                            >
-                              <RadioTower size={12} className={isPinging ? 'animate-pulse text-[#007BC4]' : 'text-slate-500'} />
-                              <span>{isPinging ? 'Testing...' : 'Ping Node'}</span>
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </CardContent>
-            </Card>
-
-          </div>
         </div>
       )}
 
@@ -1160,408 +1244,13 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         </div>
       )}
 
-      {/* --- MODULE E: PREDICTIVE FORECASTING --- */}
-      {activeModule === 'forecasting' && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-            <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
-              <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Compass size={16} className="text-[#007BC4]" /> 7-Day Predictive Staffing & Risk Forecast Model
-              </CardTitle>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Machine learning projection for workforce demand, heavy machinery allocations, and shift risk</p>
-            </CardHeader>
-            <CardContent className="p-4 h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <ComposedChart data={forecastData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.5} vertical={false} />
-                  <XAxis dataKey="day" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0' }} />
-                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                  <Bar dataKey="predictedWorkers" name="Predicted Workforce Headcount" fill="#007BC4" radius={[4, 4, 0, 0]} />
-                  <Line type="monotone" dataKey="optimalEquipment" name="Required Machinery Units" stroke="#10B981" strokeWidth={3} dot={{ r: 4 }} />
-                </ComposedChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* --- MODULE F: SCHEDULED REPORTS & CUSTOM REPORT BUILDER --- */}
-      {(activeModule === 'scheduled' || activeModule === 'custom') && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          
-          {/* Scheduled Reports List */}
-          {activeModule === 'scheduled' && (
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-700/60 pb-3">
-                <div>
-                  <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <Calendar size={16} className="text-[#007BC4]" /> Scheduled Automated Enterprise Reports
-                  </CardTitle>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Recurring dispatch schedules for compliance, executive digests, and payroll</p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <button 
-                    onClick={() => setIsNewReportModalOpen(true)}
-                    className="px-3 py-1.5 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1 shadow-2xs cursor-pointer"
-                  >
-                    <Plus size={14} /> Schedule New Report
-                  </button>
-                  <button 
-                    onClick={handleGeneratePDFReport}
-                    className="px-3 py-1.5 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold transition cursor-pointer"
-                  >
-                    Run PDF Now
-                  </button>
-                </div>
-              </CardHeader>
-              <CardContent className="p-0 overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100 dark:border-slate-700">
-                      <th className="p-3.5 pl-4">Report Title</th>
-                      <th className="p-3.5">Format</th>
-                      <th className="p-3.5">Frequency</th>
-                      <th className="p-3.5">Recipient List</th>
-                      <th className="p-3.5 text-center">Status</th>
-                      <th className="p-3.5 text-center pr-4">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
-                    {scheduledReports.map(rep => (
-                      <tr key={rep.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
-                        <td className="p-3.5 pl-4 font-bold text-slate-800 dark:text-slate-200 text-xs">{rep.name}</td>
-                        <td className="p-3.5 font-mono font-bold text-[#007BC4]">{rep.format}</td>
-                        <td className="p-3.5 text-slate-600 dark:text-slate-300">{rep.frequency}</td>
-                        <td className="p-3.5 text-slate-500 dark:text-slate-400 font-mono text-[11px]">{rep.recipients}</td>
-                        <td className="p-3.5 text-center">
-                          <button
-                            onClick={() => handleToggleReportStatus(rep.id, rep.status)}
-                            className={`px-2.5 py-0.5 rounded-full font-bold text-[10px] transition cursor-pointer ${
-                              rep.status === 'Active' 
-                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800' 
-                                : 'bg-slate-100 text-slate-600 border border-slate-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600'
-                            }`}
-                          >
-                            {rep.status}
-                          </button>
-                        </td>
-                        <td className="p-3.5 text-center pr-4 flex items-center justify-center gap-1.5">
-                          <button
-                            onClick={handleGeneratePDFReport}
-                            title="Run Report"
-                            className="p-1.5 text-[#007BC4] hover:bg-blue-50 dark:hover:bg-slate-700 rounded-lg transition cursor-pointer"
-                          >
-                            <Download size={14} />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteReport(rep.id)}
-                            title="Delete Report"
-                            className="p-1.5 text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/50 rounded-lg transition cursor-pointer"
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Interactive Custom Report Builder */}
-          {activeModule === 'custom' && (
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
-                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Filter size={16} className="text-[#007BC4]" /> Interactive Custom Report Builder
-                </CardTitle>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Assemble bespoke telemetry data fields, filter by zone or time range, and export instantly</p>
-              </CardHeader>
-              <CardContent className="p-5 space-y-5 text-xs">
-                <div>
-                  <label className="font-bold text-slate-800 dark:text-slate-200 block mb-2.5">Select Metrics & Columns to Include:</label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5">
-                    {[
-                      { id: 'occupancy', label: 'Zone Occupancy & Density' },
-                      { id: 'attendance', label: 'Shift Attendance & Punches' },
-                      { id: 'safety', label: 'Safety & PPE Compliance Scores' },
-                      { id: 'equipment', label: 'Equipment Hours & Load Factor' },
-                      { id: 'readers', label: 'Reader Signal RSSI & Packets' },
-                      { id: 'incidents', label: 'Near-Miss & Breach Violations' }
-                    ].map(item => {
-                      const isChecked = customMetrics.includes(item.id);
-                      return (
-                        <label 
-                          key={item.id} 
-                          className={`p-3 rounded-xl border flex items-center gap-2.5 cursor-pointer font-semibold transition ${
-                            isChecked 
-                              ? 'bg-blue-50/70 border-blue-200 text-[#007BC4] dark:bg-blue-950/40 dark:border-blue-800 dark:text-blue-300' 
-                              : 'bg-slate-50 dark:bg-slate-900/60 border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={isChecked}
-                            onChange={e => {
-                              if (e.target.checked) setCustomMetrics([...customMetrics, item.id]);
-                              else setCustomMetrics(customMetrics.filter(m => m !== item.id));
-                            }}
-                            className="rounded accent-[#007BC4] w-4 h-4 cursor-pointer"
-                          />
-                          <span>{item.label}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                <div className="pt-2 border-t border-slate-100 dark:border-slate-700/60 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-                  <div className="space-y-1.5">
-                    <label className="font-bold text-slate-800 dark:text-slate-200 block">Export Format:</label>
-                    <div className="flex gap-2">
-                      <button
-                        onClick={() => setReportFormat('csv')}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                          reportFormat === 'csv' 
-                            ? 'bg-[#007BC4] text-white border-[#007BC4] shadow-xs' 
-                            : 'bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600'
-                        }`}
-                      >
-                        CSV Spreadsheet
-                      </button>
-                      <button
-                        onClick={() => setReportFormat('pdf')}
-                        className={`px-3.5 py-2 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                          reportFormat === 'pdf' 
-                            ? 'bg-[#007BC4] text-white border-[#007BC4] shadow-xs' 
-                            : 'bg-slate-100 dark:bg-slate-700/60 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-600'
-                        }`}
-                      >
-                        Printable PDF Document
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      if (reportFormat === 'csv') handleExportFullBI();
-                      else handleGeneratePDFReport();
-                      setReportGenerated(true);
-                    }}
-                    className="px-5 py-2.5 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center justify-center gap-2 cursor-pointer"
-                  >
-                    <Download size={14} />
-                    <span>Generate & Download Report</span>
-                  </button>
-                </div>
-
-                {reportGenerated && (
-                  <div className="p-3.5 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-800 dark:text-emerald-200 text-xs font-bold flex items-center justify-between animate-in fade-in">
-                    <div className="flex items-center gap-2">
-                      <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                      <span>Custom report generated and downloaded successfully.</span>
-                    </div>
-                    <button onClick={() => setReportGenerated(false)} className="text-emerald-700 hover:text-emerald-900">
-                      <X size={14} />
-                    </button>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-          )}
-
-        </div>
-      )}
-
-      {/* --- MODULE G: AI INSIGHTS (GEMINI INTEGRATION WITH MONGODB PERSISTENCE) --- */}
-      {activeModule === 'ai_insights' && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-            <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-700/60 pb-3">
-              <div>
-                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <BrainCircuit size={18} className="text-[#007BC4]" /> Gemini Enterprise AI Telemetry Assistant
-                </CardTitle>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Powered by Google Gemini 3.6 Flash — analyze workforce bottlenecks, tool-time anomalies, and safety hazards</p>
-              </div>
-              {aiResponse && (
-                <button
-                  onClick={handleSaveAiSynthesisToDb}
-                  className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-2xs cursor-pointer"
-                >
-                  <Database size={14} /> Save to Database
-                </button>
-              )}
-            </CardHeader>
-            <CardContent className="p-5 space-y-4">
-              
-              {/* Quick Prompt Chips */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-bold text-slate-500 dark:text-slate-400">Quick Analysis Queries:</span>
-                {[
-                  'Analyze Sub-Basement B1 Congestion',
-                  'Evaluate Machinery Runtime Efficiency',
-                  'Forecast Weekend Shift Safety Hazards',
-                  'Subcontractor Tool-Time Audit'
-                ].map(chip => (
-                  <button
-                    key={chip}
-                    onClick={() => {
-                      setAiPrompt(chip);
-                      handleRunAiAnalysis(chip);
-                    }}
-                    className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700/70 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg text-[11px] font-semibold transition cursor-pointer"
-                  >
-                    {chip}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  placeholder="e.g. Highlight workforce bottlenecks in Tower Alpha or forecast safety risks..."
-                  value={aiPrompt}
-                  onChange={e => setAiPrompt(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && handleRunAiAnalysis()}
-                  className="flex-1 px-3.5 py-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#007BC4] text-slate-800 dark:text-slate-100"
-                />
-                <button
-                  onClick={() => handleRunAiAnalysis()}
-                  disabled={isAiLoading}
-                  className="px-5 py-2.5 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer shadow-xs"
-                >
-                  {isAiLoading ? <RefreshCw size={14} className="animate-spin" /> : <Sparkles size={14} />}
-                  <span>Synthesize Insights</span>
-                </button>
-              </div>
-
-              {aiResponse && (
-                <div className="p-4 bg-slate-900 text-slate-100 rounded-2xl text-xs font-mono whitespace-pre-wrap leading-relaxed border border-slate-800 shadow-inner">
-                  {aiResponse}
-                </div>
-              )}
-
-              {/* Saved MongoDB AI Synthesis Records */}
-              {savedAiMetrics.length > 0 && (
-                <div className="mt-6 pt-4 border-t border-slate-200 dark:border-slate-700">
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200 mb-2.5 flex items-center gap-1.5">
-                    <Database size={14} className="text-[#007BC4]" /> Historical Saved AI Insights ({savedAiMetrics.length})
-                  </h4>
-                  <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
-                    {savedAiMetrics.map(item => (
-                      <div key={item.id} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs">
-                        <div className="flex justify-between items-center text-[10px] text-slate-400 font-mono mb-1">
-                          <span>{new Date(item.createdAt).toLocaleString()}</span>
-                          <span className="px-1.5 py-0.5 bg-blue-100 dark:bg-blue-950 text-[#007BC4] font-bold rounded">Range: {item.dateRange}</span>
-                        </div>
-                        <p className="line-clamp-2 font-mono text-slate-700 dark:text-slate-300">{item.synthesis}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* --- MODAL: SCHEDULE NEW REPORT --- */}
-      {isNewReportModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-700">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Calendar size={18} className="text-[#007BC4]" /> Schedule Automated Report
-              </h3>
-              <button onClick={() => setIsNewReportModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={16} />
-              </button>
-            </div>
-            
-            <form onSubmit={handleCreateScheduledReport} className="space-y-3">
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Report Title:</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Subcontractor Night Shift Audit"
-                  value={newReportName}
-                  onChange={e => setNewReportName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#007BC4] text-slate-800 dark:text-slate-100"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Format:</label>
-                  <select
-                    value={newReportFormat}
-                    onChange={e => setNewReportFormat(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none text-slate-800 dark:text-slate-100"
-                  >
-                    <option value="PDF">PDF Document</option>
-                    <option value="CSV">CSV Spreadsheet</option>
-                    <option value="PDF + CSV">PDF + CSV Bundle</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Frequency:</label>
-                  <select
-                    value={newReportFreq}
-                    onChange={e => setNewReportFreq(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none text-slate-800 dark:text-slate-100"
-                  >
-                    <option value="Daily at 06:00 AM">Daily at 06:00 AM</option>
-                    <option value="Weekly on Mondays">Weekly on Mondays</option>
-                    <option value="Monthly 1st Day">Monthly 1st Day</option>
-                  </select>
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Recipient Email(s):</label>
-                <input
-                  type="email"
-                  placeholder="safety@buildcorp.com"
-                  value={newReportRecipients}
-                  onChange={e => setNewReportRecipients(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#007BC4] text-slate-800 dark:text-slate-100"
-                />
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setIsNewReportModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-bold hover:bg-slate-200 transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl font-bold transition cursor-pointer shadow-xs"
-                >
-                  Save Schedule
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* --- MODAL: LOG MACHINERY --- */}
+      {/* --- MODAL: REGISTER UHF READER PORTAL --- */}
       {isEquipmentModalOpen && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-xs">
             <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-700">
               <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Truck size={18} className="text-[#007BC4]" /> Log Heavy Machinery Unit
+                <Radio size={18} className="text-[#007BC4]" /> Register UHF Reader Portal / Zone Anchor
               </h3>
               <button onClick={() => setIsEquipmentModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                 <X size={16} />
@@ -1570,11 +1259,11 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
             
             <form onSubmit={handleAddEquipment} className="space-y-3">
               <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Equipment Name:</label>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Reader Portal Name:</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. Komatsu PC490 Excavator"
+                  placeholder="e.g. Gate 1 Turnstile UHF Reader Portal"
                   value={eqName}
                   onChange={e => setEqName(e.target.value)}
                   className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#007BC4] text-slate-800 dark:text-slate-100"
@@ -1583,17 +1272,16 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Type:</label>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Portal Type:</label>
                   <select
                     value={eqType}
                     onChange={e => setEqType(e.target.value)}
                     className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none text-slate-800 dark:text-slate-100"
                   >
-                    <option value="Crane">Tower Crane</option>
-                    <option value="Excavator">Excavator</option>
-                    <option value="Pump">Concrete Pump</option>
-                    <option value="Loader">Wheel / Track Loader</option>
-                    <option value="Forklift">Rough Terrain Forklift</option>
+                    <option value="Fixed UHF Portal">Fixed UHF Gate Portal</option>
+                    <option value="UHF RFID Reader">UHF 4-Port Reader</option>
+                    <option value="Long-Range UHF">Long-Range UHF Antenna</option>
+                    <option value="Overhead Portal">Overhead Structure Portal</option>
                   </select>
                 </div>
 

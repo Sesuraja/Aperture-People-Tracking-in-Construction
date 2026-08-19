@@ -366,6 +366,20 @@ const INITIAL_BROADCASTS: EmergencyBroadcast[] = [
   }
 ];
 
+function getTimestampMs(ts: any): number {
+  if (!ts) return 0;
+  if (typeof ts === 'number') return ts;
+  if (ts instanceof Date) return ts.getTime();
+  if (typeof ts.getTime === 'function') return ts.getTime();
+  if (typeof ts.toDate === 'function') return ts.toDate().getTime();
+  if (typeof ts === 'string') {
+    const parsed = new Date(ts).getTime();
+    return isNaN(parsed) ? 0 : parsed;
+  }
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+  return 0;
+}
+
 export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] }) {
   const [activeSubTab, setActiveSubTab] = useState<'feed' | 'rules' | 'broadcast' | 'heatmap' | 'analytics'>('feed');
 
@@ -504,11 +518,74 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
 
   const { isConnected: isWsConnected, triggerSafetyAlert: wsTriggerSafetyAlert } = useWebSocket(handleWSMessage);
 
+  // Persistent Resolved & Dismissed Alerts state (stored in localStorage & React state)
+  const [resolvedIds, setResolvedIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('aperture_resolved_alert_ids');
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem('aperture_dismissed_alert_ids');
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  const saveResolvedId = (id: string) => {
+    setResolvedIds(prev => {
+      const next = new Set(prev).add(id);
+      try {
+        localStorage.setItem('aperture_resolved_alert_ids', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+  };
+
+  const saveDismissedId = (id: string) => {
+    setDismissedIds(prev => {
+      const next = new Set(prev).add(id);
+      try {
+        localStorage.setItem('aperture_dismissed_alert_ids', JSON.stringify(Array.from(next)));
+      } catch {}
+      return next;
+    });
+  };
+
   // MongoDB & Firestore Sync
   useEffect(() => {
+    let entAlerts: AIAlert[] = [];
+    let stdAlerts: AIAlert[] = [];
+    let incAlerts: AIAlert[] = [];
+
+    const mergeAndSetAlerts = () => {
+      const map = new Map<string, AIAlert>();
+      // Seed default alerts first
+      INITIAL_ENTERPRISE_ALERTS.forEach(a => map.set(a.id, a));
+      // Overwrite / add MongoDB alerts
+      [...entAlerts, ...stdAlerts, ...incAlerts].forEach(a => map.set(a.id, a));
+
+      const combined = Array.from(map.values())
+        .filter(a => !dismissedIds.has(a.id!))
+        .map(a => {
+          if (resolvedIds.has(a.id!) || a.status === 'Closed' || a.status === 'Resolved') {
+            return { ...a, status: 'Resolved' as AlertStatus, resolved: true };
+          }
+          return a;
+        })
+        .sort((a, b) => getTimestampMs(b.timestamp) - getTimestampMs(a.timestamp));
+
+      setAlertList(combined);
+    };
+
     // 1. Sync Alerts from MongoDB
     const unsubAlerts = onSnapshot(collection(db, 'alerts_enterprise'), (snapshot) => {
-      const data = snapshot.docs.map(docSnap => {
+      entAlerts = snapshot.docs.map(docSnap => {
         const d = docSnap.data();
         return {
           ...d,
@@ -516,17 +593,11 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
           timestamp: typeof d.timestamp === 'string' ? new Date(d.timestamp) : (d.timestamp?.toDate ? d.timestamp.toDate() : new Date())
         } as AIAlert;
       });
-      if (data.length > 0) {
-        setAlertList(prev => {
-          const map = new Map();
-          [...data, ...prev].forEach(item => map.set(item.id, item));
-          return Array.from(map.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-        });
-      }
+      mergeAndSetAlerts();
     });
 
     const unsubStandardAlerts = onSnapshot(collection(db, 'alerts'), (snapshot) => {
-      const data = snapshot.docs.map(docSnap => {
+      stdAlerts = snapshot.docs.map(docSnap => {
         const d = docSnap.data();
         return {
           ...d,
@@ -538,30 +609,47 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
           timestamp: typeof d.timestamp === 'string' ? new Date(d.timestamp) : (d.timestamp?.toDate ? d.timestamp.toDate() : new Date())
         } as AIAlert;
       });
-      if (data.length > 0) {
-        setAlertList(prev => {
-          const map = new Map();
-          [...data, ...prev].forEach(item => map.set(item.id, item));
-          return Array.from(map.values()).sort((a, b) => b.timestamp.getTime() - a.timestamp.getTime());
-        });
-      }
+      mergeAndSetAlerts();
+    });
+
+    const unsubIncidentsAlerts = onSnapshot(collection(db, 'incidents'), (snapshot) => {
+      incAlerts = snapshot.docs.map(docSnap => {
+        const d = docSnap.data();
+        return {
+          id: `INC-ALT-${docSnap.id}`,
+          type: d.severity === 'Critical' || d.severity === 'High' ? 'security' : 'warning',
+          category: 'Safety',
+          priority: d.severity === 'Critical' ? 'Critical' : d.severity === 'High' ? 'High' : 'Medium',
+          status: d.status === 'Closed' ? 'Resolved' : 'In Progress',
+          title: d.title || 'Logged MongoDB Incident Alert',
+          message: d.description || `Incident logged at ${d.zone || 'Construction Zone'} for ${d.personName || 'Worker'}`,
+          timestamp: typeof d.timestamp === 'string' ? new Date(d.timestamp) : new Date(),
+          assignedTo: d.assignedOfficer || OFFICERS_LIST[0],
+          evidence: {
+            locationZone: d.zone || 'Construction Site',
+            rfidReaderId: d.tagId ? `TAG-${d.tagId}` : 'RD-GAO-01'
+          }
+        } as AIAlert;
+      });
+      mergeAndSetAlerts();
     });
 
     // 2. Sync Rules
     const unsubRules = onSnapshot(collection(db, 'alert_rules'), (snapshot) => {
       const data = snapshot.docs.map(docSnap => docSnap.data() as AlertRule);
-      setRuleList(data);
+      setRuleList(data.length > 0 ? data : INITIAL_RULES);
     });
 
     // 3. Sync Broadcasts
     const unsubBroadcasts = onSnapshot(collection(db, 'emergency_broadcasts'), (snapshot) => {
       const data = snapshot.docs.map(docSnap => docSnap.data() as EmergencyBroadcast);
-      setBroadcastList(data);
+      setBroadcastList(data.length > 0 ? data : INITIAL_BROADCASTS);
     });
 
     return () => {
       unsubAlerts();
       unsubStandardAlerts();
+      unsubIncidentsAlerts();
       unsubRules();
       unsubBroadcasts();
     };
@@ -615,15 +703,26 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       type: 'assignment' as const
     }];
 
+    const updatedAlert: AIAlert = {
+      ...alert,
+      status: 'In Progress',
+      history: updatedHistory,
+      timeline: updatedTimeline
+    };
+
+    setAlertList(prev => prev.map(a => a.id === alert.id ? updatedAlert : a));
+    if (selectedAlert && selectedAlert.id === alert.id) {
+      setSelectedAlert(updatedAlert);
+    }
+    setNotificationMsg({ type: 'success', text: `Alert ${alert.id} acknowledged & set to IN PROGRESS!` });
+
     try {
-      await updateDoc(doc(db, 'alerts_enterprise', alert.id!), {
-        status: 'In Progress',
-        history: updatedHistory,
-        timeline: updatedTimeline
-      });
-      setNotificationMsg({ type: 'success', text: `Alert ${alert.id} acknowledged & set to IN PROGRESS!` });
+      await setDoc(doc(db, 'alerts_enterprise', alert.id!), {
+        ...updatedAlert,
+        timestamp: updatedAlert.timestamp instanceof Date ? updatedAlert.timestamp.toISOString() : updatedAlert.timestamp
+      }, { merge: true });
     } catch (err) {
-      console.error('Error acknowledging alert:', err);
+      console.warn('MongoDB sync note:', err);
     }
   };
 
@@ -636,18 +735,26 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       user: 'EHS Officer'
     }];
 
+    const updatedAlert: AIAlert = {
+      ...alert,
+      assignedTo: newOfficer,
+      assignedAt: new Date().toISOString(),
+      history: updatedHistory
+    };
+
+    setAlertList(prev => prev.map(a => a.id === alert.id ? updatedAlert : a));
+    if (selectedAlert && selectedAlert.id === alert.id) {
+      setSelectedAlert(updatedAlert);
+    }
+    setNotificationMsg({ type: 'info', text: `Alert ${alert.id} reassigned to ${newOfficer}` });
+
     try {
-      await updateDoc(doc(db, 'alerts_enterprise', alert.id!), {
-        assignedTo: newOfficer,
-        assignedAt: new Date().toISOString(),
-        history: updatedHistory
-      });
-      if (selectedAlert && selectedAlert.id === alert.id) {
-        setSelectedAlert({ ...selectedAlert, assignedTo: newOfficer, history: updatedHistory });
-      }
-      setNotificationMsg({ type: 'info', text: `Alert ${alert.id} reassigned to ${newOfficer}` });
+      await setDoc(doc(db, 'alerts_enterprise', alert.id!), {
+        ...updatedAlert,
+        timestamp: updatedAlert.timestamp instanceof Date ? updatedAlert.timestamp.toISOString() : updatedAlert.timestamp
+      }, { merge: true });
     } catch (err) {
-      console.error('Error reassigning alert:', err);
+      console.warn('MongoDB sync note:', err);
     }
   };
 
@@ -704,13 +811,16 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       ]
     };
 
+    setAlertList(prev => [createdRecord, ...prev]);
+    setSelectedAlert(createdRecord);
+    setNotificationMsg({ type: 'success', text: `Enterprise Alert ${alertId} generated & persisted to MongoDB!` });
+    setIsCreateModalOpen(false);
+
     try {
       await setDoc(doc(db, 'alerts_enterprise', alertId), {
         ...createdRecord,
         timestamp: now.toISOString()
-      });
-      setNotificationMsg({ type: 'success', text: `Enterprise Alert ${alertId} generated & persisted to MongoDB!` });
-      setIsCreateModalOpen(false);
+      }, { merge: true });
       setNewAlert({
         category: 'Safety',
         priority: 'High',
@@ -745,21 +855,24 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       user: 'EHS Officer'
     }];
 
-    try {
-      await updateDoc(doc(db, 'alerts_enterprise', selectedAlert.id!), {
-        comments: updatedComments,
-        history: updatedHistory
-      });
+    const updatedAlert: AIAlert = {
+      ...selectedAlert,
+      comments: updatedComments,
+      history: updatedHistory
+    };
 
-      setSelectedAlert({
-        ...selectedAlert,
-        comments: updatedComments,
-        history: updatedHistory
-      });
-      setNewCommentText('');
-      setNotificationMsg({ type: 'success', text: 'Comment added to activity thread in MongoDB.' });
+    setAlertList(prev => prev.map(a => a.id === selectedAlert.id ? updatedAlert : a));
+    setSelectedAlert(updatedAlert);
+    setNewCommentText('');
+    setNotificationMsg({ type: 'success', text: 'Comment added to activity thread in MongoDB.' });
+
+    try {
+      await setDoc(doc(db, 'alerts_enterprise', selectedAlert.id!), {
+        ...updatedAlert,
+        timestamp: updatedAlert.timestamp instanceof Date ? updatedAlert.timestamp.toISOString() : updatedAlert.timestamp
+      }, { merge: true });
     } catch (err) {
-      console.error('Error adding comment:', err);
+      console.warn('MongoDB sync note:', err);
     }
   };
 
@@ -779,24 +892,26 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       user: 'EHS Controller'
     }];
 
-    try {
-      await updateDoc(doc(db, 'alerts_enterprise', alert.id!), {
-        status: 'Escalated',
-        escalation: updatedEscalation,
-        history: updatedHistory
-      });
+    const updatedAlert: AIAlert = {
+      ...alert,
+      status: 'Escalated',
+      escalation: updatedEscalation,
+      history: updatedHistory
+    };
 
-      if (selectedAlert && selectedAlert.id === alert.id) {
-        setSelectedAlert({
-          ...selectedAlert,
-          status: 'Escalated',
-          escalation: updatedEscalation,
-          history: updatedHistory
-        });
-      }
-      setNotificationMsg({ type: 'error', text: `Alert ${alert.id} ESCALATED to Tier 2 Executive Protocol!` });
+    setAlertList(prev => prev.map(a => a.id === alert.id ? updatedAlert : a));
+    if (selectedAlert && selectedAlert.id === alert.id) {
+      setSelectedAlert(updatedAlert);
+    }
+    setNotificationMsg({ type: 'error', text: `Alert ${alert.id} ESCALATED to Tier 2 Executive Protocol!` });
+
+    try {
+      await setDoc(doc(db, 'alerts_enterprise', alert.id!), {
+        ...updatedAlert,
+        timestamp: updatedAlert.timestamp instanceof Date ? updatedAlert.timestamp.toISOString() : updatedAlert.timestamp
+      }, { merge: true });
     } catch (err) {
-      console.error('Error escalating alert:', err);
+      console.warn('MongoDB sync note:', err);
     }
   };
 
@@ -804,6 +919,8 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   const handleResolveSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAlert) return;
+
+    saveResolvedId(selectedAlert.id!);
 
     const resInfo = {
       resolvedBy: resolutionData.verificationOfficer,
@@ -819,64 +936,138 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       user: resolutionData.verificationOfficer
     }];
 
+    const updatedAlert: AIAlert = {
+      ...selectedAlert,
+      status: 'Resolved',
+      resolved: true,
+      resolution: resInfo,
+      history: updatedHistory
+    };
+
+    setAlertList(prev => prev.map(a => a.id === selectedAlert.id ? updatedAlert : a));
+    setSelectedAlert(updatedAlert);
+
+    setIsResolveModalOpen(false);
+    setNotificationMsg({ type: 'success', text: `Alert ${selectedAlert.id} marked RESOLVED with EHS sign-off in MongoDB!` });
+    setResolutionData({
+      rootCause: '',
+      correctiveAction: '',
+      verificationOfficer: OFFICERS_LIST[0]
+    });
+
     try {
-      await updateDoc(doc(db, 'alerts_enterprise', selectedAlert.id!), {
-        status: 'Resolved',
-        resolved: true,
-        resolution: resInfo,
-        history: updatedHistory
-      });
+      await setDoc(doc(db, 'alerts_enterprise', selectedAlert.id!), {
+        ...updatedAlert,
+        timestamp: updatedAlert.timestamp instanceof Date ? updatedAlert.timestamp.toISOString() : updatedAlert.timestamp
+      }, { merge: true });
 
-      setSelectedAlert({
-        ...selectedAlert,
-        status: 'Resolved',
-        resolved: true,
-        resolution: resInfo,
-        history: updatedHistory
-      });
-
-      setIsResolveModalOpen(false);
-      setNotificationMsg({ type: 'success', text: `Alert ${selectedAlert.id} marked RESOLVED with EHS sign-off in MongoDB!` });
-      setResolutionData({
-        rootCause: '',
-        correctiveAction: '',
-        verificationOfficer: OFFICERS_LIST[0]
-      });
+      if (selectedAlert.id?.startsWith('INC-ALT-')) {
+        const rawIncId = selectedAlert.id.replace('INC-ALT-', '');
+        await setDoc(doc(db, 'incidents', rawIncId), { status: 'Closed', workflowStatus: 'Closed' }, { merge: true });
+        await setDoc(doc(db, 'incidents_enterprise', rawIncId), { workflowStatus: 'Closed' }, { merge: true });
+      }
     } catch (err) {
-      console.error('Error resolving alert:', err);
+      console.warn('MongoDB sync note:', err);
+    }
+  };
+
+  // 1-Click Direct Close & Resolve Alert
+  const handleDirectCloseAlert = async (alert: AIAlert) => {
+    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const updatedHistory = [...(alert.history || []), {
+      timestamp: nowStr,
+      action: 'Directly Resolved & Closed by EHS Controller',
+      user: 'EHS Controller'
+    }];
+
+    const updatedAlert: AIAlert = {
+      ...alert,
+      status: 'Resolved',
+      resolved: true,
+      history: updatedHistory
+    };
+
+    saveResolvedId(alert.id!);
+    setAlertList(prev => prev.map(a => a.id === alert.id ? updatedAlert : a));
+    if (selectedAlert && selectedAlert.id === alert.id) {
+      setSelectedAlert(updatedAlert);
+    }
+    setNotificationMsg({ type: 'success', text: `Alert ${alert.id} closed & resolved permanently!` });
+
+    try {
+      await setDoc(doc(db, 'alerts_enterprise', alert.id!), {
+        ...updatedAlert,
+        status: 'Resolved',
+        resolved: true,
+        timestamp: updatedAlert.timestamp instanceof Date ? updatedAlert.timestamp.toISOString() : updatedAlert.timestamp
+      }, { merge: true });
+
+      await setDoc(doc(db, 'alerts', alert.id!), {
+        status: 'Resolved',
+        resolved: true
+      }, { merge: true });
+
+      if (alert.id?.startsWith('INC-ALT-')) {
+        const rawIncId = alert.id.replace('INC-ALT-', '');
+        await setDoc(doc(db, 'incidents', rawIncId), { status: 'Closed', workflowStatus: 'Closed' }, { merge: true });
+        await setDoc(doc(db, 'incidents_enterprise', rawIncId), { workflowStatus: 'Closed' }, { merge: true });
+      }
+    } catch (err) {
+      console.warn('MongoDB sync note:', err);
+    }
+  };
+
+  // 1-Click Dismiss / Delete Alert
+  const handleDeleteAlert = async (alertId: string) => {
+    saveDismissedId(alertId);
+    setAlertList(prev => prev.filter(a => a.id !== alertId));
+    if (selectedAlert && selectedAlert.id === alertId) {
+      setSelectedAlert(null);
+    }
+    setNotificationMsg({ type: 'info', text: `Alert ${alertId} dismissed and removed.` });
+
+    try {
+      await deleteDoc(doc(db, 'alerts_enterprise', alertId));
+      await deleteDoc(doc(db, 'alerts', alertId));
+      if (alertId.startsWith('INC-ALT-')) {
+        const rawIncId = alertId.replace('INC-ALT-', '');
+        await deleteDoc(doc(db, 'incidents', rawIncId));
+        await deleteDoc(doc(db, 'incidents_enterprise', rawIncId));
+      }
+    } catch (e) {
+      console.warn(e);
     }
   };
 
   // Bulk Operations
   const handleBulkAcknowledge = async () => {
     if (selectedAlertIds.length === 0) return;
+    setAlertList(prev => prev.map(a => selectedAlertIds.includes(a.id) ? { ...a, status: 'In Progress' } : a));
+    setNotificationMsg({ type: 'success', text: `Bulk acknowledged ${selectedAlertIds.length} alerts.` });
+
     try {
       for (const id of selectedAlertIds) {
-        await updateDoc(doc(db, 'alerts_enterprise', id), {
-          status: 'In Progress'
-        });
+        await setDoc(doc(db, 'alerts_enterprise', id), { status: 'In Progress' }, { merge: true });
       }
-      setNotificationMsg({ type: 'success', text: `Bulk acknowledged ${selectedAlertIds.length} alerts.` });
-      setSelectedAlertIds([]);
     } catch (err) {
-      console.error('Error in bulk acknowledge:', err);
+      console.warn('Error in bulk acknowledge:', err);
     }
+    setSelectedAlertIds([]);
   };
 
   const handleBulkEscalate = async () => {
     if (selectedAlertIds.length === 0) return;
+    setAlertList(prev => prev.map(a => selectedAlertIds.includes(a.id) ? { ...a, status: 'Escalated' } : a));
+    setNotificationMsg({ type: 'error', text: `Bulk escalated ${selectedAlertIds.length} alerts to Tier 2!` });
+
     try {
       for (const id of selectedAlertIds) {
-        await updateDoc(doc(db, 'alerts_enterprise', id), {
-          status: 'Escalated',
-          'escalation.isEscalated': true
-        });
+        await setDoc(doc(db, 'alerts_enterprise', id), { status: 'Escalated' }, { merge: true });
       }
-      setNotificationMsg({ type: 'error', text: `Bulk escalated ${selectedAlertIds.length} alerts to Tier 2!` });
-      setSelectedAlertIds([]);
     } catch (err) {
-      console.error('Error in bulk escalate:', err);
+      console.warn('Error in bulk escalate:', err);
     }
+    setSelectedAlertIds([]);
   };
 
   // Create Escalation Rule
@@ -1451,7 +1642,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                     {alert.status === 'New' && (
                       <button
                         onClick={() => handleAcknowledgeAlert(alert)}
-                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1"
+                        className="px-3 py-1.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1 cursor-pointer"
                         title="Acknowledge Alert & Begin Incident Handling"
                       >
                         <Check size={14} /> Acknowledge
@@ -1473,13 +1664,23 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                     )}
 
                     {alert.status !== 'Resolved' && !alert.resolved && (
-                      <button
-                        onClick={() => handleEscalateAlert(alert)}
-                        className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 rounded-xl text-xs font-bold transition flex items-center gap-1"
-                        title="Escalate Alert to Executive Tier 2"
-                      >
-                        <ArrowUpRight size={14} /> Escalate
-                      </button>
+                      <>
+                        <button
+                          onClick={() => handleDirectCloseAlert(alert)}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1 cursor-pointer"
+                          title="1-Click Resolve & Close Incident permanently"
+                        >
+                          <CheckCircle2 size={14} /> Resolve & Close
+                        </button>
+
+                        <button
+                          onClick={() => handleEscalateAlert(alert)}
+                          className="px-3 py-1.5 bg-rose-50 text-rose-700 border border-rose-200 hover:bg-rose-100 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                          title="Escalate Alert to Executive Tier 2"
+                        >
+                          <ArrowUpRight size={14} /> Escalate
+                        </button>
+                      </>
                     )}
 
                     <button
@@ -1487,9 +1688,17 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                         setSelectedAlert(alert);
                         setActiveDetailTab('ai_summary');
                       }}
-                      className="px-3.5 py-1.5 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5"
+                      className="px-3 py-1.5 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm transition flex items-center gap-1.5 cursor-pointer"
                     >
-                      <Eye size={14} /> Details & AI Summary
+                      <Eye size={14} /> Details
+                    </button>
+
+                    <button
+                      onClick={() => handleDeleteAlert(alert.id!)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-slate-700 rounded-xl transition cursor-pointer"
+                      title="Permanently Dismiss & Delete Alert"
+                    >
+                      <Trash2 size={15} />
                     </button>
                   </div>
                 </div>

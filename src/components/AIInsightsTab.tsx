@@ -174,6 +174,66 @@ interface BiSynthesisResult {
   createdAt: string;
 }
 
+const FormattedMessageText = ({ text }: { text: string }) => {
+  const lines = text.split('\n');
+
+  return (
+    <div className="space-y-1.5 leading-relaxed font-sans text-xs">
+      {lines.map((line, lineIdx) => {
+        if (!line.trim()) return <div key={lineIdx} className="h-1" />;
+
+        const parseInline = (str: string) => {
+          const parts: React.ReactNode[] = [];
+          const regex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+          let match;
+          let lastIdx = 0;
+          let keyCounter = 0;
+
+          while ((match = regex.exec(str)) !== null) {
+            if (match.index > lastIdx) {
+              parts.push(str.substring(lastIdx, match.index));
+            }
+            const token = match[0];
+            if (token.startsWith('**') && token.endsWith('**')) {
+              parts.push(
+                <strong key={keyCounter++} className="font-black text-slate-900 dark:text-white">
+                  {token.slice(2, -2)}
+                </strong>
+              );
+            } else if (token.startsWith('`') && token.endsWith('`')) {
+              parts.push(
+                <code key={keyCounter++} className="px-1.5 py-0.5 bg-indigo-100 dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 font-mono text-[11px] rounded font-bold">
+                  {token.slice(1, -1)}
+                </code>
+              );
+            }
+            lastIdx = regex.lastIndex;
+          }
+
+          if (lastIdx < str.length) {
+            parts.push(str.substring(lastIdx));
+          }
+
+          return parts.length > 0 ? parts : str;
+        };
+
+        const trimmed = line.trim();
+        if (trimmed.startsWith('- ') || trimmed.startsWith('• ') || trimmed.startsWith('* ')) {
+          const bulletText = trimmed.substring(2);
+          return (
+            <div key={lineIdx} className="flex items-start gap-2 pl-1">
+              <span className="text-indigo-500 font-bold shrink-0 mt-0.5">•</span>
+              <span className="flex-1">{parseInline(bulletText)}</span>
+            </div>
+          );
+        }
+
+        return <div key={lineIdx}>{parseInline(line)}</div>;
+      })}
+    </div>
+  );
+};
+
 export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
   // 1. Ingestion Data Feeds & WebSocket Subscriptions
   const { tags: rawLiveTags, isLoading: isLiveTagsLoading } = useGaoRealtime(2500);
@@ -209,12 +269,12 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     {
       id: 'init-1',
       sender: 'assistant',
-      text: "🏗️ **Aperture Construction AI Copilot Active**\n\nI am connected to your live UHF hardhat RFID tag stream. Ask me about **worker headcounts, high-risk crane exclusion radius incursions, scaffolding density, lone worker welfare timers,** or **subcontractor trade productivity**.",
+      text: "🏗️ **Aperture Real-Time EHS Construction AI Safety Copilot Active**\n\nI am connected live to your **MongoDB Atlas** database (\`Lat-Aperture-People-Tracking\`) and real-time UHF hardhat RFID tag stream.\n\nTry asking me:\n- 🏷️ **Tag IDs**: *\"What is the tag ID of Marcus Vance?\"*\n- 🛠️ **Worker Activities**: *\"What is Bob Johnson doing?\"*\n- 🗄️ **Database Telemetry**: *\"Show MongoDB database status\"*\n- 📍 **Worker Locations**: *\"Where is Sarah Connor?\"*",
       suggestedActions: [
-        "Audit Crane Exclusion Zone Breaches",
-        "Check Scaffolding Overcrowding & Tie-Offs",
-        "Inspect Excavation Pit Lone Worker Dwell",
-        "Export Shift Safety Compliance PDF"
+        "What is the tag ID of Marcus Vance?",
+        "What is Bob Johnson doing?",
+        "Show MongoDB database status",
+        "Where is Sarah Connor?"
       ],
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
@@ -410,6 +470,15 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
             text: msg.text
           })),
           context: {
+            workers: liveTags.map(t => ({
+              id: t.TagID || t.personId || t.id,
+              name: t.personName || t.name || 'Marcus Vance',
+              trade: t.trade || t.role || 'Construction Trade',
+              currentZone: t.LocationName || t.zoneName || t.Location || 'Tower Core Structure',
+              presenceState: t.presenceState || 'MOVING',
+              tagId: t.TagID || t.id,
+              rssi: t.rssi || -58
+            })),
             activeWorkerTags: liveTags.length,
             recentScans: historyRecords.slice(0, 8),
             siteLocation: 'Metro Commercial Tower Site',
@@ -1211,7 +1280,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
                       ? 'bg-indigo-600 text-white rounded-tr-none shadow-sm'
                       : 'bg-slate-50 dark:bg-slate-800/80 text-slate-800 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700 rounded-tl-none'
                   }`}>
-                    <div className="whitespace-pre-line font-medium">{msg.text}</div>
+                    <FormattedMessageText text={msg.text} />
 
                     {msg.suggestedActions && msg.suggestedActions.length > 0 && (
                       <div className="mt-3 pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-wrap gap-1.5">
@@ -1375,6 +1444,31 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
             </div>
 
             <div className="space-y-3 text-xs">
+              {loggedIncidents.length > 0 && (
+                <div className="p-2.5 bg-indigo-50/60 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 rounded-xl space-y-1">
+                  <label className="font-bold text-indigo-900 dark:text-indigo-200 block text-[11px]">Load Incident from MongoDB (`incidents`):</label>
+                  <select
+                    onChange={(e) => {
+                      const inc = loggedIncidents.find(i => i.id === e.target.value);
+                      if (inc) {
+                        setRcaTitle(inc.title || 'Logged MongoDB Incident');
+                        setRcaCategory(inc.severity === 'HIGH' || inc.severity === 'Critical' ? 'Exclusion Zone Breach' : 'Stationary Lone Worker');
+                        setRcaLocation(inc.zone || 'Construction Zone');
+                        if (inc.description) setRcaDescription(inc.description);
+                      }
+                    }}
+                    className="w-full bg-white dark:bg-slate-800 border border-indigo-300 dark:border-indigo-700 rounded-lg p-1.5 font-bold text-xs text-indigo-900 dark:text-indigo-200 cursor-pointer"
+                  >
+                    <option value="">-- Select Logged MongoDB Incident --</option>
+                    {loggedIncidents.map(inc => (
+                      <option key={inc.id} value={inc.id}>
+                        {inc.title} ({inc.zone || 'Zone'})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               <div>
                 <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Incident Title</label>
                 <input

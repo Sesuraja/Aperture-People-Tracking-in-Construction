@@ -18,13 +18,13 @@ import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 const INCIDENT_CATEGORIES: { name: IncidentCategory; icon: React.ElementType; color: string; bg: string }[] = [
   { name: 'Near Miss', icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-950/40' },
   { name: 'Injury', icon: Stethoscope, color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-950/40' },
-  { name: 'Equipment Damage', icon: Wrench, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-950/40' },
-  { name: 'Fire', icon: Flame, color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-950/40' },
+  { name: 'Exclusion Zone Breach', icon: HardHat, color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-950/40' },
+  { name: 'PPE Non-Compliance', icon: Shield, color: 'text-blue-600', bg: 'bg-blue-50 dark:bg-blue-950/40' },
   { name: 'Medical', icon: Activity, color: 'text-emerald-600', bg: 'bg-emerald-50 dark:bg-emerald-950/40' },
-  { name: 'Security', icon: Shield, color: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-950/40' },
-  { name: 'Chemical', icon: Droplet, color: 'text-violet-600', bg: 'bg-violet-50 dark:bg-violet-950/40' },
+  { name: 'Security', icon: Lock, color: 'text-indigo-600', bg: 'bg-indigo-50 dark:bg-indigo-950/40' },
+  { name: 'Fire', icon: Flame, color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-950/40' },
   { name: 'Electrical', icon: Zap, color: 'text-yellow-600', bg: 'bg-yellow-50 dark:bg-yellow-950/40' },
-  { name: 'Environmental', icon: AlertOctagon, color: 'text-teal-600', bg: 'bg-teal-50 dark:bg-teal-950/40' }
+  { name: 'Unregistered RFID Tag', icon: AlertOctagon, color: 'text-teal-600', bg: 'bg-teal-50 dark:bg-teal-950/40' }
 ];
 
 const WORKFLOW_STAGES: IncidentWorkflowStatus[] = [
@@ -154,40 +154,40 @@ const DEFAULT_ENTERPRISE_INCIDENTS: EnterpriseIncident[] = [
   },
   {
     id: 'INC-2026-103',
-    title: 'Hydraulic Fluid Spill on Crane Loading Pad',
-    category: 'Equipment Damage',
+    title: 'Unauthorized Hardhat Tag Entry into Heavy Crane Swing Perimeter',
+    category: 'Exclusion Zone Breach',
     severity: 'Medium',
     workflowStatus: 'Closed',
-    locationZone: 'Heavy Crane & Exclusion Area',
+    locationZone: 'Heavy Crane Swing Radius (Zone C)',
     reportedAt: '2026-08-06T11:00:00.000Z',
-    reportedBy: 'Crane Operator (Carlos Mendez)',
-    assignedOfficer: 'Frank Reynolds (Equipment Lead)',
-    assignedRole: 'Plant & Equipment Lead',
-    equipmentInvolved: 'Mobile Hydraulic Crane TC-02',
-    hazardClass: 'Environmental & Slip Hazard',
+    reportedBy: 'Field Safety Officer (Marcus Vance)',
+    assignedOfficer: 'Frank Reynolds (EHS Supervisor)',
+    assignedRole: 'Site Safety Lead',
+    equipmentInvolved: 'UHF RFID Hardhat Tag #8B-F1-0A / Portal Reader R-02',
+    hazardClass: 'Overhead Crane Radius & Personnel Intrusion',
     injuredPersonnelCount: 0,
-    description: 'Hydraulic high-pressure hose fitting ruptured during boom extension, releasing approximately 15 liters of biodegradable hydraulic oil on concrete apron.',
+    description: 'UHF Reader Portal R-02 registered an active personnel hardhat tag inside the heavy crane exclusion perimeter while an active steel beam lift was underway. Reader triggered automated siren alarm and supervisor alert.',
     aiAnalysis: {
-      severityScore: 42,
-      aiSummary: 'Controlled hydraulic line burst contained with spill kit within 10 minutes.',
-      probableRootCause: 'Hose fatigue after exceeding 2,000 continuous duty cycle hours.',
-      contributingFactors: ['High operating temperature.'],
-      capaRecommendations: ['Replace hydraulic feed lines across all 50-ton cranes.'],
-      regulatoryImpact: 'EPA Tier 1 Minor Spill Logged.'
+      severityScore: 68,
+      aiSummary: 'Personnel hardhat tag detected inside exclusion zone during active crane hoist operation.',
+      probableRootCause: 'Subcontractor mason walked past staging barrier without noticing activated warning strobe.',
+      contributingFactors: ['Noise level from adjacent concrete vibrator masked initial audible chime.'],
+      capaRecommendations: ['Install directional UHF barrier beam at Exclusion Zone C entry with visual LED strip.'],
+      regulatoryImpact: 'OSHA 1926.1424 Exclusion Zone Personnel Clearance Logged.'
     },
     witnessStatements: [],
     attachments: [],
     timeline: [
-      { id: 't_1', timestamp: '11:00 AM', title: 'Spill Reported', description: 'Spill kit deployed immediately.', actor: 'Carlos Mendez', statusChange: 'Open' },
-      { id: 't_2', timestamp: '12:30 PM', title: 'Containment Complete', description: 'Absorbent pads disposed of.', actor: 'Frank Reynolds', statusChange: 'Closed' }
+      { id: 't_1', timestamp: '11:00 AM', title: 'Tag Breach Detected', description: 'Hardhat Tag #8B-F1-0A scanned inside Crane Radius.', actor: 'Reader R-02', statusChange: 'Open' },
+      { id: 't_2', timestamp: '11:02 AM', title: 'Personnel Escorted Out', description: 'Worker guided back to safe laydown zone.', actor: 'Frank Reynolds', statusChange: 'Closed' }
     ],
     correctiveActions: [
-      { id: 'ca_1', actionItem: 'Replace hose fitting and pressure test', assignedTo: 'Hydraulics Tech', dueDate: '2026-08-06', isCompleted: true }
+      { id: 'ca_1', actionItem: 'Re-align directional UHF antenna at Crane Zone C boundary', assignedTo: 'IoT Field Tech', dueDate: '2026-08-06', isCompleted: true }
     ],
     approvalSignOff: {
       approvedBy: 'Marcus Vance (EHS Director)',
       approvedAt: '2026-08-06T15:00:00.000Z',
-      comments: 'Satisfactory cleanup and preventative hose replacement verified.'
+      comments: 'Automatic RFID perimeter alarm verified. Worker briefed on exclusion protocols.'
     }
   }
 ];
@@ -342,23 +342,45 @@ export default function IncidentsTab() {
     } : undefined
   });
 
-  // Sync with MongoDB / Firestore
+  // Sync with MongoDB / Firestore (Listen to both incidents_enterprise and incidents collections)
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'incidents_enterprise'), (snapshot) => {
-      const data = snapshot.docs.map(docSnap => normalizeIncident(docSnap.data(), docSnap.id));
+    let enterpriseDocs: EnterpriseIncident[] = [];
+    let standardDocs: EnterpriseIncident[] = [];
 
-      setIncidents(data);
-      if (data.length > 0) {
+    const updateCombined = () => {
+      const map = new Map<string, EnterpriseIncident>();
+      // Seed default incidents first
+      DEFAULT_ENTERPRISE_INCIDENTS.forEach(inc => map.set(inc.id, inc));
+      // Overwrite/Add MongoDB incidents
+      [...enterpriseDocs, ...standardDocs].forEach(inc => map.set(inc.id, inc));
+      
+      const combined = Array.from(map.values()).sort((a, b) => 
+        new Date(b.reportedAt).getTime() - new Date(a.reportedAt).getTime()
+      );
+
+      setIncidents(combined);
+      if (combined.length > 0) {
         setSelectedIncident(prev => {
-          if (!prev) return data[0];
-          const updated = data.find(i => i.id === prev.id);
-          return updated || data[0];
+          if (!prev) return combined[0];
+          const matched = combined.find(i => i.id === prev.id);
+          return matched || combined[0];
         });
       }
+    };
+
+    const unsubEnterprise = onSnapshot(collection(db, 'incidents_enterprise'), (snapshot) => {
+      enterpriseDocs = snapshot.docs.map(docSnap => normalizeIncident(docSnap.data(), docSnap.id));
+      updateCombined();
+    });
+
+    const unsubStandard = onSnapshot(collection(db, 'incidents'), (snapshot) => {
+      standardDocs = snapshot.docs.map(docSnap => normalizeIncident(docSnap.data(), docSnap.id));
+      updateCombined();
     });
 
     return () => {
-      if (unsub) unsub();
+      if (unsubEnterprise) unsubEnterprise();
+      if (unsubStandard) unsubStandard();
     };
   }, []);
 
@@ -536,13 +558,16 @@ export default function IncidentsTab() {
       description: editForm.description
     };
 
+    setIncidents(prev => prev.map(i => i.id === selectedIncident.id ? updated : i));
+    setSelectedIncident(updated);
+    setIsEditIncidentOpen(false);
+    setNotification({ type: 'success', text: `Incident ${selectedIncident.id} details updated in MongoDB.` });
+
     try {
-      await updateDoc(doc(db, 'incidents_enterprise', selectedIncident.id), updated);
-      setSelectedIncident(updated);
-      setIsEditIncidentOpen(false);
-      setNotification({ type: 'success', text: `Incident ${selectedIncident.id} details updated in MongoDB.` });
+      await setDoc(doc(db, 'incidents_enterprise', selectedIncident.id), updated, { merge: true });
+      await setDoc(doc(db, 'incidents', selectedIncident.id), updated, { merge: true });
     } catch (err) {
-      console.error('Error updating incident:', err);
+      console.warn('MongoDB sync note:', err);
     }
   };
 
@@ -551,16 +576,23 @@ export default function IncidentsTab() {
     if (!selectedIncident) return;
     if (!window.confirm(`Are you sure you want to permanently delete incident ${selectedIncident.id} from MongoDB?`)) return;
 
+    const targetId = selectedIncident.id;
+    setIncidents(prev => prev.filter(i => i.id !== targetId));
+    setSelectedIncident(null);
+    setNotification({ type: 'info', text: `Incident ${targetId} deleted from MongoDB.` });
+
     try {
-      await deleteDoc(doc(db, 'incidents_enterprise', selectedIncident.id));
-      setNotification({ type: 'info', text: `Incident ${selectedIncident.id} deleted from MongoDB.` });
-      setSelectedIncident(null);
+      await deleteDoc(doc(db, 'incidents_enterprise', targetId));
+      await deleteDoc(doc(db, 'incidents', targetId));
+      const altId = `INC-ALT-${targetId}`;
+      await deleteDoc(doc(db, 'alerts_enterprise', altId));
+      await deleteDoc(doc(db, 'alerts', altId));
     } catch (err) {
-      console.error('Error deleting incident:', err);
+      console.warn('MongoDB delete note:', err);
     }
   };
 
-  // 4. Advance or Jump Workflow Stage (MongoDB Persisted)
+  // 4. Advance or Jump Workflow Stage (MongoDB Persisted for Every Stage)
   const handleSetWorkflowStage = async (nextStatus: IncidentWorkflowStatus) => {
     if (!selectedIncident) return;
 
@@ -577,21 +609,35 @@ export default function IncidentsTab() {
       }
     ];
 
+    const updatedIncident = {
+      ...selectedIncident,
+      workflowStatus: nextStatus,
+      timeline: updatedTimeline
+    };
+
+    setIncidents(prev => prev.map(i => i.id === selectedIncident.id ? updatedIncident : i));
+    setSelectedIncident(updatedIncident);
+    setNotification({ type: 'success', text: `Incident ${selectedIncident.id} updated to stage: ${nextStatus}` });
+
     try {
-      await updateDoc(doc(db, 'incidents_enterprise', selectedIncident.id), {
+      await setDoc(doc(db, 'incidents_enterprise', selectedIncident.id), {
         workflowStatus: nextStatus,
+        status: nextStatus === 'Closed' ? 'Closed' : 'Open',
         timeline: updatedTimeline
-      });
+      }, { merge: true });
 
-      setSelectedIncident({
-        ...selectedIncident,
+      await setDoc(doc(db, 'incidents', selectedIncident.id), {
         workflowStatus: nextStatus,
-        timeline: updatedTimeline
-      });
+        status: nextStatus === 'Closed' ? 'Closed' : 'Open'
+      }, { merge: true });
 
-      setNotification({ type: 'success', text: `Incident ${selectedIncident.id} advanced to: ${nextStatus}` });
+      if (nextStatus === 'Closed') {
+        const altId = `INC-ALT-${selectedIncident.id}`;
+        await setDoc(doc(db, 'alerts_enterprise', altId), { status: 'Resolved', resolved: true }, { merge: true });
+        await setDoc(doc(db, 'alerts', altId), { status: 'Resolved', resolved: true }, { merge: true });
+      }
     } catch (err) {
-      console.error('Error advancing workflow stage:', err);
+      console.warn('MongoDB sync note:', err);
     }
   };
 
@@ -1327,9 +1373,23 @@ export default function IncidentsTab() {
 
                   {/* Header Management Buttons */}
                   <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* 1-Click Stage Selector Dropdown */}
+                    <div className="flex items-center gap-1 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-2 py-1">
+                      <span className="text-[10px] font-bold text-slate-400 uppercase">Stage:</span>
+                      <select
+                        value={selectedIncident.workflowStatus}
+                        onChange={e => handleSetWorkflowStage(e.target.value as IncidentWorkflowStatus)}
+                        className="bg-transparent text-xs font-bold text-slate-800 dark:text-white outline-none cursor-pointer"
+                      >
+                        {WORKFLOW_STAGES.map(st => (
+                          <option key={st} value={st}>{st}</option>
+                        ))}
+                      </select>
+                    </div>
+
                     <button
                       onClick={openEditIncident}
-                      className="p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-100 text-xs font-bold flex items-center gap-1"
+                      className="p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-lg hover:bg-slate-100 text-xs font-bold flex items-center gap-1 cursor-pointer"
                       title="Edit Incident Details"
                     >
                       <Edit3 size={13} /> Edit
@@ -1337,7 +1397,7 @@ export default function IncidentsTab() {
 
                     <button
                       onClick={handleDeleteIncident}
-                      className="p-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg hover:bg-rose-100 text-xs font-bold flex items-center gap-1"
+                      className="p-1.5 bg-rose-50 text-rose-700 border border-rose-200 rounded-lg hover:bg-rose-100 text-xs font-bold flex items-center gap-1 cursor-pointer"
                       title="Delete Incident"
                     >
                       <Trash2 size={13} />
@@ -1346,24 +1406,11 @@ export default function IncidentsTab() {
                     {/* Workflow Stage Quick Progression */}
                     {selectedIncident.workflowStatus !== 'Closed' && (
                       <button
-                        onClick={() => {
-                          const currentIdx = WORKFLOW_STAGES.indexOf(selectedIncident.workflowStatus);
-                          if (currentIdx < WORKFLOW_STAGES.length - 1) {
-                            handleSetWorkflowStage(WORKFLOW_STAGES[currentIdx + 1]);
-                          }
-                        }}
-                        className="px-3 py-1.5 bg-[#007BC4] text-white text-xs font-bold rounded-xl shadow-sm hover:bg-blue-700 transition flex items-center gap-1.5"
+                        onClick={() => handleSetWorkflowStage('Closed')}
+                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                        title="1-Click Resolve & Close Incident permanently"
                       >
-                        Advance Stage <ArrowRight size={13} />
-                      </button>
-                    )}
-
-                    {selectedIncident.workflowStatus === 'Approval' && (
-                      <button
-                        onClick={() => setIsSignOffOpen(true)}
-                        className="px-3 py-1.5 bg-emerald-600 text-white text-xs font-bold rounded-xl shadow-sm hover:bg-emerald-700 transition flex items-center gap-1.5"
-                      >
-                        Sign Off & Close <CheckCircle2 size={13} />
+                        <CheckCircle2 size={13} /> Resolve & Close
                       </button>
                     )}
                   </div>

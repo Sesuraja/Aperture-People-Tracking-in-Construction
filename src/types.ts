@@ -186,13 +186,15 @@ export interface AIAlert {
 export type IncidentCategory = 
   | 'Near Miss' 
   | 'Injury' 
-  | 'Equipment Damage' 
+  | 'Exclusion Zone Breach'
+  | 'PPE Non-Compliance'
   | 'Fire' 
   | 'Medical' 
   | 'Security' 
   | 'Chemical' 
   | 'Electrical' 
-  | 'Environmental';
+  | 'Environmental'
+  | 'Unregistered RFID Tag';
 
 export type IncidentWorkflowStatus = 
   | 'Open' 
