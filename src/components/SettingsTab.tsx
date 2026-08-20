@@ -1319,9 +1319,7 @@ export default function SettingsTab() {
         msg: "Removed MongoDB URI. Reverting all tabs to default database.",
       });
       window.dispatchEvent(new Event('mongo-config-updated'));
-      setTimeout(() => {
-        window.location.reload();
-      }, 1000);
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
       return;
     }
     setSavingMongo(true);
@@ -1347,9 +1345,7 @@ export default function SettingsTab() {
           msg: "MongoDB connected and saved! Persisted to local storage and active server session.",
         });
         window.dispatchEvent(new Event('mongo-config-updated'));
-        setTimeout(() => {
-          window.location.reload();
-        }, 1200);
+        window.dispatchEvent(new CustomEvent('gao_refresh_data'));
       } else {
         setMongoTestResult({
           success: false,

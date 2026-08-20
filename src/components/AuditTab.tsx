@@ -78,7 +78,7 @@ const DEFAULT_AUDIT_LOGS: AuditLogItem[] = [
     action: 'Safety Exclusion Rule Created',
     category: 'System Config',
     severity: 'Warning',
-    details: 'Configured automated boundary warning for Subcontractor RFID tags in Crane Exclusion Zone B3',
+    details: 'Configured automated boundary warning for Subcontractor RFID tags in Crane Operating Zone',
     ipAddress: '192.168.1.104',
     hash: 'a8f9c2d1b4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1',
     status: 'Verified'
@@ -104,7 +104,7 @@ const DEFAULT_AUDIT_LOGS: AuditLogItem[] = [
     action: 'Perimeter Breach Alert Acknowledged',
     category: 'Security Claim',
     severity: 'Security Alert',
-    details: 'Acknowledged high-priority uncarded perimeter breach at Gate 4 Logistics portal',
+    details: 'Acknowledged high-priority uncarded perimeter breach at Access Point AP2 Reader R2 portal',
     ipAddress: '192.168.1.188',
     hash: 'c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2',
     status: 'Verified'

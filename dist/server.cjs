@@ -302,8 +302,17 @@ async function upsertDoc(colName, doc) {
   delete cleanDoc._id;
   if (mongoDb) {
     try {
+      const idStr = String(cleanDoc.id || "").trim();
       await mongoDb.collection(colName).updateOne(
-        { id: cleanDoc.id },
+        {
+          $or: [
+            { id: idStr },
+            { id: idStr.toUpperCase() },
+            { id: idStr.toLowerCase() },
+            { hardhatTagId: idStr },
+            { hardhatTagId: idStr.toUpperCase() }
+          ]
+        },
         { $set: cleanDoc },
         { upsert: true }
       );
@@ -326,15 +335,33 @@ async function upsertDoc(colName, doc) {
 async function deleteDocById(colName, id) {
   if (mongoDb) {
     try {
-      const result = await mongoDb.collection(colName).deleteOne({ id });
-      return result.deletedCount > 0;
+      const idStr = String(id || "").trim();
+      const orClauses = [
+        { id: idStr },
+        { id: idStr.toLowerCase() },
+        { id: idStr.toUpperCase() },
+        { hardhatTagId: idStr },
+        { hardhatTagId: idStr.toUpperCase() },
+        { hardhatTagId: idStr.toLowerCase() }
+      ];
+      if (import_mongodb.ObjectId.isValid(idStr) && idStr.length === 24) {
+        try {
+          orClauses.push({ _id: new import_mongodb.ObjectId(idStr) });
+        } catch {
+        }
+      }
+      const result = await mongoDb.collection(colName).deleteMany({ $or: orClauses });
+      return (result.deletedCount || 0) > 0;
     } catch (err) {
       console.error(`[DB Service] Error deleting doc ${id} in ${colName}:`, err);
     }
   }
   if (inMemoryStore[colName]) {
     const initLen = inMemoryStore[colName].length;
-    inMemoryStore[colName] = inMemoryStore[colName].filter((item) => item.id !== id);
+    const idLower = String(id || "").toLowerCase().trim();
+    inMemoryStore[colName] = inMemoryStore[colName].filter(
+      (item) => item.id !== id && String(item.id || "").toLowerCase().trim() !== idLower && String(item.hardhatTagId || "").toLowerCase().trim() !== idLower
+    );
     return inMemoryStore[colName].length < initLen;
   }
   return false;

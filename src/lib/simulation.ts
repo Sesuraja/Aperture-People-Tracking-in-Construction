@@ -49,12 +49,29 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   console.warn('Firestore Operation Notice: ', JSON.stringify(errInfo));
 }
 
+export const SITE_ZONE_WAYPOINTS: { name: string; x: number; y: number; minX: number; maxX: number; minY: number; maxY: number }[] = [
+  { name: 'Material Storage', x: 18.0, y: 15.0, minX: 10, maxX: 26, minY: 11, maxY: 23 },
+  { name: 'Structure Work Area', x: 50.0, y: 15.0, minX: 40, maxX: 60, minY: 11, maxY: 23 },
+  { name: 'Crane Operating Zone', x: 82.0, y: 15.0, minX: 72, maxX: 90, minY: 11, maxY: 23 },
+  { name: 'Site Office', x: 18.0, y: 45.0, minX: 10, maxX: 26, minY: 40, maxY: 53 },
+  { name: 'Open Work Area', x: 50.0, y: 45.0, minX: 40, maxX: 60, minY: 40, maxY: 53 },
+  { name: 'Equipment Parking', x: 82.0, y: 45.0, minX: 72, maxX: 90, minY: 40, maxY: 53 },
+  { name: 'Excavation Area', x: 18.0, y: 75.0, minX: 10, maxX: 26, minY: 70, maxY: 83 },
+  { name: 'Assembly Point', x: 50.0, y: 75.0, minX: 40, maxX: 60, minY: 70, maxY: 83 },
+  { name: 'High Voltage Area', x: 82.0, y: 75.0, minX: 72, maxX: 90, minY: 70, maxY: 83 }
+];
+
 export const INITIAL_PROJECT_ZONES: Record<string, Record<string, { x: number; y: number; width: number; height: number }>> = {
   'metro-tower': {
-    'Deep Excavation Shaft': { x: 10, y: 15, width: 34, height: 62 },
-    'Tower Core Structure': { x: 51, y: 25, width: 32, height: 50 },
-    'Heavy Crane & Exclusion Area': { x: 80, y: 5, width: 16, height: 42 },
-    'High Voltage Area': { x: 46, y: 5, width: 14, height: 16 }
+    'Material Storage': { x: 6.5, y: 8.0, width: 23.5, height: 21.5 },
+    'Structure Work Area': { x: 36.5, y: 8.0, width: 26.0, height: 21.5 },
+    'Crane Operating Zone': { x: 69.0, y: 8.0, width: 24.5, height: 21.5 },
+    'Site Office': { x: 6.5, y: 38.0, width: 23.5, height: 21.5 },
+    'Open Work Area': { x: 36.5, y: 38.0, width: 26.0, height: 21.5 },
+    'Equipment Parking': { x: 69.0, y: 38.0, width: 24.5, height: 21.5 },
+    'Excavation Area': { x: 6.5, y: 68.0, width: 23.5, height: 21.5 },
+    'Assembly Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5 },
+    'High Voltage Area': { x: 69.0, y: 68.0, width: 24.5, height: 21.5 }
   },
   'highrise-phase2': {
     'Structural Frame Sector A': { x: 18, y: 22, width: 30, height: 56 },
@@ -466,52 +483,6 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
                 }
              });
 
-              // Staggered realistic movement: limit active moving workers to 1 or 2
-              const activeMovers = nextPeople.filter(p => (p as any).isMovingTarget || p.presenceState === 'MOVING').length;
-
-              nextPeople.forEach((p, pIdx) => {
-                p.dwellTime += 2; 
-
-                p.trail = p.trail || [];
-                if (p.trail.length > 30) p.trail.shift();
-
-                let targetX = (p as any).targetX;
-                let targetY = (p as any).targetY;
-                let idleTicks = (p as any).idleRemaining || 0;
-
-                if (targetX === undefined || targetY === undefined || (Math.abs(targetX - p.x) < 1.0 && Math.abs(targetY - p.y) < 1.0)) {
-                  if (idleTicks > 0) {
-                    idleTicks -= 1;
-                    p.presenceState = 'IDLE';
-                    (p as any).targetX = p.x;
-                    (p as any).targetY = p.y;
-                  } else if (activeMovers < 2 && Math.random() < 0.25) {
-                    const zoneRect = getZoneRect(p.currentZone, activeProjectId, dynamicZones);
-                    (p as any).targetX = zoneRect.x + 2 + Math.random() * Math.max(2, zoneRect.width - 4);
-                    (p as any).targetY = zoneRect.y + 2 + Math.random() * Math.max(2, zoneRect.height - 4);
-                    (p as any).idleRemaining = Math.floor(Math.random() * 15) + 10;
-                    p.presenceState = 'MOVING';
-                  } else {
-                    p.presenceState = 'IDLE';
-                    (p as any).idleRemaining = Math.floor(Math.random() * 10) + 6;
-                  }
-                } else {
-                  // Gentle walking speed
-                  const dx = targetX - p.x;
-                  const dy = targetY - p.y;
-                  const dist = Math.hypot(dx, dy);
-                  if (dist > 0.4) {
-                    const step = Math.min(0.35, dist);
-                    p.x += (dx / dist) * step;
-                    p.y += (dy / dist) * step;
-                    p.presenceState = 'MOVING';
-                    p.trail.push({ x: p.x, y: p.y });
-                  } else {
-                    p.presenceState = 'IDLE';
-                  }
-                }
-              });
-
               return nextPeople;
            });
          } catch (e: any) {
@@ -519,7 +490,7 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
          }
        };
 
-       interval = setInterval(syncRealtime, 2000);
+       interval = setInterval(syncRealtime, 5000);
     } else if (mode === 'demo') {
        setIsLoading(false);
 
@@ -533,40 +504,105 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
              'Authorization': `Bearer ${token}`
            };
 
-           const [peopleRes, assetsRes, vehiclesRes] = await Promise.all([
+           const [peopleRes, visitorsRes, assetsRes, vehiclesRes] = await Promise.all([
              fetch('/api/data/registered_people', { headers: authHeaders }).catch(() => null),
+             fetch('/api/data/visitors', { headers: authHeaders }).catch(() => null),
              fetch('/api/data/assets', { headers: authHeaders }).catch(() => null),
              fetch('/api/data/vehicles', { headers: authHeaders }).catch(() => null)
            ]);
 
-           if (peopleRes && peopleRes.ok) {
-             const data = await peopleRes.json();
-             if (Array.isArray(data) && isMounted) {
-               const zonesList = getZonesForProject(activeProjectId);
-               const mapped = data.map((p: any, idx: number) => {
-                 const zone = p.currentZone || zonesList[idx % zonesList.length] || 'People Tracking in Construction';
-                 const rect = getZoneRect(zone, activeProjectId, dynamicZones);
-                 return {
-                   id: p.id || p.hardhatTagId || `W-${idx + 1}`,
-                   name: p.name || `Worker ${idx + 1}`,
-                   role: p.role || 'Field Personnel',
-                   tradeCompany: p.tradeCompany,
-                   ppeStatus: p.ppeStatus,
-                   shiftStatus: p.shiftStatus,
-                   trainingStatus: p.trainingStatus,
-                   hardhatTagId: p.hardhatTagId || p.id,
-                   currentZone: zone,
-                   presenceState: (p.presenceState || 'IDLE') as any,
-                   dwellTime: p.dwellTime || 0,
-                   x: rect.x + 2 + Math.random() * (rect.width - 4),
-                   y: rect.y + 2 + Math.random() * (rect.height - 4),
-                   lastSeen: p.lastSeen ? new Date(p.lastSeen) : new Date(),
-                   trail: []
-                 };
-               });
-               setPeople(mapped);
-             }
-           }
+            if (peopleRes && peopleRes.ok) {
+              const data = await peopleRes.json();
+              let visitorsData: any[] = [];
+              if (visitorsRes && visitorsRes.ok) {
+                try {
+                  const rawVis = await visitorsRes.json();
+                  if (Array.isArray(rawVis)) visitorsData = rawVis;
+                } catch {}
+              }
+
+              if (Array.isArray(data) && isMounted) {
+                setPeople(prev => {
+                  const existingMap = new Map((prev || []).map(p => [p.id, p]));
+                  
+                  // Map registered workforce
+                  const workersList = data.map((p: any, idx: number) => {
+                    const id = p.id || p.hardhatTagId || `W-${idx + 1}`;
+                    const existing = existingMap.get(id);
+                    const defaultWaypoint = SITE_ZONE_WAYPOINTS[idx % SITE_ZONE_WAYPOINTS.length];
+                    const zone = p.currentZone || (existing?.currentZone) || defaultWaypoint.name;
+                    const x = typeof p.x === 'number' && p.x >= 5 && p.x <= 95 ? p.x : (existing ? existing.x : defaultWaypoint.x);
+                    const y = typeof p.y === 'number' && p.y >= 5 && p.y <= 95 ? p.y : (existing ? existing.y : defaultWaypoint.y);
+                    return {
+                      id,
+                      name: p.name || `Worker ${idx + 1}`,
+                      role: p.role || 'Field Personnel',
+                      tradeCompany: p.tradeCompany,
+                      ppeStatus: p.ppeStatus,
+                      shiftStatus: p.shiftStatus,
+                      trainingStatus: p.trainingStatus,
+                      hardhatTagId: p.hardhatTagId || p.id,
+                      currentZone: zone,
+                      presenceState: (existing?.presenceState || 'IDLE') as any,
+                      dwellTime: p.dwellTime || (existing?.dwellTime) || 0,
+                      x,
+                      y,
+                      lastSeen: p.lastSeen ? new Date(p.lastSeen) : (existing?.lastSeen || new Date()),
+                      trail: existing?.trail || []
+                    };
+                  });
+
+                  // Map allowed and verified site visitors only
+                  const activeVisitorsList = visitorsData
+                    .filter((v: any) => {
+                      if (!v) return false;
+                      const status = (v.status || '').trim();
+                      const idStatus = (v.idVerificationStatus || '').toUpperCase();
+
+                      if (status === 'Pending Approval' || status === 'Denied' || status === 'Rejected' || status === 'Completed' || status === 'Blacklisted' || status === 'Departed') {
+                        return false;
+                      }
+                      if (idStatus === 'FAILED' || idStatus === 'REJECTED') {
+                        return false;
+                      }
+                      if (status === 'Active' || status === 'Checked-in' || status === 'Overstayed') {
+                        return idStatus !== 'FAILED';
+                      }
+                      if (status === 'Approved' && (idStatus === 'VERIFIED' || v.tag)) {
+                        return true;
+                      }
+                      return false;
+                    })
+                    .map((v: any, vIdx: number) => {
+                      const id = v.id || `VIS-${vIdx + 880}`;
+                      const existing = existingMap.get(id);
+                      const zone = v.location || 'Site Command HQ';
+                      const defaultPoint = SITE_ZONE_WAYPOINTS[3];
+                      const x = typeof v.x === 'number' ? v.x : (existing ? existing.x : defaultPoint.x);
+                      const y = typeof v.y === 'number' ? v.y : (existing ? existing.y : defaultPoint.y);
+                      return {
+                        id,
+                        name: `${v.name} (Visitor)`,
+                        role: 'Visitor',
+                        tradeCompany: v.company || 'Auditor / Guest',
+                        ppeStatus: 'COMPLIANT' as const,
+                        shiftStatus: 'ON_SITE' as const,
+                        trainingStatus: 'COMPLIANT' as const,
+                        hardhatTagId: v.tag || `VIS-TAG-${v.id || vIdx}`,
+                        currentZone: zone,
+                        presenceState: (existing?.presenceState || 'IDLE') as any,
+                        dwellTime: v.duration ? parseInt(v.duration) || 20 : 20,
+                        x,
+                        y,
+                        lastSeen: v.arrivalTime ? new Date(v.arrivalTime) : (existing?.lastSeen || new Date()),
+                        trail: existing?.trail || []
+                      };
+                    });
+
+                  return [...workersList, ...activeVisitorsList];
+                });
+              }
+            }
 
            if (assetsRes && assetsRes.ok) {
              const data = await assetsRes.json();
@@ -586,15 +622,109 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
          }
        };
 
-       loadFromMongo();
-       // Poll MongoDB every 4 seconds for fresh data
-       interval = setInterval(loadFromMongo, 4000);
-    }
+        loadFromMongo();
+        interval = setInterval(loadFromMongo, 6000);
+     }
 
-    return () => {
-      isMounted = false;
-      if (interval) clearInterval(interval);
-    };
+     // 10-Second Single-Worker Rotating Movement Engine
+     // 1 person moves for 10 seconds from current zone to another zone, rest of workers rest.
+     // After 10 seconds, another worker takes turn for 10 seconds, rest of workers rest.
+     let activeMoverIdx = 0;
+     let ticksInCycle = 0;
+     const TICKS_PER_CYCLE = 100; // 100 ticks * 100ms = 10,000ms (10 seconds)
+     let isInitialized = false;
+
+     const movementInterval = setInterval(() => {
+       if (!isMounted) return;
+       ticksInCycle += 1;
+       const isNew10SecTurn = ticksInCycle >= TICKS_PER_CYCLE;
+
+       setPeople(prevPeople => {
+         if (!prevPeople || prevPeople.length === 0) return prevPeople;
+
+         if (isNew10SecTurn || !isInitialized) {
+           if (isNew10SecTurn) {
+             ticksInCycle = 0;
+             activeMoverIdx = (activeMoverIdx + 1) % prevPeople.length;
+           }
+           isInitialized = true;
+         }
+
+         const safeMoverIndex = activeMoverIdx % prevPeople.length;
+
+         return prevPeople.map((p, idx) => {
+           const isMover = idx === safeMoverIndex;
+
+           if (!isMover) {
+             return {
+               ...p,
+               presenceState: 'IDLE' as const,
+               speed: 0,
+               dwellTime: (p.dwellTime || 0) + 1,
+               lastSeen: new Date()
+             };
+           }
+
+           // Mover: compute destination & interpolate smoothly
+           let startX = (p as any).startX;
+           let startY = (p as any).startY;
+           let targetX = (p as any).targetX;
+           let targetY = (p as any).targetY;
+           let targetZone = (p as any).targetZone;
+
+           if (ticksInCycle === 1 || startX === undefined || targetX === undefined || !targetZone) {
+             startX = typeof p.x === 'number' ? p.x : 50;
+             startY = typeof p.y === 'number' ? p.y : 50;
+
+             const currentZoneName = p.currentZone || '';
+             const eligibleZones = SITE_ZONE_WAYPOINTS.filter(
+               z => z.name.toLowerCase() !== currentZoneName.toLowerCase()
+             );
+             const chosenZone = eligibleZones.length > 0
+               ? eligibleZones[Math.floor(Math.random() * eligibleZones.length)]
+               : SITE_ZONE_WAYPOINTS[Math.floor(Math.random() * SITE_ZONE_WAYPOINTS.length)];
+
+              targetZone = chosenZone.name;
+              targetX = Math.round((chosenZone.minX + Math.random() * (chosenZone.maxX - chosenZone.minX)) * 10) / 10;
+              targetY = Math.round((chosenZone.minY + Math.random() * (chosenZone.maxY - chosenZone.minY)) * 10) / 10;
+            }
+
+           const progress = Math.min(1.0, Math.max(0.0, ticksInCycle / TICKS_PER_CYCLE));
+           const easeProgress = 0.5 - Math.cos(progress * Math.PI) / 2;
+
+           const currX = startX + (targetX - startX) * easeProgress;
+           const currY = startY + (targetY - startY) * easeProgress;
+
+           const dx = targetX - startX;
+           const dy = targetY - startY;
+           const heading = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360);
+           const isArrived = progress >= 0.99;
+
+           return {
+             ...p,
+             x: Math.round(currX * 100) / 100,
+             y: Math.round(currY * 100) / 100,
+             startX,
+             startY,
+             targetX,
+             targetY,
+             targetZone,
+             currentZone: progress >= 0.5 ? targetZone : p.currentZone,
+             heading,
+             speed: isArrived ? 0 : 1.4,
+             presenceState: isArrived ? ('IDLE' as const) : ('MOVING' as const),
+             dwellTime: isArrived ? (p.dwellTime || 0) + 1 : 0,
+             lastSeen: new Date()
+           };
+         });
+       });
+     }, 100);
+
+     return () => {
+       isMounted = false;
+       if (interval) clearInterval(interval);
+       clearInterval(movementInterval);
+     };
   }, [mode, activeProjectId, dynamicZones]);
 
   return { people, assets, vehicles, alerts, ZONES: dynamicZones, isLoading };

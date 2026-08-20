@@ -28,6 +28,8 @@ export interface Person {
   lastSeen: Date;
   trail: {x: number, y: number}[];
   activityInsights?: { activity: string; confidence: number };
+  photoUrl?: string;
+  avatarUrl?: string;
   projectId?: string;
   targetX?: number;
   targetY?: number;

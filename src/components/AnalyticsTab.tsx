@@ -16,7 +16,8 @@ import {
   Plus, Trash2, Power, Database, Share2, Eye, Server, RadioTower,
   CheckSquare, Square, ChevronRight, X
 } from 'lucide-react';
-import { db, collection, getDocs, onSnapshot } from '../lib/db';
+import { db, collection, getDocs, onSnapshot, addDoc, updateDoc, doc, deleteDoc, serverTimestamp } from '../lib/db';
+import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 
 const PALETTE = ['#007BC4', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4'];
 
@@ -605,14 +606,17 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     ];
   }, [dbAttendanceData, multiplier]);
 
-  const movementFlowData = [
-    { zone: 'Main Entrance Turnstile', hourlyFlow: 140, avgDwellMin: 2, congestionRisk: 'Low' },
-    { zone: 'Tower Core Structure Level 2', hourlyFlow: 88, avgDwellMin: 185, congestionRisk: 'Medium' },
-    { zone: 'Deep Excavation Sector B', hourlyFlow: 62, avgDwellMin: 210, congestionRisk: 'Low' },
-    { zone: 'Laydown Yard & Material Depot', hourlyFlow: 110, avgDwellMin: 45, congestionRisk: 'Low' },
-    { zone: 'Sub-Basement B1 Trench', hourlyFlow: 34, avgDwellMin: 140, congestionRisk: 'High' },
-    { zone: 'Site Welfare & Command Hub', hourlyFlow: 95, avgDwellMin: 30, congestionRisk: 'Low' }
-  ];
+  const movementFlowData = useMemo(() => [
+    { zone: 'Material Storage', hourlyFlow: 45, avgDwellMin: 35, congestionRisk: 'Low' },
+    { zone: 'Structure Work Area', hourlyFlow: 78, avgDwellMin: 140, congestionRisk: 'Medium' },
+    { zone: 'Crane Operating Zone', hourlyFlow: 18, avgDwellMin: 25, congestionRisk: 'High' },
+    { zone: 'Site Office', hourlyFlow: 92, avgDwellMin: 40, congestionRisk: 'Low' },
+    { zone: 'Open Work Area', hourlyFlow: 65, avgDwellMin: 110, congestionRisk: 'Low' },
+    { zone: 'Equipment Parking', hourlyFlow: 30, avgDwellMin: 55, congestionRisk: 'Medium' },
+    { zone: 'Excavation Area', hourlyFlow: 24, avgDwellMin: 120, congestionRisk: 'High' },
+    { zone: 'Assembly Point', hourlyFlow: 15, avgDwellMin: 10, congestionRisk: 'Low' },
+    { zone: 'High Voltage Area', hourlyFlow: 12, avgDwellMin: 20, congestionRisk: 'High' }
+  ], []);
 
   const productivityData = [
     { role: 'Rigging Crew', toolTimePct: 82, transitPct: 11, idlePct: 7 },
@@ -624,19 +628,39 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   ];
 
   const readerHealthData = [
-    { id: 'RDR-01', name: 'Main Gate Turnstile RFID Portal', type: 'Fixed UHF RFID 915MHz', uptimePct: 99.98 },
-    { id: 'GW-02', name: 'Tower Core Scaffold RFID Portal', type: 'UHF Fixed 4-Port Reader', uptimePct: 99.91 },
-    { id: 'GPS-01', name: 'RTK GPS Base Station Alpha', type: 'GPS Differential RTK', uptimePct: 100.0 },
-    { id: 'GW-03', name: 'Sub-Basement B1 Trench Gateway', type: 'UHF Portal Enclosure', uptimePct: 98.40 }
+    { id: 'R1', name: 'Reader R1 (North Staging)', type: 'Fixed UHF RFID 915MHz', uptimePct: 99.98 },
+    { id: 'R2', name: 'Reader R2 (East Crane Perimeter)', type: 'UHF Fixed 4-Port Reader', uptimePct: 99.91 },
+    { id: 'R3', name: 'Reader R3 (South-East High Voltage)', type: 'Fixed UHF Portal', uptimePct: 100.0 },
+    { id: 'R4', name: 'Reader R4 (South Assembly Area)', type: 'UHF Portal Enclosure', uptimePct: 98.40 },
+    { id: 'R5', name: 'Reader R5 (South-West Excavation)', type: 'Long-Range UHF', uptimePct: 99.70 },
+    { id: 'R6', name: 'Reader R6 (West Site Office & Gate)', type: 'Fixed UHF Turnstile', uptimePct: 99.95 }
   ];
 
-  const zoneOccupancyData = [
-    { zone: 'Tower Core Reinforcement', current: 18, capacity: 25, loadPct: 72, risk: 'Normal' },
-    { zone: 'Crane Swing Exclusion Radius', current: 8, capacity: 10, loadPct: 80, risk: 'Moderate' },
-    { zone: 'Deep Excavation Shaft', current: 14, capacity: 15, loadPct: 93, risk: 'High' },
-    { zone: 'Ground Turnstile Laydown', current: 22, capacity: 60, loadPct: 36, risk: 'Normal' },
-    { zone: 'Site Welfare Command Center', current: 10, capacity: 30, loadPct: 33, risk: 'Normal' }
-  ];
+  const zoneOccupancyData = useMemo(() => {
+    const defaultZonesConfig = [
+      { name: 'Material Storage', capacity: 4, risk: 'Moderate' },
+      { name: 'Structure Work Area', capacity: 10, risk: 'Normal' },
+      { name: 'Crane Operating Zone', capacity: 3, risk: 'High' },
+      { name: 'Site Office', capacity: 8, risk: 'Normal' },
+      { name: 'Open Work Area', capacity: 12, risk: 'Normal' },
+      { name: 'Equipment Parking', capacity: 5, risk: 'Moderate' },
+      { name: 'Excavation Area', capacity: 4, risk: 'High' },
+      { name: 'Assembly Point', capacity: 30, risk: 'Normal' },
+      { name: 'High Voltage Area', capacity: 3, risk: 'High' }
+    ];
+
+    return defaultZonesConfig.map(z => {
+      const current = people.filter(p => (p.currentZone || '').toLowerCase().includes(z.name.toLowerCase().split(' ')[0])).length;
+      const loadPct = Math.round((current / z.capacity) * 100);
+      return {
+        zone: z.name,
+        current,
+        capacity: z.capacity,
+        loadPct,
+        risk: loadPct >= 90 ? 'High' : loadPct >= 70 ? 'Moderate' : 'Normal'
+      };
+    });
+  }, [people]);
 
   const incidentTrendData = [
     { month: 'Mar 2026', nearMiss: 4, zoneBreach: 2, ppeViolation: 8, slipFall: 1 },

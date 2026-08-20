@@ -171,6 +171,9 @@ export default function VisitorCheckInForm({ onCheckInComplete, securityListProp
       setGeneratedToken(tokenString);
       setCheckInSuccess(visitorRecord);
 
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+
       if (onCheckInComplete) {
         onCheckInComplete(visitorRecord);
       }

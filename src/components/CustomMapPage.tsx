@@ -10,7 +10,7 @@ import {
 import HardwareConfigModal, { HardwareDevice } from './HardwareConfigModal';
 import MapEditorModal, { ZoneBounds } from './MapEditorModal';
 import ManageAssetsModal, { GenericAsset, AssetCategoryType } from './ManageAssetsModal';
-import { INITIAL_DEVICES, getBlueprintSvg } from './LiveFloorMap';
+import { INITIAL_DEVICES, getBlueprintSvg, InteractiveSiteMap } from './LiveFloorMap';
 import { AssetItem, VehicleItem, CCTVCameraItem, EnvironmentalSensorItem, INITIAL_ASSETS, INITIAL_VEHICLES, INITIAL_INFRASTRUCTURE, INITIAL_CCTVS, INITIAL_ENV_SENSORS } from '../lib/trackingLayers';
 import { doc, setDoc, deleteDoc, collection, onSnapshot, db } from '../lib/db';
 import { useTracking } from '../context/TrackingContext';
@@ -145,13 +145,7 @@ const DEFAULT_SITES: Record<string, SiteData> = {
                 createdAt: '2026-08-01 09:00',
                 author: 'Elena Rostova (EHS Lead)',
                 notes: 'Initial approved site safety clearance map and RFID gate boundaries.',
-                zones: {
-                  'Excavation Shaft': { x: 10, y: 15, width: 34, height: 62, category: 'EXCAVATION & SHORING', hazardLevel: 'warning', capacity: 4 },
-                  'Tower Core': { x: 51, y: 25, width: 32, height: 50, category: 'CONCRETE REINFORCEMENT', hazardLevel: 'normal', capacity: 10 },
-                  'Crane Swing Zone': { x: 80, y: 5, width: 16, height: 42, category: 'CRANE SWING RADIUS', hazardLevel: 'critical', capacity: 3 },
-                  'High Voltage Area': { x: 46, y: 5, width: 14, height: 16, category: 'SUBSTATION PERIMETER', hazardLevel: 'critical', capacity: 1 },
-                  'Muster Point A': { x: 2, y: 10, width: 8, height: 12, category: 'MUSTER POINT', hazardLevel: 'normal', capacity: 30 }
-                },
+                zones: {},
                 floorplanUrl: null
               }
             ]
@@ -169,11 +163,7 @@ const DEFAULT_SITES: Record<string, SiteData> = {
                 createdAt: '2026-08-02 11:30',
                 author: 'Marcus Vance',
                 notes: 'Level 2 steel decking and scaffold perimeter layout.',
-                zones: {
-                  'Scaffold Access Tower': { x: 15, y: 10, width: 30, height: 40, category: 'SCAFFOLDING', hazardLevel: 'normal', capacity: 12 },
-                  'High Rise Frame Deck': { x: 50, y: 10, width: 45, height: 75, category: 'BUILDING FOOTPRINT', hazardLevel: 'warning', capacity: 20 },
-                  'Emergency Evacuation Stair': { x: 5, y: 60, width: 15, height: 25, category: 'EMERGENCY EXIT', hazardLevel: 'normal', capacity: 50 }
-                },
+                zones: {},
                 floorplanUrl: null
               }
             ]
@@ -197,11 +187,7 @@ const DEFAULT_SITES: Record<string, SiteData> = {
                 createdAt: '2026-08-03 14:00',
                 author: 'G. Hopper (Fleet Manager)',
                 notes: 'Heavy machinery parking and material storage laydown.',
-                zones: {
-                  'Rebar & Steel Laydown': { x: 10, y: 10, width: 40, height: 35, category: 'MATERIAL LAYDOWN', hazardLevel: 'normal', capacity: 15 },
-                  'Contractor Parking': { x: 55, y: 10, width: 40, height: 35, category: 'PARKING', hazardLevel: 'normal', capacity: 25 },
-                  'Site Office Container': { x: 10, y: 55, width: 30, height: 35, category: 'SITE OFFICE', hazardLevel: 'normal', capacity: 8 }
-                },
+                zones: {},
                 floorplanUrl: null
               }
             ]
@@ -318,9 +304,16 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     });
   }, [mapWorkers, trackingCtx?.people, selectedFloorId]);
 
-  const [customFloorplan, setCustomFloorplan] = useState<string | null>(activeVersion?.floorplanUrl || null);
-  const [customSvgSource, setCustomSvgSource] = useState<string | null>(activeVersion?.svgSource || null);
-  const [customZones, setCustomZones] = useState<Record<string, ZoneBounds>>(activeVersion?.zones || {});
+  const [customFloorplan, setCustomFloorplan] = useState<string | null>(() => {
+    return trackingCtx?.customFloorplan || (typeof window !== 'undefined' ? localStorage.getItem('gao_custom_floorplan') : null) || activeVersion?.floorplanUrl || null;
+  });
+  const [customSvgSource, setCustomSvgSource] = useState<string | null>(() => {
+    return trackingCtx?.customSvgSource || (typeof window !== 'undefined' ? localStorage.getItem('gao_custom_svg') : null) || activeVersion?.svgSource || null;
+  });
+  const [customZones, setCustomZones] = useState<Record<string, ZoneBounds>>(() => {
+    if (trackingCtx?.zonesDict && Object.keys(trackingCtx.zonesDict).length > 0) return trackingCtx.zonesDict;
+    return activeVersion?.zones || {};
+  });
 
   const [activeSidebarTab, setActiveSidebarTab] = useState<'layers' | 'inventory' | 'assets' | 'zones' | 'sites'>('layers');
   const [layerConfigs, setLayerConfigs] = useState<Record<string, MapLayerConfig>>(DEFAULT_LAYER_CONFIGS);
@@ -429,7 +422,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
           fetch('/api/data/devices', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
         ]);
 
-        if (zonesRes.status === 'fulfilled' && Array.isArray(zonesRes.value) && zonesRes.value.length > 0) {
+        if (zonesRes.status === 'fulfilled' && Array.isArray(zonesRes.value)) {
           const loadedZones: Record<string, ZoneBounds> = {};
           zonesRes.value.forEach((z: any) => {
             if (z && z.name) {
@@ -446,13 +439,15 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               };
             }
           });
-          setCustomZones(prev => ({ ...prev, ...loadedZones }));
+          setCustomZones(loadedZones);
         }
 
         if (mapRes.status === 'fulfilled' && mapRes.value) {
           if (mapRes.value.floorplanUrl) setCustomFloorplan(mapRes.value.floorplanUrl);
           if (mapRes.value.svgSource) setCustomSvgSource(mapRes.value.svgSource);
-          if (mapRes.value.zones) setCustomZones(prev => ({ ...prev, ...mapRes.value.zones }));
+          if (mapRes.value.zones && typeof mapRes.value.zones === 'object' && Object.keys(mapRes.value.zones).length > 0) {
+            setCustomZones(mapRes.value.zones);
+          }
         }
 
         if (peopleRes.status === 'fulfilled' && Array.isArray(peopleRes.value) && peopleRes.value.length > 0) {
@@ -499,31 +494,22 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     fetchDatabaseZones();
 
     try {
-      const unsub = onSnapshot(collection(db, 'geofences'), (snapshot) => {
-        const firestoreGeofences: Record<string, ZoneBounds> = {};
-        snapshot.forEach(docSnap => {
+      const unsubMapConfig = onSnapshot(doc(db, 'map_configurations', activeProject), (docSnap) => {
+        if (docSnap.exists()) {
           const d = docSnap.data();
-          if (d && d.name) {
-            firestoreGeofences[d.name] = {
-              x: d.x ?? 20,
-              y: d.y ?? 20,
-              width: d.width ?? 25,
-              height: d.height ?? 20,
-              category: d.category || 'CUSTOM GEOFENCE',
-              hazardLevel: d.hazardLevel || 'warning',
-              capacity: d.capacity || 10,
-              proximityAlertEnabled: d.proximityAlertEnabled ?? true,
-              polygonPoints: d.polygonPoints || []
-            };
+          if (d.floorplanUrl) setCustomFloorplan(d.floorplanUrl);
+          if (d.svgSource) setCustomSvgSource(d.svgSource);
+          if (d.zones && typeof d.zones === 'object') {
+            setCustomZones(d.zones);
           }
-        });
-        if (Object.keys(firestoreGeofences).length > 0) {
-          setCustomZones(prev => ({ ...prev, ...firestoreGeofences }));
         }
       });
-      return () => unsub();
+
+      return () => {
+        unsubMapConfig();
+      };
     } catch (err) {
-      console.warn('Firestore geofences listener setup error:', err);
+      console.warn('Firestore geofences/map_config listener setup error:', err);
     }
   }, [activeProject]);
 
@@ -919,34 +905,102 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
-  const handleFloorMapUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFloorMapUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     const reader = new FileReader();
     if (file.type === 'image/svg+xml' || file.name.endsWith('.svg')) {
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         const svgContent = event.target?.result as string;
         setCustomSvgSource(svgContent);
         setCustomFloorplan(null);
+
+        const mapConfigPayload = {
+          id: activeProject,
+          siteId: activeProject,
+          floorplanUrl: null,
+          svgSource: svgContent,
+          zones: customZones,
+          updatedAt: new Date().toISOString()
+        };
+
+        try {
+          const authHeaders = getAuthHeaders();
+          await fetch('/api/data/map_configurations', {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify(mapConfigPayload)
+          });
+          await setDoc(doc(db, 'map_configurations', activeProject), mapConfigPayload, { merge: true });
+        } catch (err) {
+          console.warn('Map upload MongoDB sync note:', err);
+        }
+
+        try {
+          const savedProps = JSON.parse(localStorage.getItem('gao_project_properties') || '{}');
+          savedProps[activeProject] = {
+            ...(savedProps[activeProject] || {}),
+            floorplanUrl: null,
+            svgSource: svgContent,
+            customZones
+          };
+          localStorage.setItem('gao_project_properties', JSON.stringify(savedProps));
+        } catch {}
+
         if (trackingCtx?.saveCustomZones) {
           trackingCtx.saveCustomZones(customZones, null, svgContent).catch(() => {});
         }
         window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-        setSuccessMsg(`SVG Floor Map for ${currentFloor?.name || 'Floor'} uploaded and synchronized to Live Tracking!`);
+        window.dispatchEvent(new CustomEvent('gao_project_updated'));
+        setSuccessMsg(`SVG Floor Map for ${currentFloor?.name || 'Floor'} uploaded and synchronized to MongoDB & Live Tracking!`);
         setTimeout(() => setSuccessMsg(null), 3500);
       };
       reader.readAsText(file);
     } else {
-      reader.onload = (event) => {
+      reader.onload = async (event) => {
         const imgDataUrl = event.target?.result as string;
         setCustomFloorplan(imgDataUrl);
         setCustomSvgSource(null);
+
+        const mapConfigPayload = {
+          id: activeProject,
+          siteId: activeProject,
+          floorplanUrl: imgDataUrl,
+          svgSource: null,
+          zones: customZones,
+          updatedAt: new Date().toISOString()
+        };
+
+        try {
+          const authHeaders = getAuthHeaders();
+          await fetch('/api/data/map_configurations', {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify(mapConfigPayload)
+          });
+          await setDoc(doc(db, 'map_configurations', activeProject), mapConfigPayload, { merge: true });
+        } catch (err) {
+          console.warn('Map upload MongoDB sync note:', err);
+        }
+
+        try {
+          const savedProps = JSON.parse(localStorage.getItem('gao_project_properties') || '{}');
+          savedProps[activeProject] = {
+            ...(savedProps[activeProject] || {}),
+            floorplanUrl: imgDataUrl,
+            svgSource: null,
+            customZones
+          };
+          localStorage.setItem('gao_project_properties', JSON.stringify(savedProps));
+        } catch {}
+
         if (trackingCtx?.saveCustomZones) {
           trackingCtx.saveCustomZones(customZones, imgDataUrl, null).catch(() => {});
         }
         window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-        setSuccessMsg(`Floor Map Blueprint uploaded and synchronized to Live Tracking!`);
+        window.dispatchEvent(new CustomEvent('gao_project_updated'));
+        setSuccessMsg(`Floor Map Blueprint uploaded and synchronized to MongoDB & Live Tracking!`);
         setTimeout(() => setSuccessMsg(null), 3500);
       };
       reader.readAsDataURL(file);
@@ -964,16 +1018,25 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
     const authHeaders = getAuthHeaders();
     try {
-      // 1. Delete removed zones from the database
-      const previousZoneNames = Object.keys(customZones);
+      // 1. Delete removed zones from the database API & MongoDB Atlas Firestore
+      const previousZoneNames = Array.from(new Set([
+        ...Object.keys(customZones || {}),
+        ...(trackingCtx?.zones || []).map(z => z.name),
+        ...Object.keys(trackingCtx?.zonesDict || {})
+      ]));
       const deletedZoneNames = previousZoneNames.filter(zName => !(zName in updatedZones));
       for (const delName of deletedZoneNames) {
         const delZoneId = `zone_${(delName || "").toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '')}`;
-        await fetch(`/api/data/zones/${delZoneId}`, { method: 'DELETE', headers: authHeaders });
-        await fetch(`/api/data/zones/${delName}`, { method: 'DELETE', headers: authHeaders });
-        await fetch(`/api/data/geofences/${delZoneId}`, { method: 'DELETE', headers: authHeaders });
+        await fetch(`/api/data/zones/${delZoneId}`, { method: 'DELETE', headers: authHeaders }).catch(() => {});
+        await fetch(`/api/data/zones/${delName}`, { method: 'DELETE', headers: authHeaders }).catch(() => {});
+        await fetch(`/api/data/geofences/${delZoneId}`, { method: 'DELETE', headers: authHeaders }).catch(() => {});
+        await fetch(`/api/data/geofences/${delName}`, { method: 'DELETE', headers: authHeaders }).catch(() => {});
+        await deleteDoc(doc(db, 'zones', delZoneId)).catch(() => {});
+        await deleteDoc(doc(db, 'zones', delName)).catch(() => {});
+        await deleteDoc(doc(db, 'geofences', delZoneId)).catch(() => {});
+        await deleteDoc(doc(db, 'geofences', delName)).catch(() => {});
         if (trackingCtx?.deleteZone) {
-          trackingCtx.deleteZone(delZoneId);
+          trackingCtx.deleteZone(delZoneId).catch(() => {});
         }
       }
 
@@ -999,21 +1062,48 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             proximityAlertEnabled: bounds.proximityAlertEnabled
           })
         });
+        await setDoc(doc(db, 'geofences', zoneId), {
+          id: zoneId,
+          name,
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+          category: bounds.category || 'GENERAL',
+          hazardLevel: bounds.hazardLevel || 'normal',
+          capacity: bounds.capacity || 10,
+          polygonPoints: bounds.polygonPoints,
+          proximityAlertEnabled: bounds.proximityAlertEnabled
+        });
       }
 
-      // Persist full map configuration to database
+      const mapPayload = {
+        id: activeProject,
+        siteId: activeProject,
+        floorplanUrl: newFloorplanUrl || customFloorplan,
+        svgSource: newSvgSource || customSvgSource,
+        zones: updatedZones,
+        updatedAt: new Date().toISOString()
+      };
+
+      // Persist full map configuration to database API & MongoDB Atlas Firestore (overwrite mapPayload to erase deleted keys)
       await fetch('/api/data/map_configurations', {
         method: 'POST',
         headers: authHeaders,
-        body: JSON.stringify({
-          id: activeProject,
-          siteId: activeProject,
+        body: JSON.stringify(mapPayload)
+      });
+      await setDoc(doc(db, 'map_configurations', activeProject), mapPayload);
+
+      try {
+        const savedProps = JSON.parse(localStorage.getItem('gao_project_properties') || '{}');
+        savedProps[activeProject] = {
+          ...(savedProps[activeProject] || {}),
           floorplanUrl: newFloorplanUrl || customFloorplan,
           svgSource: newSvgSource || customSvgSource,
-          zones: updatedZones,
-          updatedAt: new Date().toISOString()
-        })
-      });
+          customZones: updatedZones
+        };
+        localStorage.setItem('gao_project_properties', JSON.stringify(savedProps));
+      } catch {}
     } catch (err) {
       console.warn('Failed to sync map editor changes to database:', err);
     }
@@ -1493,7 +1583,6 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                         if (v) {
                           setCustomFloorplan(v.floorplanUrl || null);
                           setCustomSvgSource(v.svgSource || null);
-                          if (v.zones) setCustomZones(v.zones);
                         }
                       }}
                       className={`h-7 px-2.5 rounded-lg text-[10px] font-mono font-bold inline-flex items-center justify-center transition border shrink-0 ${
@@ -1577,23 +1666,39 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
           <div 
             ref={mapRef}
             onClick={handleMapCanvasClick}
-            className={`flex-1 relative rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-950 overflow-hidden shadow-inner select-none ${
+            className={`flex-1 relative rounded-xl border border-slate-300 bg-white overflow-hidden shadow-inner select-none ${
               drawToolMode !== 'select' ? 'cursor-crosshair' : ''
             }`}
           >
-            {/* SVG Source, Custom Blueprint, or Vector Blueprint Graphic */}
+            {/* SVG Source, Custom Blueprint Image, or Enterprise CAD Digital Twin */}
             {customSvgSource ? (
               <div 
-                className="absolute inset-0 opacity-50 pointer-events-none overflow-hidden" 
+                className="absolute inset-0 opacity-80 pointer-events-none overflow-hidden" 
                 dangerouslySetInnerHTML={{ __html: customSvgSource }} 
               />
-            ) : customFloorplan ? (
-              <img src={customFloorplan} alt="Custom Blueprint" className="absolute inset-0 w-full h-full object-cover opacity-80 pointer-events-none" />
+            ) : customFloorplan && !customFloorplan.includes('unsplash') && (customFloorplan.startsWith('blob:') || customFloorplan.startsWith('data:image/png') || customFloorplan.startsWith('data:image/jpeg') || customFloorplan.startsWith('data:image/webp')) ? (
+              <img src={customFloorplan} alt="Custom Blueprint" className="absolute inset-0 w-full h-full object-cover opacity-90 pointer-events-none" />
             ) : (
-              <img 
-                src={getBlueprintSvg(activeProject, currentSite.name, currentSite.contractor, currentSite.dimensions)} 
-                alt="Site Blueprint" 
-                className="absolute inset-0 w-full h-full object-cover opacity-60 pointer-events-none" 
+              <InteractiveSiteMap 
+                mode="standard"
+                activeFloor={currentFloor?.name || 'Floor 1'}
+                activeZones={customZones}
+                people={activeWorkers.map(w => ({
+                  id: w.id,
+                  name: w.name,
+                  role: w.role,
+                  currentZone: w.currentZone,
+                  presenceState: 'MOVING' as const,
+                  dwellTime: 30,
+                  x: w.x,
+                  y: w.y,
+                  lastSeen: new Date(),
+                  trail: []
+                }))}
+                vehicles={vehicles as any}
+                onSelectEntity={(entity) => {
+                  if (entity.type === 'person') setSelectedWorker(entity.data as any);
+                }}
               />
             )}
 
@@ -1842,9 +1947,18 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                   );
                 })}
 
-                {/* Single Workers with Personnel Safety Status Badges */}
+                {/* Single Workers & Active Visitors with Personnel Safety Status Badges */}
                 {clusteredGroups.singleWorkers.map(w => {
-                  const badge = getSafetyStatusBadge(w.safetyStatus);
+                  const isVisitor = w.role === 'Visitor' || (w.name || '').includes('(Visitor)');
+                  const badge = isVisitor ? {
+                    label: 'Active Visitor',
+                    shortLabel: 'VISITOR',
+                    color: '#c084fc',
+                    icon: Users,
+                    badgeClass: 'bg-purple-500/20 text-purple-200 border-purple-400/40',
+                    pillBg: 'bg-purple-950/90 border-purple-500/80 text-purple-200 shadow-purple-500/20',
+                    ping: true
+                  } : getSafetyStatusBadge(w.safetyStatus);
                   const BadgeIcon = badge.icon;
                   return (
                     <div
@@ -1856,14 +1970,14 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                       className={`absolute z-30 px-2.5 py-1 rounded-full shadow-lg border backdrop-blur-md flex items-center gap-1.5 cursor-pointer hover:scale-110 transition ${badge.pillBg}`}
                       style={{ left: `${w.x}%`, top: `${w.y}%`, transform: 'translate(-50%, -50%)' }}
                     >
-                      <HardHat size={12} style={{ color: badge.color }} />
+                      {isVisitor ? <Users size={12} className="text-purple-300" /> : <HardHat size={12} style={{ color: badge.color }} />}
                       <span className="text-[10px] font-extrabold">{w.name}</span>
                       <span className={`px-1 py-0.2 rounded text-[8px] font-black uppercase flex items-center gap-0.5 ${badge.badgeClass}`}>
                         <BadgeIcon size={8} />
                         {badge.shortLabel}
                       </span>
                       {badge.ping && (
-                        <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping absolute -top-1 -right-1" />
+                        <span className={`w-2 h-2 rounded-full ${isVisitor ? 'bg-purple-400' : 'bg-rose-500'} animate-ping absolute -top-1 -right-1`} />
                       )}
                     </div>
                   );

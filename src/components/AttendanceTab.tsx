@@ -294,7 +294,29 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     };
   }, [people]);
 
-  // Combine real-time database logs with live moving personnel from TrackingContext
+  const [dbPeople, setDbPeople] = useState<Person[]>([]);
+
+  useEffect(() => {
+    const loadDbPeople = async () => {
+      try {
+        const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
+        const res = await fetch('/api/data/registered_people', {
+          headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data)) {
+            setDbPeople(data);
+          }
+        }
+      } catch {}
+    };
+    loadDbPeople();
+    window.addEventListener('gao_refresh_data', loadDbPeople);
+    return () => window.removeEventListener('gao_refresh_data', loadDbPeople);
+  }, []);
+
+  // Combine real-time database logs with live moving personnel from TrackingContext & MongoDB
   const attendanceData = useMemo<AttendanceRecord[]>(() => {
     const map = new Map<string, AttendanceRecord>();
 
@@ -305,10 +327,11 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     });
 
     // 2. Synchronize registered people & live TrackingContext movers
-    const allPeople = [...(people || []), ...(trackingCtx?.people || [])];
+    const allPeople = [...(people || []), ...(trackingCtx?.people || []), ...(dbPeople || [])];
     const seenIds = new Set<string>();
 
     allPeople.forEach((p, idx) => {
+      if (!p || !p.id) return;
       if (seenIds.has(p.id)) return;
       seenIds.add(p.id);
 
@@ -357,7 +380,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     });
 
     return Array.from(map.values());
-  }, [attendanceLogs, people, trackingCtx?.people]);
+  }, [attendanceLogs, people, trackingCtx?.people, dbPeople]);
 
   // Filtered Roster
   const filteredRoster = useMemo(() => {

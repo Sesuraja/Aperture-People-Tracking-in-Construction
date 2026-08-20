@@ -3,7 +3,7 @@ try {
   dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
 } catch {}
 
-import { MongoClient, Db } from 'mongodb';
+import { MongoClient, Db, ObjectId } from 'mongodb';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
@@ -297,8 +297,17 @@ export async function upsertDoc(colName: string, doc: any): Promise<any> {
 
   if (mongoDb) {
     try {
+      const idStr = String(cleanDoc.id || '').trim();
       await mongoDb.collection(colName).updateOne(
-        { id: cleanDoc.id },
+        {
+          $or: [
+            { id: idStr },
+            { id: idStr.toUpperCase() },
+            { id: idStr.toLowerCase() },
+            { hardhatTagId: idStr },
+            { hardhatTagId: idStr.toUpperCase() }
+          ]
+        },
         { $set: cleanDoc },
         { upsert: true }
       );
@@ -323,8 +332,22 @@ export async function upsertDoc(colName: string, doc: any): Promise<any> {
 export async function deleteDocById(colName: string, id: string): Promise<boolean> {
   if (mongoDb) {
     try {
-      const result = await mongoDb.collection(colName).deleteOne({ id });
-      return result.deletedCount > 0;
+      const idStr = String(id || '').trim();
+      const orClauses: any[] = [
+        { id: idStr },
+        { id: idStr.toLowerCase() },
+        { id: idStr.toUpperCase() },
+        { hardhatTagId: idStr },
+        { hardhatTagId: idStr.toUpperCase() },
+        { hardhatTagId: idStr.toLowerCase() }
+      ];
+      if (ObjectId.isValid(idStr) && idStr.length === 24) {
+        try {
+          orClauses.push({ _id: new ObjectId(idStr) });
+        } catch {}
+      }
+      const result = await mongoDb.collection(colName).deleteMany({ $or: orClauses });
+      return (result.deletedCount || 0) > 0;
     } catch (err) {
       console.error(`[DB Service] Error deleting doc ${id} in ${colName}:`, err);
     }
@@ -332,7 +355,12 @@ export async function deleteDocById(colName: string, id: string): Promise<boolea
 
   if (inMemoryStore[colName]) {
     const initLen = inMemoryStore[colName].length;
-    inMemoryStore[colName] = inMemoryStore[colName].filter((item: any) => item.id !== id);
+    const idLower = String(id || '').toLowerCase().trim();
+    inMemoryStore[colName] = inMemoryStore[colName].filter((item: any) => 
+      item.id !== id && 
+      String(item.id || '').toLowerCase().trim() !== idLower && 
+      String(item.hardhatTagId || '').toLowerCase().trim() !== idLower
+    );
     return inMemoryStore[colName].length < initLen;
   }
   return false;

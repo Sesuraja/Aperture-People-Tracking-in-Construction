@@ -59,13 +59,7 @@ const INITIAL_PROJECT_PROPERTIES: Record<string, ProjectProperties> = {
     sizeSqFt: 350000,
     dimensions: '250m x 180m',
     floorplanUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&q=80&w=1200',
-    customZones: {
-      'Excavation Shaft': { x: 10, y: 15, width: 34, height: 62, category: 'EXCAVATION & SHORING', hazardLevel: 'warning' },
-      'Tower Core': { x: 51, y: 25, width: 32, height: 50, category: 'CONCRETE REINFORCEMENT' },
-      'Crane Swing Zone': { x: 80, y: 5, width: 16, height: 42, category: 'CRANE SWING RADIUS', hazardLevel: 'critical' },
-      'High Voltage Area': { x: 46, y: 5, width: 14, height: 16, category: 'SUBSTATION PERIMETER', hazardLevel: 'critical' },
-      'Muster Point A': { x: 2, y: 10, width: 8, height: 12, category: 'MUSTER POINT' }
-    }
+    customZones: {}
   }
 };
 
@@ -156,6 +150,8 @@ export default function LiveTrackingTab({
   const [dbPeople, setDbPeople] = useState<Person[]>([]);
   const [dbAssets, setDbAssets] = useState<Asset[]>([]);
   const [dbVehicles, setDbVehicles] = useState<Vehicle[]>([]);
+  const [dbAlerts, setDbAlerts] = useState<any[]>([]);
+  const [dbReaders, setDbReaders] = useState<any[]>([]);
   const [cameras, setCameras] = useState<CameraDevice[]>([]);
   const [sensors, setSensors] = useState<EnvSensor[]>([]);
   const [projectMeta, setProjectMeta] = useState<any>(null);
@@ -183,51 +179,39 @@ export default function LiveTrackingTab({
 
   const trackingCtx = useTracking();
 
-  // Combine TrackingContext real live RFID tags/people with any DB items, prioritizing live moving propPeople
+  // Directly bind live real-time moving workers and visitors from TrackingContext
   const people = useMemo(() => {
-    if (propPeople && propPeople.length > 0) {
-      const combined = [...propPeople];
-      (trackingCtx?.people || []).forEach(tp => {
-        if (!combined.find(p => p.id === tp.id || p.hardhatTagId === tp.hardhatTagId)) {
-          combined.push(tp);
-        }
-      });
-      dbPeople.forEach(dbP => {
-        if (!combined.find(p => p.id === dbP.id || p.hardhatTagId === dbP.hardhatTagId)) {
-          combined.push(dbP);
-        }
-      });
-      return combined;
+    if (trackingCtx?.people && trackingCtx.people.length > 0) {
+      return trackingCtx.people;
     }
+    return propPeople || [];
+  }, [trackingCtx?.people, propPeople]);
 
-    const trackingPeople = trackingCtx?.people || [];
-    const combined = [...trackingPeople];
-    
-    // Merge dbPeople if not already included
-    dbPeople.forEach(dbP => {
-      if (!combined.find(p => p.id === dbP.id || p.hardhatTagId === dbP.hardhatTagId)) {
-        combined.push(dbP);
-      }
-    });
-
-    return combined;
-  }, [trackingCtx?.people, dbPeople, propPeople]);
-
-  // Custom Geofences & Capacity Thresholds
+  // Custom Geofences & Capacity Thresholds (3x3 Layout matching design)
   const [customZonesState, setCustomZonesState] = useState<Record<string, any>>(() => {
     return defaultZones && Object.keys(defaultZones).length > 0 ? defaultZones : {
-      'Excavation Shaft': { x: 10, y: 15, width: 34, height: 62, category: 'EXCAVATION & SHORING', hazardLevel: 'warning', maxCapacity: 4 },
-      'Tower Core': { x: 51, y: 25, width: 32, height: 50, category: 'CONCRETE REINFORCEMENT', hazardLevel: 'standard', maxCapacity: 10 },
-      'Crane Swing Zone': { x: 80, y: 5, width: 16, height: 42, category: 'CRANE SWING RADIUS', hazardLevel: 'critical', maxCapacity: 3 },
-      'Muster Point A': { x: 2, y: 10, width: 8, height: 12, category: 'MUSTER POINT', hazardLevel: 'standard', maxCapacity: 30 }
+      'Material Storage': { x: 6.5, y: 8.0, width: 23.5, height: 21.5, category: 'MATERIAL STORAGE', hazardLevel: 'warning', maxCapacity: 4 },
+      'Structure Work Area': { x: 36.5, y: 8.0, width: 26.0, height: 21.5, category: 'STRUCTURAL WORK', hazardLevel: 'normal', maxCapacity: 10 },
+      'Crane Operating Zone': { x: 69.0, y: 8.0, width: 24.5, height: 21.5, category: 'CRANE SWING RADIUS', hazardLevel: 'critical', maxCapacity: 3 },
+      'Site Office': { x: 6.5, y: 38.0, width: 23.5, height: 21.5, category: 'SITE OPERATIONS', hazardLevel: 'normal', maxCapacity: 8 },
+      'Open Work Area': { x: 36.5, y: 38.0, width: 26.0, height: 21.5, category: 'GENERAL CONTRACTING', hazardLevel: 'normal', maxCapacity: 12 },
+      'Equipment Parking': { x: 69.0, y: 38.0, width: 24.5, height: 21.5, category: 'HEAVY MACHINERY', hazardLevel: 'warning', maxCapacity: 5 },
+      'Excavation Area': { x: 6.5, y: 68.0, width: 23.5, height: 21.5, category: 'EXCAVATION & SHORING', hazardLevel: 'critical', maxCapacity: 4 },
+      'Assembly Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5, category: 'MUSTER POINT', hazardLevel: 'normal', maxCapacity: 30 },
+      'High Voltage Area': { x: 69.0, y: 68.0, width: 24.5, height: 21.5, category: 'HIGH VOLTAGE', hazardLevel: 'critical', maxCapacity: 3 }
     };
   });
 
   const [zoneCapacities, setZoneCapacities] = useState<Record<string, number>>({
-    'Crane Swing Zone': 3,
-    'Excavation Shaft': 4,
-    'Tower Core': 10,
-    'Muster Point A': 30,
+    'Material Storage': 4,
+    'Structure Work Area': 10,
+    'Crane Operating Zone': 3,
+    'Site Office': 8,
+    'Open Work Area': 12,
+    'Equipment Parking': 5,
+    'Excavation Area': 4,
+    'Assembly Point': 30,
+    'High Voltage Area': 3
   });
 
   // Geofence Drawing State
@@ -293,11 +277,11 @@ export default function LiveTrackingTab({
   const { isConnected: isWsConnected, triggerSafetyAlert: wsTriggerSafetyAlert, broadcastTagMovement } = useWebSocket(handleLiveTrackingWSMessage);
 
   const activeZones = useMemo(() => {
-    if (trackingCtx?.zonesDict && Object.keys(trackingCtx.zonesDict).length > 0) {
+    if (trackingCtx?.zonesDict) {
       return trackingCtx.zonesDict;
     }
-    return projectMeta?.customZones || localProjectProps?.customZones || currentProject.customZones || customZonesState;
-  }, [trackingCtx?.zonesDict, projectMeta, localProjectProps, currentProject, customZonesState]);
+    return projectMeta?.customZones || localProjectProps?.customZones || {};
+  }, [trackingCtx?.zonesDict, projectMeta, localProjectProps]);
 
   // Over Capacity Check
   const overCapacityZones = useMemo(() => {
@@ -465,6 +449,19 @@ export default function LiveTrackingTab({
     const unsubProject = onSnapshot(doc(db, 'projects', activeProject), (snap: any) => {
       if (snap.exists()) setProjectMeta(snap.data());
     });
+
+    const unsubMapConfig = onSnapshot(doc(db, 'map_configurations', activeProject), (snap: any) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setLocalProjectProps((prev: any) => ({
+          ...prev,
+          floorplanUrl: data.floorplanUrl || prev?.floorplanUrl,
+          svgSource: data.svgSource || prev?.svgSource,
+          customZones: data.zones || prev?.customZones
+        }));
+      }
+    });
+
     const unsubPeople = onSnapshot(collection(db, 'people'), (snap: any) => {
       const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       setDbPeople(items.filter((p: any) => !p.projectId || p.projectId === activeProject));
@@ -477,11 +474,26 @@ export default function LiveTrackingTab({
       const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       setDbVehicles(items.filter((v: any) => !v.projectId || v.projectId === activeProject));
     });
+    const unsubAlerts = onSnapshot(collection(db, 'alerts'), (snap: any) => {
+      const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+      setDbAlerts(items);
+    });
+    const unsubReaders = onSnapshot(collection(db, 'hardware_readers'), (snap: any) => {
+      const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+      setDbReaders(items);
+    });
     const unsubCameras = onSnapshot(collection(db, 'cameras'), (snap: any) => setCameras(snap.docs.map((d: any) => ({ id: d.id, ...d.data() }))));
     const unsubSensors = onSnapshot(collection(db, 'sensors'), (snap: any) => setSensors(snap.docs.map((d: any) => ({ id: d.id, ...d.data() }))));
 
     const handleRealTimeMapUpdate = () => {
       try {
+        const savedProps = localStorage.getItem('gao_project_properties');
+        if (savedProps) {
+          const parsed = JSON.parse(savedProps);
+          if (parsed[activeProject]) {
+            setLocalProjectProps(parsed[activeProject]);
+          }
+        }
         const savedAssets = localStorage.getItem('gao_db_assets');
         if (savedAssets) setDbAssets(JSON.parse(savedAssets));
         const savedVehicles = localStorage.getItem('gao_db_vehicles');
@@ -494,7 +506,7 @@ export default function LiveTrackingTab({
     window.addEventListener('storage', handleRealTimeMapUpdate);
 
     return () => {
-      unsubProject(); unsubPeople(); unsubAssets(); unsubVehicles(); unsubCameras(); unsubSensors();
+      unsubProject(); unsubMapConfig(); unsubPeople(); unsubAssets(); unsubVehicles(); unsubAlerts(); unsubReaders(); unsubCameras(); unsubSensors();
       window.removeEventListener('gao_map_data_updated', handleRealTimeMapUpdate);
       window.removeEventListener('gao_project_updated', handleRealTimeMapUpdate);
       window.removeEventListener('storage', handleRealTimeMapUpdate);
@@ -567,10 +579,10 @@ export default function LiveTrackingTab({
     let result = filteredPeople;
     if (selectedTrade !== 'ALL') {
       const tradeLower = (selectedTrade || "").toLowerCase();
-      result = result.filter(p => (p.role || "").toLowerCase().includes(tradeLower));
+      result = result.filter(p => p.presenceState === 'MOVING' || (p.role || "").toLowerCase().includes(tradeLower));
     }
     if (activeFloor !== 'ALL') {
-      result = result.filter(p => getWorkerFloor(p) === activeFloor);
+      result = result.filter(p => p.presenceState === 'MOVING' || getWorkerFloor(p) === activeFloor);
     }
     return result;
   }, [filteredPeople, selectedTrade, activeFloor, getWorkerFloor]);
@@ -587,7 +599,8 @@ export default function LiveTrackingTab({
 
   const TRADE_OPTIONS = useMemo(() => {
     const list = [
-      { id: 'ALL', label: 'All Trades', icon: '👷' },
+      { id: 'ALL', label: 'All Personnel', icon: '👷' },
+      { id: 'Visitor', label: 'Site Visitors', icon: '🎫' },
       { id: 'Electrician', label: 'Electricians', icon: '⚡' },
       { id: 'Steelworker', label: 'Steelworkers', icon: '🏗️' },
       { id: 'Scaffolder', label: 'Scaffolders', icon: '🪜' },
@@ -599,10 +612,43 @@ export default function LiveTrackingTab({
     return list.map(t => {
       const count = t.id === 'ALL' 
         ? people.length 
-        : people.filter(p => (p.role || "").toLowerCase().includes((t.id || "").toLowerCase())).length;
+        : people.filter(p => (p.role || "").toLowerCase().includes((t.id || "").toLowerCase()) || (t.id === 'Visitor' && ((p.role || '').toLowerCase().includes('visitor') || (p.name || '').includes('(Visitor)')))).length;
       return { ...t, count };
     });
   }, [people]);
+
+  const dynamicHeavyEquipmentCount = useMemo(() => {
+    const vCount = (vehicles || []).length;
+    const dbVCount = (dbVehicles || []).length;
+    const machineryAssets = (assets || []).filter((a: any) => {
+      const cat = ((a.category || a.type || a.name || '') as string).toLowerCase();
+      return cat.includes('crane') || cat.includes('excavat') || cat.includes('truck') || cat.includes('lift') || cat.includes('machin') || cat.includes('equipment') || cat.includes('vehicle') || cat.includes('forklift');
+    }).length;
+    return Math.max(vCount, dbVCount) + machineryAssets;
+  }, [vehicles, dbVehicles, assets]);
+
+  const trackedGeofencesCount = useMemo(() => {
+    return Object.keys(activeZones || {}).length;
+  }, [activeZones]);
+
+  const dynamicHazardBreachesCount = useMemo(() => {
+    const dbActiveAlerts = dbAlerts.filter(a => 
+      !a.resolved && 
+      (a.priority === 'HIGH' || a.priority === 'CRITICAL' || a.type === 'hazard' || a.type === 'security' || a.type === 'panic' || a.type === 'critical')
+    ).length;
+    const livePpeBreaches = people.filter(p => p.ppeStatus === 'NON_COMPLIANT').length;
+    const overCap = overCapacityZones.length;
+    return Math.max(dbActiveAlerts, livePpeBreaches + overCap);
+  }, [dbAlerts, people, overCapacityZones]);
+
+  const systemHealthRate = useMemo(() => {
+    if (!mongoDbStatus.connected) return 0;
+    const totalReaders = Math.max(1, readers.length);
+    const onlineReaders = readers.filter(r => r.status === 'online').length;
+    const readerScore = (onlineReaders / totalReaders) * 90;
+    const wsScore = isWsConnected ? 10 : 8;
+    return Math.min(100, Math.round(readerScore + wsScore));
+  }, [mongoDbStatus.connected, readers, isWsConnected]);
 
   const highRiskZoneCount = people.filter(p => 
     p.currentZone === 'Crane Swing Zone' || p.currentZone === 'Excavation Shaft'
@@ -738,20 +784,20 @@ export default function LiveTrackingTab({
         </div>
       </div>
 
-      {/* 2. KPI STATUS DASHBOARD */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      {/* 2. KPI STATUS DASHBOARD - Dynamic Database Powered */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {[
-          { label: 'Personnel Onsite', val: people.length, icon: Users, color: 'text-[#007BC4]', bg: 'bg-blue-50' },
-          { label: 'Heavy Equipment', val: vehicles.length, icon: Truck, color: 'text-amber-600', bg: 'bg-amber-50' },
-          { label: 'Tracked Geofences', val: Object.keys(activeZones).length, icon: Layout, color: 'text-emerald-600', bg: 'bg-emerald-50' },
-          { label: 'Hazard Breaches', val: highRiskZoneCount, icon: AlertTriangle, color: highRiskZoneCount > 0 ? 'text-rose-600' : 'text-slate-400', bg: highRiskZoneCount > 0 ? 'bg-rose-50 animate-pulse' : 'bg-slate-50' },
-          { label: 'System Health', val: '99%', icon: Zap, color: 'text-emerald-600', bg: 'bg-emerald-50' }
+          { label: 'Personnel Onsite', val: people.length, icon: Users, color: 'text-[#007BC4]', bg: 'bg-blue-50', sub: `${people.filter(p => p.presenceState === 'MOVING').length} Active in Motion` },
+          { label: 'Tracked Geofences', val: trackedGeofencesCount, icon: Layout, color: 'text-emerald-600', bg: 'bg-emerald-50', sub: overCapacityZones.length > 0 ? `${overCapacityZones.length} Over Capacity` : 'All Geofences Monitored' },
+          { label: 'Hazard Breaches', val: dynamicHazardBreachesCount, icon: AlertTriangle, color: dynamicHazardBreachesCount > 0 ? 'text-rose-600' : 'text-slate-400', bg: dynamicHazardBreachesCount > 0 ? 'bg-rose-50 animate-pulse' : 'bg-slate-50', sub: dynamicHazardBreachesCount > 0 ? `${dynamicHazardBreachesCount} Active Breaches` : 'Zero Active Hazards' },
+          { label: 'System Health', val: `${systemHealthRate}%`, icon: Zap, color: systemHealthRate >= 90 ? 'text-emerald-600' : systemHealthRate >= 70 ? 'text-amber-600' : 'text-rose-600', bg: systemHealthRate >= 90 ? 'bg-emerald-50' : systemHealthRate >= 70 ? 'bg-amber-50' : 'bg-rose-50', sub: mongoDbStatus.connected ? 'MongoDB Live' : 'Local DB Active' }
         ].map((kpi, i) => (
           <div key={i} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-2xs flex items-center gap-4">
              <div className={`p-3 ${kpi.bg} ${kpi.color} rounded-xl shrink-0`}><kpi.icon className="w-5 h-5" /></div>
              <div className="flex flex-col min-w-0">
                 <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">{kpi.label}</div>
                 <div className="text-xl font-black text-slate-900 leading-none mt-0.5">{kpi.val}</div>
+                <div className="text-[10px] text-slate-500 font-semibold truncate mt-1">{kpi.sub}</div>
              </div>
           </div>
         ))}
@@ -760,286 +806,81 @@ export default function LiveTrackingTab({
       {/* 3. MAIN WORKSPACE ENGINE */}
       <div className="flex flex-col xl:flex-row gap-4 items-stretch h-[calc(100vh-320px)] min-h-[600px]">
         
-        {/* LEFT NAV PANEL - Lists */}
-        <div className={`${isMapFullScreen ? 'hidden' : 'w-full xl:w-80'} bg-white rounded-2xl border border-slate-200 shadow-md flex flex-col overflow-hidden shrink-0`}>
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-             <h2 className="text-sm font-black text-slate-900 uppercase tracking-tight">System Entities</h2>
-             <button className="text-slate-400 hover:text-slate-600"><SlidersHorizontal className="w-4 h-4" /></button>
-          </div>
-          
-          <div className="flex bg-slate-50 border-b border-slate-100">
-            {[
-              { id: 'people', icon: UserCheck, label: 'Workers' },
-              { id: 'assets', icon: Box, label: 'Assets' },
-              { id: 'hardware', icon: Radio, label: 'Readers' },
-              { id: 'zones', icon: Layout, label: 'Zones' }
-            ].map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`flex-1 py-3 text-[9px] font-black uppercase tracking-wider flex flex-col items-center gap-1 transition ${
-                  activeTab === tab.id ? 'bg-white text-sky-600 border-b-2 border-sky-600' : 'text-slate-400 hover:text-slate-600'
-                }`}
-              >
-                <tab.icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            ))}
+        {/* LEFT NAV PANEL - Dedicated Live Personnel Directory */}
+        <div className={`${isMapFullScreen ? 'hidden' : 'w-full xl:w-80'} bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md flex flex-col overflow-hidden shrink-0`}>
+          <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
+             <div className="flex items-center gap-2">
+               <h2 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">Live Personnel</h2>
+               <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#007BC4]/10 text-[#007BC4]">
+                 {filteredPeople.length}
+               </span>
+             </div>
+             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Real-time RFID Sync Active" />
           </div>
 
-          <div className="flex-1 overflow-y-auto p-2 space-y-1 bg-white">
-             {activeTab === 'people' && filteredPeople.map(p => (
-                <div key={p.id} onClick={() => setSelectedEntity({ type: 'person', data: p })} className="group p-2 rounded-xl hover:bg-sky-50 cursor-pointer transition border border-transparent hover:border-sky-100 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-lg bg-slate-100 flex items-center justify-center font-black text-slate-500 text-xs">
+          <div className="p-2 border-b border-slate-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50">
+            <div className="relative">
+              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                placeholder="Filter active workforce..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full pl-8 pr-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-xs outline-none focus:border-[#007BC4]"
+              />
+            </div>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-2 space-y-1 bg-white dark:bg-slate-800">
+             {filteredPeople.map(p => (
+                <div 
+                  key={p.id} 
+                  onClick={() => setSelectedEntity({ type: 'person', data: p })} 
+                  className={`group p-2.5 rounded-xl hover:bg-sky-50 dark:hover:bg-slate-700/60 cursor-pointer transition border ${
+                    selectedEntity?.type === 'person' && selectedEntity.data?.id === p.id 
+                      ? 'bg-sky-50 dark:bg-slate-700/80 border-[#007BC4]' 
+                      : 'border-transparent hover:border-sky-100 dark:hover:border-slate-600'
+                  } flex items-center justify-between`}
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-700 text-[#007BC4] flex items-center justify-center font-black text-xs shrink-0">
                        {(p.name || 'W').substring(0, 1)}
                     </div>
-                    <div>
-                      <div className="text-sm font-black text-slate-900">{p.name}</div>
-                      <div className="text-[10px] font-bold text-slate-400">{p.role}</div>
+                    <div className="min-w-0">
+                      <div className="text-xs font-black text-slate-900 dark:text-white truncate">{p.name}</div>
+                      <div className="text-[10px] font-bold text-slate-400 truncate flex items-center gap-1">
+                        <span>{p.role}</span>
+                        {p.tradeCompany && <span>• {p.tradeCompany}</span>}
+                      </div>
+                      <div className="text-[9px] font-mono text-[#007BC4] font-semibold mt-0.5 truncate">
+                        📍 {p.currentZone || 'Site Perimeter'}
+                      </div>
                     </div>
                   </div>
-                  <div className={`w-2 h-2 rounded-full ${p.ppeStatus === 'NON_COMPLIANT' ? 'bg-rose-500 animate-pulse' : 'bg-emerald-500'}`} />
+                  <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase ${
+                      p.ppeStatus === 'COMPLIANT' || !p.ppeStatus ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                      p.ppeStatus === 'WARNING' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                      'bg-rose-50 text-rose-700 border border-rose-200'
+                    }`}>
+                      {p.ppeStatus || 'COMPLIANT'}
+                    </span>
+                    <span className="text-[9px] font-mono text-slate-400">
+                      {p.presenceState === 'MOVING' ? '🟢 MOVING' : '⚪ IDLE'}
+                    </span>
+                  </div>
                 </div>
               ))}
 
-              {activeTab === 'assets' && (
-                <div className="space-y-4 p-2">
-                   {filteredAssets.length > 0 && (
-                     <>
-                       <div className="text-[10px] font-black text-slate-400 uppercase border-b pb-1">Site Equipment & Tools ({filteredAssets.length})</div>
-                       {filteredAssets.map(a => (
-                         <div 
-                           key={a.id} 
-                           onClick={() => setSelectedEntity({ 
-                             type: 'asset', 
-                             data: { 
-                               id: a.id, 
-                               name: a.name, 
-                               category: (a as any).category || 'Power Tool', 
-                               location: (a as any).location || 'Active Construction Zone', 
-                               assignedWorker: (a as any).assignedWorker || 'Unassigned', 
-                               status: (a.status || 'Operating') as 'Operating' | 'Standby' | 'Maintenance' | 'Offline', 
-                               utilization: 85, 
-                               lastMovement: 'Just now', 
-                               battery: a.battery || 90, 
-                               x: a.x || 50, 
-                               y: a.y || 50 
-                             } 
-                           })} 
-                           className="flex items-center justify-between p-2 hover:bg-emerald-50 rounded-lg cursor-pointer transition border border-transparent hover:border-emerald-100"
-                         >
-                            <div className="flex items-center gap-2">
-                               <HardHat className="w-4 h-4 text-emerald-600" />
-                               <div>
-                                 <span className="text-xs font-bold text-slate-900 block leading-tight">{a.name}</span>
-                                 <span className="text-[9px] text-slate-400 font-mono">{(a as any).category || (a as any).type || 'Equipment'}</span>
-                               </div>
-                            </div>
-                            <span className="text-[9px] font-black text-emerald-600 bg-emerald-50 px-1.5 py-0.5 rounded">
-                              {a.status?.toUpperCase() || 'ONLINE'}
-                            </span>
-                         </div>
-                       ))}
-                     </>
-                   )}
-
-                   {filteredVehicles.length > 0 && (
-                     <>
-                       <div className="text-[10px] font-black text-slate-400 uppercase border-b pb-1 mt-2">Heavy Vehicles ({filteredVehicles.length})</div>
-                       {filteredVehicles.map(v => (
-                         <div 
-                           key={v.id} 
-                           onClick={() => setSelectedEntity({ 
-                             type: 'vehicle', 
-                             data: { 
-                               id: v.id, 
-                               name: v.name, 
-                               type: (v as any).type || 'Hydraulic Excavator', 
-                               operator: (v as any).operator || 'Certified Operator', 
-                               location: (v as any).location || 'Excavation Sector', 
-                               speed: v.speed || 0, 
-                               direction: 90, 
-                               status: (v.status || 'Active') as 'Active' | 'Maintenance' | 'Idling' | 'Parked', 
-                               fuel: 88, 
-                               x: v.x || 30, 
-                               y: v.y || 40 
-                             } 
-                           })} 
-                           className="flex items-center justify-between p-2 hover:bg-amber-50 rounded-lg cursor-pointer transition border border-transparent hover:border-amber-100"
-                         >
-                            <div className="flex items-center gap-2">
-                               <Truck className="w-4 h-4 text-amber-600" />
-                               <div>
-                                 <span className="text-xs font-bold text-slate-900 block leading-tight">{v.name}</span>
-                                 <span className="text-[9px] text-slate-400 font-mono">{v.type || 'Vehicle'}</span>
-                               </div>
-                            </div>
-                            <span className={`text-[9px] font-black ${v.status === 'Active' || v.status === 'Moving' ? 'text-emerald-600' : 'text-slate-400'}`}>
-                               {v.status?.toUpperCase() || 'ONLINE'}
-                            </span>
-                         </div>
-                       ))}
-                     </>
-                   )}
-
-                   <div className="text-[10px] font-black text-slate-400 uppercase border-b pb-1 mt-4">Structural Materials</div>
-                   {MOCK_MATERIALS.map(m => (
-                     <div 
-                       key={m.id} 
-                       onClick={() => setSelectedEntity({ 
-                         type: 'asset', 
-                         data: { 
-                           id: m.id, 
-                           name: m.name, 
-                           category: 'Material Pallet', 
-                           location: 'Material Yard B', 
-                           assignedWorker: 'Logistics Team', 
-                           status: 'Standby', 
-                           utilization: 10, 
-                           lastMovement: '1 hour ago', 
-                           battery: 100, 
-                           x: m.x, 
-                           y: m.y 
-                         } 
-                       })} 
-                       className="flex items-center justify-between p-2 hover:bg-indigo-50 rounded-lg cursor-pointer border border-transparent hover:border-indigo-100"
-                     >
-                        <div className="flex items-center gap-2">
-                           <Box className="w-4 h-4 text-indigo-600" />
-                           <span className="text-xs font-bold text-slate-900">{m.name}</span>
-                        </div>
-                        <span className="text-[9px] font-black text-slate-400">STATIC</span>
-                     </div>
-                   ))}
+              {filteredPeople.length === 0 && (
+                <div className="p-8 text-center text-slate-400 text-xs font-medium">
+                  No workers matching filter.
                 </div>
-              )}
-
-              {activeTab === 'hardware' && (
-                 <div className="space-y-3 p-2">
-                   <div className="text-[10px] font-black text-slate-400 uppercase border-b pb-1">GAO RFID Readers</div>
-                   {readers.map(r => (
-                     <div 
-                       key={r.id} 
-                       onClick={() => setSelectedEntity({
-                         type: 'infrastructure',
-                         data: {
-                           id: r.id,
-                           name: r.name,
-                           type: 'UHF RFID Reader',
-                           location: 'Portal Sector West',
-                           ipAddress: r.ipAddress || '10.0.1.12',
-                           macAddress: r.macAddress || 'AA:BB:CC:DD:EE:11',
-                           status: r.status === 'online' ? 'Online' : 'Offline',
-                           signalRssi: -55,
-                           battery: r.health,
-                           x: r.x,
-                           y: r.y
-                         }
-                       })}
-                       className="p-2.5 bg-slate-50 hover:bg-indigo-50/50 rounded-xl border border-slate-200 cursor-pointer transition"
-                     >
-                        <div className="flex items-center justify-between mb-1">
-                           <div className="flex items-center gap-2">
-                              <Radio className="w-3.5 h-3.5 text-indigo-600" />
-                              <span className="text-xs font-black text-slate-900">{r.name}</span>
-                           </div>
-                           <span className={`w-2 h-2 rounded-full ${r.status === 'online' ? 'bg-emerald-500' : 'bg-slate-300'}`} />
-                        </div>
-                        <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
-                           <span>Health: <span className="text-slate-800 font-extrabold">{r.health}%</span></span>
-                           <span>Range: <span className="text-indigo-600 font-extrabold">{r.range}m</span></span>
-                        </div>
-                     </div>
-                   ))}
-
-                   {cameras.length > 0 && (
-                     <>
-                       <div className="text-[10px] font-black text-slate-400 uppercase border-b pb-1 mt-4">CCTV AI Cameras</div>
-                       {cameras.map(c => (
-                         <div 
-                           key={c.id} 
-                           onClick={() => setSelectedEntity({
-                             type: 'camera',
-                             data: {
-                               id: c.id,
-                               name: c.name,
-                               zone: 'Building Core',
-                               status: c.status === 'offline' ? 'Offline' : 'Online',
-                               aiStatus: 'Active',
-                               aiFeatures: ['PPE Optical Check', 'Geofence Breach', 'Facial Rec'],
-                               recentEvent: 'PPE Verification OK',
-                               streamResolution: '4K UltraHD',
-                               x: c.x,
-                               y: c.y,
-                               angle: 45
-                             }
-                           })}
-                           className="p-2.5 bg-slate-50 hover:bg-purple-50/50 rounded-xl border border-slate-200 cursor-pointer transition flex items-center justify-between"
-                         >
-                            <div className="flex items-center gap-2">
-                               <Camera className="w-3.5 h-3.5 text-purple-600" />
-                               <span className="text-xs font-black text-slate-900">{c.name}</span>
-                            </div>
-                            <span className="text-[9px] font-black text-purple-600 bg-purple-50 px-1.5 py-0.5 rounded">4K AI</span>
-                         </div>
-                       ))}
-                     </>
-                   )}
-                 </div>
-              )}
-
-              {activeTab === 'zones' && (
-                 <div className="space-y-3 p-2">
-                   <div className="text-[10px] font-black text-slate-400 uppercase border-b pb-1">Geofenced Site Zones</div>
-                   {Object.entries(projectMeta?.customZones || currentProject.customZones || defaultZones).map(([zName, zBounds]: [string, any]) => {
-                     const isHazard = zBounds.hazardLevel === 'critical' || zBounds.hazardLevel === 'warning';
-                     const occupantCount = people.filter(p => p.currentZone === zName).length;
-
-                     return (
-                       <div 
-                         key={zName} 
-                         onClick={() => setSelectedEntity({
-                           type: 'infrastructure',
-                           data: {
-                             id: `zone-${zName.replace(/\s+/g, '-').toLowerCase()}`,
-                             name: zName,
-                             type: 'UHF RFID Reader',
-                             location: zName,
-                             ipAddress: '192.168.10.100',
-                             macAddress: 'FF:EE:DD:CC:BB:AA',
-                             status: isHazard ? 'Warning' : 'Online',
-                             signalRssi: -50,
-                             battery: 100,
-                             x: zBounds.x,
-                             y: zBounds.y
-                           }
-                         })}
-                         className={`p-3 rounded-xl border transition cursor-pointer ${
-                           isHazard ? 'bg-rose-50/60 border-rose-200 hover:bg-rose-100/80' : 'bg-slate-50 border-slate-200 hover:bg-sky-50'
-                         }`}
-                       >
-                          <div className="flex items-center justify-between mb-1">
-                             <span className="text-xs font-black text-slate-900">{zName}</span>
-                             <span className={`text-[9px] font-black px-1.5 py-0.5 rounded uppercase ${
-                               isHazard ? 'bg-rose-600 text-white' : 'bg-sky-100 text-sky-700'
-                             }`}>
-                               {isHazard ? 'Hazard' : 'Active'}
-                             </span>
-                          </div>
-                          <div className="flex items-center justify-between text-[10px] font-bold text-slate-500">
-                             <span>Category: <span className="text-slate-800">{zBounds.category || 'General'}</span></span>
-                             <span className="text-sky-600 font-extrabold">{occupantCount} Workers</span>
-                          </div>
-                       </div>
-                     );
-                   })}
-                 </div>
               )}
           </div>
 
-          <div className="p-4 bg-slate-50 border-t border-slate-100">
-             <button onClick={() => setIsWorkforceModalOpen(true)} className="w-full bg-slate-900 text-white py-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-lg hover:bg-slate-800 transition">
+          <div className="p-4 bg-slate-50 dark:bg-slate-900 border-t border-slate-100 dark:border-slate-700">
+             <button onClick={() => setIsWorkforceModalOpen(true)} className="w-full bg-slate-900 hover:bg-slate-800 text-white py-3 rounded-xl text-xs font-black flex items-center justify-center gap-2 shadow-lg transition cursor-pointer">
                 <Settings className="w-4 h-4" /> System Calibration
              </button>
           </div>
@@ -1056,15 +897,8 @@ export default function LiveTrackingTab({
              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pb-1 sm:pb-0 scroll-smooth flex-1 min-w-0">
                 {[
                   { id: 'standard', label: '2D Layout', icon: MapIcon },
-                  { id: 'bim', label: 'Digital Twin', icon: Warehouse },
-                  { id: 'satellite', label: 'Satellite', icon: MapIcon },
                   { id: 'heatmap', label: 'Heat Map', icon: Activity },
                   { id: 'coverage', label: 'RFID Coverage', icon: Radio },
-                  { id: 'evacuation', label: 'Evacuation', icon: ShieldAlert },
-                  { id: 'asset', label: 'Asset Tracking', icon: Box },
-                  { id: 'hardware', label: 'Health Status', icon: Zap },
-                  { id: 'productivity', label: 'Productivity', icon: BarChart3 },
-                  { id: 'security', label: 'Security', icon: ShieldCheck },
                 ].map(mode => (
                   <button
                     key={mode.id}
@@ -1346,8 +1180,8 @@ export default function LiveTrackingTab({
                 zones={activeZones}
                 highlightedPersonId={selectedEntity?.type === 'person' ? selectedEntity.data.id : highlightedPersonId}
                 initialFocusZone={focusZone}
-                floorplanUrl={trackingCtx?.customFloorplan || projectMeta?.floorplanUrl || localProjectProps?.floorplanUrl || currentProject.floorplanUrl}
-                svgSource={trackingCtx?.customSvgSource}
+                floorplanUrl={trackingCtx?.customFloorplan || localProjectProps?.floorplanUrl || projectMeta?.floorplanUrl || (typeof window !== 'undefined' ? localStorage.getItem('gao_custom_floorplan') : null) || currentProject.floorplanUrl}
+                svgSource={trackingCtx?.customSvgSource || localProjectProps?.svgSource || (typeof window !== 'undefined' ? localStorage.getItem('gao_custom_svg') : undefined) || undefined}
                 onSelectEntity={(entity) => setSelectedEntity(entity)}
                 customZones={activeZones}
                 projectId={projectMeta?.id || currentProject.id}

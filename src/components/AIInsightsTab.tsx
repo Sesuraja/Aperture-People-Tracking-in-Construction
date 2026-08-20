@@ -318,7 +318,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
 
   // 8. MongoDB / Firestore Recommendations & Incident State
   const [savedDirectives, setSavedDirectives] = useState<{ id: string; title: string; category: string; description: string; impact: string }[]>([]);
-  const [loggedIncidents, setLoggedIncidents] = useState<{ id: string; title: string; severity: string; zone: string; timestamp: string }[]>([]);
+  const [loggedIncidents, setLoggedIncidents] = useState<{ id: string; title: string; severity: string; zone: string; timestamp: string; description?: string }[]>([]);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
 
   const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
@@ -645,22 +645,28 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
         nightShift: simNightShift,
         zoneForecasts: [
           {
-            zone: 'Heavy Crane Swing Radius (Tower Core)',
+            zone: 'Crane Operating Zone',
             riskScore: craneRisk,
             trend: craneRisk > 70 ? 'Increasing' : 'Stable',
             mainFactor: `Overhead lift activity (${simCraneIntensity}) + Scaffolding density (${simWorkerDensity})`
           },
           {
-            zone: 'Structure & Scaffolding (L3-L4)',
+            zone: 'Structure Work Area',
             riskScore: scaffoldRisk,
             trend: scaffoldRisk > 65 ? 'Increasing' : 'Stable',
             mainFactor: `Perimeter wind shear (${simWindShear} km/h) approaching fall protection threshold`
           },
           {
-            zone: 'Excavation Pit & Shoring (Basement B2)',
+            zone: 'Excavation Area',
             riskScore: excavationRisk,
             trend: 'Stable',
             mainFactor: simNightShift ? 'Reduced visibility during night shift operations' : 'Continuous gas and shoring telemetry verification'
+          },
+          {
+            zone: 'High Voltage Area',
+            riskScore: Math.min(95, Math.round(craneRisk * 0.85 + 10)),
+            trend: 'Stable',
+            mainFactor: 'Substation perimeter lock & lockout-tagout compliance'
           }
         ],
         createdAt: new Date().toISOString()

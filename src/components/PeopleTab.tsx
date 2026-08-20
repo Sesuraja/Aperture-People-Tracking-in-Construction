@@ -307,6 +307,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   const handleBulkShiftChange = async (newShift: 'ON_SITE' | 'OFF_SITE' | 'ON_LEAVE' | 'SUSPENDED') => {
     if (selectedIds.length === 0) return;
     try {
+      const selectedUpper = new Set(selectedIds.map(s => s.toUpperCase()));
       const promises = selectedIds.map(tagId => 
         setDoc(doc(db, 'registered_people', tagId), {
           shiftStatus: newShift,
@@ -315,11 +316,22 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       );
       await Promise.all(promises);
 
+      // Optimistically update dbWorkers state
+      setDbWorkers(prev => prev.map(w => {
+        if (selectedUpper.has((w.id || '').toUpperCase()) || selectedUpper.has((w.hardhatTagId || '').toUpperCase())) {
+          return { ...w, shiftStatus: newShift };
+        }
+        return w;
+      }));
+
       await addDoc(collection(db, 'alerts'), {
         type: 'info',
         message: `Bulk Shift Update: Set to ${newShift} for ${selectedIds.length} personnel`,
         timestamp: new Date()
       });
+
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 
       showToast('success', `Bulk updated ${selectedIds.length} workers to shift state '${newShift}' in MongoDB.`);
     } catch (err) {
@@ -331,6 +343,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   const handleBulkPpeChange = async (newPpe: 'COMPLIANT' | 'WARNING' | 'NON_COMPLIANT') => {
     if (selectedIds.length === 0) return;
     try {
+      const selectedUpper = new Set(selectedIds.map(s => s.toUpperCase()));
       const promises = selectedIds.map(tagId =>
         setDoc(doc(db, 'registered_people', tagId), {
           ppeStatus: newPpe,
@@ -339,11 +352,22 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       );
       await Promise.all(promises);
 
+      // Optimistically update dbWorkers state
+      setDbWorkers(prev => prev.map(w => {
+        if (selectedUpper.has((w.id || '').toUpperCase()) || selectedUpper.has((w.hardhatTagId || '').toUpperCase())) {
+          return { ...w, ppeStatus: newPpe };
+        }
+        return w;
+      }));
+
       await addDoc(collection(db, 'alerts'), {
         type: newPpe === 'NON_COMPLIANT' ? 'security' : 'info',
         message: `Bulk PPE Status Update: Set to ${newPpe} for ${selectedIds.length} personnel`,
         timestamp: new Date()
       });
+
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 
       showToast('success', `Bulk updated PPE compliance to '${newPpe}' for ${selectedIds.length} workers in MongoDB.`);
     } catch (err) {
@@ -442,11 +466,20 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       const list: DBWorker[] = [];
       snapshot.forEach((d) => {
         const data = d.data();
+        const role = data.role || 'General Subcontractor';
+        // Strictly exclude visitors from worker directory
+        if (
+          role.toLowerCase().includes('visitor') ||
+          (data.name || '').toLowerCase().includes('(visitor)') ||
+          (d.id || '').toUpperCase().startsWith('VIS-')
+        ) {
+          return;
+        }
         list.push({
           id: d.id,
           hardhatTagId: data.hardhatTagId || d.id,
           name: data.name || 'Unnamed Worker',
-          role: data.role || 'General Subcontractor',
+          role: role,
           tradeCompany: data.tradeCompany || data.company || 'Apex Structural',
           phone: data.phone || '+1 (555) 019-2831',
           email: data.email || '',
@@ -509,16 +542,23 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     return () => unsub();
   }, [selectedPerson, profileTab]);
 
-  // 3. Combine MongoDB registered workers with real-time antenna tag scans
+  // 3. Combine MongoDB registered workers with real-time antenna tag scans (Workers only)
   const combinedPeople = useMemo(() => {
     const map = new Map<string, any>();
 
-    // Add registered workers from MongoDB
+    // 1. Add registered workers from MongoDB (Authoritative data source)
     dbWorkers.forEach((w) => {
+      if (
+        w.role.toLowerCase().includes('visitor') || 
+        (w.name || '').toLowerCase().includes('(visitor)') ||
+        (w.id || '').toUpperCase().startsWith('VIS-')
+      ) {
+        return;
+      }
       const tagKey = (w.hardhatTagId || w.id).toUpperCase();
       map.set(tagKey, {
         id: w.id,
-        hardhatTagId: w.hardhatTagId,
+        hardhatTagId: w.hardhatTagId || w.id,
         name: w.name,
         role: w.role,
         tradeCompany: w.tradeCompany || 'Apex Structural',
@@ -542,19 +582,30 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       });
     });
 
-    // Merge live antenna scans
+    // 2. Overlay live positions from antenna scans (ONLY update live telemetry: x, y, currentZone, dwellTime, presenceState, lastSeen)
     people.forEach((p) => {
+      if (
+        p.role === 'Visitor' ||
+        (p.role || '').toLowerCase().includes('visitor') ||
+        (p.name || '').toLowerCase().includes('(visitor)') ||
+        (p.id || '').toUpperCase().startsWith('VIS-') ||
+        (p.hardhatTagId || '').toUpperCase().startsWith('VIS-') ||
+        (p.hardhatTagId || '').toUpperCase().startsWith('HH-TEMP-')
+      ) {
+        return; // Exclude visitors from People (worker) directory
+      }
+
       const tagKey = (p.hardhatTagId || p.id).toUpperCase();
       const existing = map.get(tagKey);
       if (existing) {
-        existing.currentZone = p.currentZone;
-        existing.dwellTime = p.dwellTime;
-        existing.presenceState = p.presenceState;
+        existing.currentZone = p.currentZone || existing.currentZone;
+        existing.dwellTime = p.dwellTime ?? existing.dwellTime;
+        existing.presenceState = p.presenceState || existing.presenceState;
         existing.x = p.x;
         existing.y = p.y;
-        existing.lastSeen = p.lastSeen;
-        if (p.ppeStatus) existing.ppeStatus = p.ppeStatus;
-      } else {
+        existing.lastSeen = p.lastSeen || existing.lastSeen;
+      } else if (dbWorkers.length === 0) {
+        // Fallback for initial demo state if database is completely empty
         map.set(tagKey, {
           ...p,
           hardhatTagId: p.hardhatTagId || p.id,
@@ -597,21 +648,36 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       let y = p.y;
       if (x === undefined || y === undefined || (x === 0 && y === 0)) {
         const zone = (p.currentZone || '').toLowerCase();
-        if (zone.includes('excavation') || zone.includes('pit')) {
-          x = 26 + (idx % 3) * 5;
-          y = 38 + Math.floor(idx / 3) * 5;
-        } else if (zone.includes('tower') || zone.includes('core') || zone.includes('building')) {
-          x = 66 + (idx % 3) * 5;
-          y = 46 + Math.floor(idx / 3) * 5;
-        } else if (zone.includes('crane') || zone.includes('swing')) {
-          x = 42 + (idx % 3) * 5;
-          y = 68 + Math.floor(idx / 3) * 5;
-        } else if (zone.includes('voltage') || zone.includes('electric')) {
-          x = 78 + (idx % 3) * 5;
-          y = 22 + Math.floor(idx / 3) * 5;
+        if (zone.includes('material') || zone.includes('storage')) {
+          x = 16 + (idx % 2) * 8;
+          y = 14 + Math.floor(idx / 2) * 4;
+        } else if (zone.includes('structure') || zone.includes('scaffold')) {
+          x = 46 + (idx % 2) * 8;
+          y = 15 + Math.floor(idx / 2) * 4;
+        } else if (zone.includes('crane') || zone.includes('operating')) {
+          x = 78 + (idx % 2) * 8;
+          y = 15 + Math.floor(idx / 2) * 4;
+        } else if (zone.includes('office') || zone.includes('trailer') || zone.includes('command')) {
+          x = 18 + (idx % 2) * 6;
+          y = 48 + Math.floor(idx / 2) * 6;
+        } else if (zone.includes('open') || zone.includes('general')) {
+          x = 48 + (idx % 2) * 8;
+          y = 45 + Math.floor(idx / 2) * 4;
+        } else if (zone.includes('parking') || zone.includes('equipment') || zone.includes('machinery')) {
+          x = 78 + (idx % 2) * 8;
+          y = 48 + Math.floor(idx / 2) * 4;
+        } else if (zone.includes('excavation') || zone.includes('pit') || zone.includes('trench')) {
+          x = 18 + (idx % 2) * 8;
+          y = 75 + Math.floor(idx / 2) * 4;
+        } else if (zone.includes('assembly') || zone.includes('muster')) {
+          x = 48 + (idx % 2) * 8;
+          y = 75 + Math.floor(idx / 2) * 4;
+        } else if (zone.includes('voltage') || zone.includes('substation') || zone.includes('electric')) {
+          x = 80 + (idx % 2) * 8;
+          y = 75 + Math.floor(idx / 2) * 4;
         } else {
-          x = 12 + (idx % 4) * 6;
-          y = 78 + Math.floor(idx / 4) * 5;
+          x = 18 + (idx % 3) * 6;
+          y = 48 + Math.floor(idx / 3) * 5;
         }
       }
       return {
@@ -626,22 +692,50 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   const stats = useMemo(() => {
     const total = combinedPeople.length;
     const active = combinedPeople.filter(p => p.shiftStatus === 'ON_SITE' || p.dwellTime > 0).length;
-    const compliantPpe = combinedPeople.filter(p => p.ppeStatus === 'COMPLIANT' || !p.ppeStatus).length;
-    const ppeRate = total > 0 ? Math.round((compliantPpe / total) * 100) : 100;
-    const highRisk = combinedPeople.filter(p => p.ppeStatus === 'NON_COMPLIANT' || p.trainingStatus === 'OVERDUE' || p.currentZone === 'Heavy Crane & Exclusion Area').length;
+    const compliantPpe = combinedPeople.filter(p => p.ppeStatus === 'COMPLIANT').length;
+    const nonCompliantPpe = combinedPeople.filter(p => p.ppeStatus === 'NON_COMPLIANT').length;
+    const warningPpe = combinedPeople.filter(p => p.ppeStatus === 'WARNING').length;
+    const overdueTraining = combinedPeople.filter(p => p.trainingStatus === 'OVERDUE').length;
     
-    return { total, active, ppeRate, highRisk };
+    // PPE compliance rate strictly computes percentage of verified full compliant workers
+    const ppeRate = total > 0 ? Math.round((compliantPpe / total) * 100) : 100;
+    
+    // High Risk personnel count: anyone with NO PPE (NON_COMPLIANT), PPE WARNING, OVERDUE safety training, or inside hazardous exclusion zones
+    const highRisk = combinedPeople.filter(p => {
+      const z = (p.currentZone || '').toLowerCase();
+      const isExclusionZone = z.includes('crane') || z.includes('voltage') || z.includes('exclusion') || z.includes('hazard');
+      return p.ppeStatus === 'NON_COMPLIANT' || p.ppeStatus === 'WARNING' || p.trainingStatus === 'OVERDUE' || isExclusionZone;
+    }).length;
+    
+    return { total, active, compliantPpe, nonCompliantPpe, warningPpe, overdueTraining, ppeRate, highRisk };
   }, [combinedPeople]);
 
   // Quick Update Safety Training Status in MongoDB
   const handleQuickUpdateTrainingStatus = async (tagId: string, name: string, newStatus: 'COMPLIANT' | 'DUE_SOON' | 'OVERDUE' | 'PENDING') => {
     try {
+      const tagUpper = (tagId || "").toUpperCase().trim();
       const todayDate = new Date().toISOString().split('T')[0];
-      await setDoc(doc(db, 'registered_people', (tagId || "").toUpperCase()), {
+      await setDoc(doc(db, 'registered_people', tagUpper), {
         trainingStatus: newStatus,
         lastTrainingDate: todayDate,
         updatedAt: serverTimestamp()
       }, { merge: true });
+
+      // Optimistically update dbWorkers state
+      setDbWorkers(prev => prev.map(w => {
+        if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
+          return { ...w, trainingStatus: newStatus, lastTrainingDate: todayDate };
+        }
+        return w;
+      }));
+
+      if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
+        setSelectedPerson(prev => prev ? {
+          ...prev,
+          trainingStatus: newStatus,
+          lastTrainingDate: todayDate
+        } : null);
+      }
 
       await addDoc(collection(db, 'alerts'), {
         type: newStatus === 'OVERDUE' ? 'warning' : 'info',
@@ -649,14 +743,10 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         timestamp: new Date()
       });
 
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
       showToast('success', `Updated Safety Training Status to '${newStatus}' for ${name} in MongoDB database.`);
-      if (selectedPerson && (selectedPerson.hardhatTagId || selectedPerson.id).toUpperCase() === (tagId || "").toUpperCase()) {
-        setSelectedPerson({
-          ...selectedPerson,
-          trainingStatus: newStatus,
-          lastTrainingDate: todayDate
-        });
-      }
     } catch (err) {
       console.error("Failed to update training status:", err);
       showToast('error', "Failed to update worker safety status in MongoDB.");
@@ -672,16 +762,27 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     const tagId = (simCheckInForm.hardhatTagId || "").toUpperCase().trim();
     try {
       // 1. Update registered_people document
-      await setDoc(doc(db, 'registered_people', tagId), {
+      const newRec = {
         id: tagId,
         hardhatTagId: tagId,
         name: simCheckInForm.workerName.trim(),
         tradeCompany: simCheckInForm.tradeCompany || selectedContractorCompany,
-        shiftStatus: 'ON_SITE',
-        ppeStatus: simCheckInForm.ppeStatus || 'COMPLIANT',
+        shiftStatus: 'ON_SITE' as const,
+        ppeStatus: (simCheckInForm.ppeStatus || 'COMPLIANT') as any,
         currentZone: simCheckInForm.gateLocation,
         updatedAt: serverTimestamp()
-      }, { merge: true });
+      };
+      await setDoc(doc(db, 'registered_people', tagId), newRec, { merge: true });
+
+      setDbWorkers(prev => {
+        const idx = prev.findIndex(w => (w.id || '').toUpperCase() === tagId || (w.hardhatTagId || '').toUpperCase() === tagId);
+        if (idx >= 0) {
+          const next = [...prev];
+          next[idx] = { ...next[idx], ...newRec };
+          return next;
+        }
+        return [newRec as any, ...prev];
+      });
 
       // 2. Add attendance record
       await addDoc(collection(db, 'attendance'), {
@@ -699,6 +800,9 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         message: `📱 Contractor Mobile Check-In: ${simCheckInForm.workerName} (${simCheckInForm.tradeCompany || selectedContractorCompany}) checked in via Mobile QR at ${simCheckInForm.gateLocation}`,
         timestamp: new Date()
       });
+
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 
       showToast('success', `Mobile Check-In verified for ${simCheckInForm.workerName} at ${simCheckInForm.gateLocation}!`);
       setIsContractorQrModalOpen(false);
@@ -741,28 +845,38 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         id: tagId,
         hardhatTagId: tagId,
         name: formData.name.trim(),
-        role: formData.role,
-        tradeCompany: formData.tradeCompany,
-        phone: formData.phone,
+        role: formData.role || 'General Subcontractor',
+        tradeCompany: formData.tradeCompany || 'Apex Structural',
+        phone: formData.phone || '+1 (555) 019-2831',
         email: formData.email || `${(formData.name || "").toLowerCase().replace(/\s+/g, '.')}@buildcorp.com`,
-        emergencyContact: formData.emergencyContact,
-        certifications: formData.certifications,
+        emergencyContact: formData.emergencyContact || 'Emergency Contact (+1 555-992-1100)',
+        certifications: formData.certifications || 'OSHA 30, Scaffolding Safety',
         ppeStatus: formData.ppeStatus || 'COMPLIANT',
         shiftStatus: formData.shiftStatus || 'ON_SITE',
+        trainingStatus: formData.trainingStatus || 'COMPLIANT',
+        lastTrainingDate: formData.lastTrainingDate || new Date().toISOString().split('T')[0],
+        trainingCourse: formData.trainingCourse || 'OSHA 30 Construction Safety & Site Clearance',
+        trainingExpiry: formData.trainingExpiry || '2027-05-15',
         department: formData.department || 'Civil Engineering',
         supervisor: formData.supervisor || 'Marcus Vance (EHS Director)',
         safetyScore: 95,
-        notes: formData.notes,
+        notes: formData.notes || '',
         createdAt: new Date().toISOString()
       };
 
       await setDoc(doc(db, 'registered_people', tagId), newWorkerData);
+
+      // Optimistically update dbWorkers
+      setDbWorkers(prev => [newWorkerData, ...prev.filter(w => (w.id || '').toUpperCase() !== tagUpper(tagId) && (w.hardhatTagId || '').toUpperCase() !== tagUpper(tagId))]);
 
       await addDoc(collection(db, 'alerts'), {
         type: 'info',
         message: `Registered new personnel in MongoDB: ${newWorkerData.name} (${tagId})`,
         timestamp: new Date()
       });
+
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 
       showToast('success', `Worker "${newWorkerData.name}" saved to MongoDB database.`);
       setIsAddingModalOpen(false);
@@ -773,17 +887,32 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     }
   };
 
+  function tagUpper(s: string): string {
+    return (s || '').toUpperCase().trim();
+  }
+
   // Edit existing worker in MongoDB
   const handleUpdateWorker = async () => {
     if (!formData.id || !formData.hardhatTagId) return;
-    const tagId = (formData.hardhatTagId || "").toUpperCase().trim();
+    const tagId = (formData.hardhatTagId || formData.id || "").toUpperCase().trim();
 
     try {
-      await setDoc(doc(db, 'registered_people', tagId), {
+      const updatedRecord = {
         ...formData,
+        id: tagId,
         hardhatTagId: tagId,
         updatedAt: serverTimestamp()
-      }, { merge: true });
+      };
+
+      await setDoc(doc(db, 'registered_people', tagId), updatedRecord, { merge: true });
+
+      // Optimistically update dbWorkers
+      setDbWorkers(prev => prev.map(w => {
+        if ((w.id || '').toUpperCase() === tagId || (w.hardhatTagId || '').toUpperCase() === tagId) {
+          return { ...w, ...updatedRecord };
+        }
+        return w;
+      }));
 
       await addDoc(collection(db, 'alerts'), {
         type: 'info',
@@ -791,10 +920,13 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         timestamp: new Date()
       });
 
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
       showToast('success', `Updated profile for "${formData.name}" in MongoDB.`);
       setIsEditModalOpen(false);
       if (selectedPerson) {
-        setSelectedPerson({ ...selectedPerson, ...formData });
+        setSelectedPerson(prev => prev ? { ...prev, ...updatedRecord } : null);
       }
     } catch (err) {
       console.error("Failed to update worker:", err);
@@ -807,18 +939,46 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     if (!window.confirm(`Are you sure you want to remove worker "${name}" (${tagId}) from MongoDB database?`)) return;
 
     try {
-      await deleteDoc(doc(db, 'registered_people', (tagId || "").toUpperCase()));
+      const idUpper = (tagId || "").toUpperCase().trim();
+      const idOriginal = (tagId || "").trim();
+
+      // Delete from registered_people
+      await deleteDoc(doc(db, 'registered_people', idOriginal));
+      if (idUpper !== idOriginal) {
+        await deleteDoc(doc(db, 'registered_people', idUpper));
+      }
+
+      // Also delete from people collection
+      await deleteDoc(doc(db, 'people', idOriginal));
+      if (idUpper !== idOriginal) {
+        await deleteDoc(doc(db, 'people', idUpper));
+      }
+
+      // Optimistically update local dbWorkers state immediately
+      setDbWorkers(prev => prev.filter(w => {
+        const wIdUpper = (w.id || '').toUpperCase();
+        const wTagUpper = (w.hardhatTagId || '').toUpperCase();
+        return wIdUpper !== idUpper && wIdUpper !== idOriginal.toUpperCase() && wTagUpper !== idUpper;
+      }));
+
+      if (selectedPerson && (
+        (selectedPerson.id || '').toUpperCase() === idUpper || 
+        (selectedPerson.hardhatTagId || '').toUpperCase() === idUpper ||
+        selectedPerson.id === idOriginal
+      )) {
+        setSelectedPerson(null);
+      }
 
       await addDoc(collection(db, 'alerts'), {
         type: 'warning',
-        message: `Worker deregistred from MongoDB: ${name} (${tagId})`,
+        message: `Worker deregistered from MongoDB: ${name} (${tagId})`,
         timestamp: new Date()
       });
 
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
       showToast('info', `Deregistered worker "${name}" from MongoDB.`);
-      if (selectedPerson?.id === tagId) {
-        setSelectedPerson(null);
-      }
     } catch (err) {
       console.error("Failed to delete worker:", err);
       showToast('error', "Failed to remove worker from MongoDB.");
@@ -828,10 +988,23 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   // Quick toggle PPE status directly in MongoDB
   const handleQuickUpdatePpe = async (tagId: string, name: string, newPpe: 'COMPLIANT' | 'WARNING' | 'NON_COMPLIANT') => {
     try {
-      await setDoc(doc(db, 'registered_people', (tagId || "").toUpperCase()), {
+      const tagUpper = (tagId || "").toUpperCase().trim();
+      await setDoc(doc(db, 'registered_people', tagUpper), {
         ppeStatus: newPpe,
         updatedAt: serverTimestamp()
       }, { merge: true });
+
+      // Optimistically update dbWorkers state
+      setDbWorkers(prev => prev.map(w => {
+        if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
+          return { ...w, ppeStatus: newPpe };
+        }
+        return w;
+      }));
+
+      if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
+        setSelectedPerson(prev => prev ? { ...prev, ppeStatus: newPpe } : null);
+      }
 
       await addDoc(collection(db, 'alerts'), {
         type: newPpe === 'NON_COMPLIANT' ? 'security' : newPpe === 'WARNING' ? 'warning' : 'info',
@@ -839,10 +1012,10 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         timestamp: new Date()
       });
 
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
       showToast('success', `Updated ${name} PPE status to ${newPpe} in MongoDB.`);
-      if (selectedPerson && (selectedPerson.hardhatTagId || selectedPerson.id) === tagId) {
-        setSelectedPerson({ ...selectedPerson, ppeStatus: newPpe });
-      }
     } catch (err) {
       console.error("Failed to update PPE status:", err);
       showToast('error', "Failed to update PPE status in MongoDB.");
@@ -852,17 +1025,31 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   // Quick toggle Shift status directly in MongoDB
   const handleQuickUpdateShift = async (tagId: string, name: string, newShift: 'ON_SITE' | 'OFF_SITE' | 'ON_LEAVE' | 'SUSPENDED') => {
     try {
-      await setDoc(doc(db, 'registered_people', (tagId || "").toUpperCase()), {
+      const tagUpper = (tagId || "").toUpperCase().trim();
+      await setDoc(doc(db, 'registered_people', tagUpper), {
         shiftStatus: newShift,
         updatedAt: serverTimestamp()
       }, { merge: true });
 
-      showToast('info', `Worker ${name} shift status set to ${newShift}`);
-      if (selectedPerson && (selectedPerson.hardhatTagId || selectedPerson.id) === tagId) {
-        setSelectedPerson({ ...selectedPerson, shiftStatus: newShift });
+      // Optimistically update dbWorkers state
+      setDbWorkers(prev => prev.map(w => {
+        if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
+          return { ...w, shiftStatus: newShift };
+        }
+        return w;
+      }));
+
+      if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
+        setSelectedPerson(prev => prev ? { ...prev, shiftStatus: newShift } : null);
       }
+
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
+      showToast('info', `Worker ${name} shift status set to ${newShift} in MongoDB.`);
     } catch (err) {
       console.error("Failed to update shift status:", err);
+      showToast('error', "Failed to update shift status in MongoDB.");
     }
   };
 
@@ -1122,6 +1309,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
           <div>
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Total Workforce</span>
             <span className="text-2xl font-black text-slate-900 dark:text-white">{stats.total}</span>
+            <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">MongoDB Registered Workers</span>
           </div>
           <div className="p-3 bg-[#007BC4]/10 text-[#007BC4] rounded-xl">
             <Users size={20} />
@@ -1132,6 +1320,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
           <div>
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">Active On-Site</span>
             <span className="text-2xl font-black text-emerald-600">{stats.active}</span>
+            <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">{Math.max(0, stats.total - stats.active)} Off-Site / Leave</span>
           </div>
           <div className="p-3 bg-emerald-500/10 text-emerald-600 rounded-xl">
             <UserCheck size={20} />
@@ -1141,9 +1330,12 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm flex items-center justify-between">
           <div>
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">PPE Compliance Rate</span>
-            <span className="text-2xl font-black text-slate-900 dark:text-white">{stats.ppeRate}%</span>
+            <span className={`text-2xl font-black ${stats.ppeRate >= 80 ? 'text-emerald-600' : stats.ppeRate >= 60 ? 'text-amber-500' : 'text-rose-600'}`}>
+              {stats.ppeRate}%
+            </span>
+            <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">{stats.compliantPpe} of {stats.total} Compliant</span>
           </div>
-          <div className="p-3 bg-blue-500/10 text-blue-600 rounded-xl">
+          <div className={`p-3 rounded-xl ${stats.ppeRate >= 80 ? 'bg-emerald-500/10 text-emerald-600' : stats.ppeRate >= 60 ? 'bg-amber-500/10 text-amber-600' : 'bg-rose-500/10 text-rose-600'}`}>
             <ShieldCheck size={20} />
           </div>
         </div>
@@ -1151,9 +1343,17 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm flex items-center justify-between">
           <div>
             <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block">High Risk / Non-Compliant</span>
-            <span className="text-2xl font-black text-rose-600">{stats.highRisk}</span>
+            <span className={`text-2xl font-black ${stats.highRisk > 0 ? 'text-rose-600' : 'text-slate-900 dark:text-white'}`}>
+              {stats.highRisk}
+            </span>
+            <span className="text-[10px] text-slate-500 font-semibold block mt-0.5">
+              {stats.nonCompliantPpe > 0 ? `${stats.nonCompliantPpe} No PPE` : ''}
+              {stats.warningPpe > 0 ? `${stats.nonCompliantPpe > 0 ? ' • ' : ''}${stats.warningPpe} Check` : ''}
+              {stats.overdueTraining > 0 ? `${(stats.nonCompliantPpe > 0 || stats.warningPpe > 0) ? ' • ' : ''}${stats.overdueTraining} Overdue` : ''}
+              {stats.nonCompliantPpe === 0 && stats.warningPpe === 0 && stats.overdueTraining === 0 ? 'Zero EHS Violations' : ''}
+            </span>
           </div>
-          <div className="p-3 bg-rose-500/10 text-rose-600 rounded-xl">
+          <div className={`p-3 rounded-xl ${stats.highRisk > 0 ? 'bg-rose-500/10 text-rose-600' : 'bg-slate-100 text-slate-500 dark:bg-slate-700'}`}>
             <ShieldAlert size={20} />
           </div>
         </div>
@@ -1339,19 +1539,34 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
                 <div className="h-4 w-[1px] bg-slate-700 hidden sm:block" />
 
-                {/* Live Zone Counters */}
-                <div className="hidden lg:flex items-center gap-1.5 text-[11px] font-bold">
-                  <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
-                    🏗️ Tower Core: <strong className="text-sky-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('tower')).length}</strong>
+                {/* Live Zone Counters for the 9-Zone Grid */}
+                <div className="hidden xl:flex items-center gap-1 text-[10px] font-bold overflow-x-auto max-w-[620px] py-0.5">
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                    📦 Storage: <strong className="text-yellow-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('material') || (p.currentZone || '').toLowerCase().includes('storage')).length}</strong>
                   </span>
-                  <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
-                    ⛏️ Excavation: <strong className="text-amber-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('excavation')).length}</strong>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                    🏗️ Structure: <strong className="text-purple-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('structure')).length}</strong>
                   </span>
-                  <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
-                    🏗️ Crane Swing: <strong className="text-purple-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('crane')).length}</strong>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                    🏗️ Crane: <strong className="text-rose-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('crane')).length}</strong>
                   </span>
-                  <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700">
-                    ⚡ High Voltage: <strong className="text-rose-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('voltage')).length}</strong>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                    🏢 Office: <strong className="text-sky-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('office')).length}</strong>
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                    👷 Open: <strong className="text-slate-200">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('open')).length}</strong>
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                    🚜 Parking: <strong className="text-orange-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('parking')).length}</strong>
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                    ⛏️ Excavation: <strong className="text-rose-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('excavation')).length}</strong>
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                    👥 Assembly: <strong className="text-emerald-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('assembly') || (p.currentZone || '').toLowerCase().includes('muster')).length}</strong>
+                  </span>
+                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
+                    ⚡ Voltage: <strong className="text-rose-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('voltage')).length}</strong>
                   </span>
                 </div>
               </div>
@@ -1368,7 +1583,17 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
             <div className="flex-1 relative w-full h-[540px]">
               <LiveFloorMap
                 mode={mapMode}
-                zones={{}}
+                zones={{
+                  'Material Storage': { x: 6.5, y: 8.0, width: 23.5, height: 21.5, category: 'MATERIAL STORAGE', hazardLevel: 'warning', maxCapacity: 4 },
+                  'Structure Work Area': { x: 36.5, y: 8.0, width: 26.0, height: 21.5, category: 'STRUCTURAL WORK', hazardLevel: 'normal', maxCapacity: 10 },
+                  'Crane Operating Zone': { x: 69.0, y: 8.0, width: 24.5, height: 21.5, category: 'CRANE SWING RADIUS', hazardLevel: 'critical', maxCapacity: 3 },
+                  'Site Office': { x: 6.5, y: 38.0, width: 23.5, height: 21.5, category: 'SITE OPERATIONS', hazardLevel: 'normal', maxCapacity: 8 },
+                  'Open Work Area': { x: 36.5, y: 38.0, width: 26.0, height: 21.5, category: 'GENERAL CONTRACTING', hazardLevel: 'normal', maxCapacity: 12 },
+                  'Equipment Parking': { x: 69.0, y: 38.0, width: 24.5, height: 21.5, category: 'HEAVY MACHINERY', hazardLevel: 'warning', maxCapacity: 5 },
+                  'Excavation Area': { x: 6.5, y: 68.0, width: 23.5, height: 21.5, category: 'EXCAVATION & SHORING', hazardLevel: 'critical', maxCapacity: 4 },
+                  'Assembly Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5, category: 'MUSTER POINT', hazardLevel: 'normal', maxCapacity: 30 },
+                  'High Voltage Area': { x: 69.0, y: 68.0, width: 24.5, height: 21.5, category: 'HIGH VOLTAGE', hazardLevel: 'critical', maxCapacity: 3 }
+                }}
                 people={mappedPeopleForMap}
                 vehicles={[]}
                 onSelectEntity={(entity) => {

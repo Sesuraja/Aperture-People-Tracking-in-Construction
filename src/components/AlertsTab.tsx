@@ -87,16 +87,16 @@ const INITIAL_ENTERPRISE_ALERTS: AIAlert[] = [
       ]
     },
     evidence: {
-      locationZone: 'Confined Shaft & Tunneling',
-      rfidReaderId: 'RD-SHAFT-L3-GATE',
-      cctvCameraId: 'CAM-SHAFT-03',
+      locationZone: 'Excavation Area',
+      rfidReaderId: 'GAO-UHF-READER-05',
+      cctvCameraId: 'CAM-EXCAVATION-01',
       cctvSnapshotUrl: 'cctv_frame_tunnel_co.jpg',
       rssiDbm: -68,
       telemetryLog: '[SENS-09] CO: 48.2 ppm | O2: 19.4% | Temp: 31.2°C | Alarm: AUDIBLE_HIGH_STEL'
     },
     comments: [
-      { id: 'c1', author: 'Marcus Vance', role: 'EHS Lead', timestamp: '10:35 AM', text: 'Tunnel L3 evacuated. SCBA team dispatched to inspect ventilation duct V-02.' },
-      { id: 'c2', author: 'Elena Rostova', role: 'Safety Inspector', timestamp: '10:38 AM', text: 'Confirmed 4 workers cleared turnstile gate RD-SHAFT-L3.' }
+      { id: 'c1', author: 'Marcus Vance', role: 'EHS Lead', timestamp: '10:35 AM', text: 'Excavation Area evacuated. SCBA team dispatched to inspect ventilation duct V-02.' },
+      { id: 'c2', author: 'Elena Rostova', role: 'Safety Inspector', timestamp: '10:38 AM', text: 'Confirmed workers cleared Reader R5 portal.' }
     ],
     timeline: [
       { time: '10:33 AM', title: 'Threshold Exceeded', description: 'Sensor SENS-09 registered 48.2ppm CO.', actor: 'Automated IoT Sensor SENS-09', type: 'trigger' },
@@ -107,7 +107,7 @@ const INITIAL_ENTERPRISE_ALERTS: AIAlert[] = [
       level: 'Tier 2 (EHS Director)',
       slaMinutes: 15,
       elapsedMinutes: 12,
-      autoEscalateTarget: 'Site Operations VP (David Miller)',
+      autoEscalateTarget: 'Site Operations Lead',
       isEscalated: false
     },
     history: [
@@ -121,25 +121,25 @@ const INITIAL_ENTERPRISE_ALERTS: AIAlert[] = [
     category: 'Safety',
     priority: 'High',
     status: 'In Progress',
-    title: 'High-Elevation Scaffold Zone Non-Compliant PPE',
-    message: 'CCTV Camera CAM-L2-SCAFFOLD detected 2 workers on Level 3 scaffolding without secondary safety harness attached.',
+    title: 'Structure Work Area Non-Compliant PPE',
+    message: 'CCTV Camera CAM-STRUCTURE-01 detected 2 workers on Structure Work Area scaffolding without secondary safety harness attached.',
     timestamp: new Date(Date.now() - 28 * 60 * 1000),
     assignedTo: 'Elena Rostova (Field Safety Lead)',
     assignedRole: 'Field Safety Officer',
     assignedAt: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
     aiSummary: {
-      rootCause: 'Subcontractor crew (Apex Scaffold) bypassing secondary lanyard tie-off while adjusting guardrails.',
+      rootCause: 'Subcontractor crew bypassing secondary lanyard tie-off while adjusting guardrails on Structure Work Area deck.',
       threatScore: 82,
       recommendedActions: [
         'Issue immediate verbal halt order over Site PA channel 2.',
         'Dispatch field safety supervisor to perform safety stand-down.',
-        'Log safety penalty infraction against Apex Scaffold Solutions.'
+        'Log safety penalty infraction against Apex QA Group.'
       ]
     },
     evidence: {
-      locationZone: 'Structure & Scaffolding (L1-L4)',
-      cctvCameraId: 'CAM-L2-SCAFFOLD',
-      rfidTagId: 'HH-7721',
+      locationZone: 'Structure Work Area',
+      cctvCameraId: 'CAM-STRUCTURE-01',
+      rfidTagId: 'HH-1003',
       telemetryLog: '[AI-VISION] Bounding Box Confidence: 96.4% | Fall Hazard: Unanchored Harness'
     },
     comments: [
@@ -573,7 +573,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       const combined = Array.from(map.values())
         .filter(a => !dismissedIds.has(a.id!))
         .map(a => {
-          if (resolvedIds.has(a.id!) || a.status === 'Closed' || a.status === 'Resolved') {
+          if (resolvedIds.has(a.id!) || (a.status as string) === 'Closed' || a.status === 'Resolved') {
             return { ...a, status: 'Resolved' as AlertStatus, resolved: true };
           }
           return a;

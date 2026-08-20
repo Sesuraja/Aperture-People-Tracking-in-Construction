@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   UserPlus, ClipboardCheck, Clock, Search, X, Mail, 
   Printer, Download, ShieldAlert, ShieldCheck, CheckCircle2, 
-  XCircle, Truck, BarChart2, Send, UserCheck, QrCode, Database
+  XCircle, Truck, BarChart2, Send, UserCheck, QrCode, Database,
+  Radio, LogOut
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -262,11 +263,18 @@ export default function VisitorsTab() {
   // Host Approval Actions
   const handleHostApprove = async (visitorId: string, remarks?: string) => {
     try {
-      await updateDoc(doc(db, 'visitors', visitorId), {
-        status: 'Approved',
+      const updates = {
+        status: 'Approved' as const,
         approvalRemarks: remarks || 'Approved by Host Officer via Enterprise System'
-      });
-      setNotificationMsg({ type: 'success', text: `Visitor ${visitorId} visit approved!` });
+      };
+      await updateDoc(doc(db, 'visitors', visitorId), updates);
+      setVisitors(prev => prev.map(v => v.id === visitorId ? { ...v, ...updates } : v));
+      if (selectedVisitor?.id === visitorId) {
+        setSelectedVisitor(prev => prev ? { ...prev, ...updates } : null);
+      }
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      setNotificationMsg({ type: 'success', text: `Visitor ${visitorId} visit approved! Ready for Gate Check-in.` });
     } catch (err) {
       console.error('Error approving visitor:', err);
     }
@@ -274,10 +282,17 @@ export default function VisitorsTab() {
 
   const handleHostDeny = async (visitorId: string, remarks?: string) => {
     try {
-      await updateDoc(doc(db, 'visitors', visitorId), {
-        status: 'Denied',
+      const updates = {
+        status: 'Denied' as const,
         approvalRemarks: remarks || 'Denied by Host / Security Team'
-      });
+      };
+      await updateDoc(doc(db, 'visitors', visitorId), updates);
+      setVisitors(prev => prev.map(v => v.id === visitorId ? { ...v, ...updates } : v));
+      if (selectedVisitor?.id === visitorId) {
+        setSelectedVisitor(prev => prev ? { ...prev, ...updates } : null);
+      }
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
       setNotificationMsg({ type: 'error', text: `Visitor ${visitorId} access denied.` });
     } catch (err) {
       console.error('Error denying visitor:', err);
@@ -303,7 +318,13 @@ export default function VisitorsTab() {
       };
 
       await updateDoc(doc(db, 'visitors', visitorId), updatedData);
-      setNotificationMsg({ type: 'success', text: `Temporary RFID Badge ${tagId} issued to ${visitorId}. Visitor marked ACTIVE.` });
+      setVisitors(prev => prev.map(v => v.id === visitorId ? { ...v, ...updatedData } : v));
+      if (selectedVisitor?.id === visitorId) {
+        setSelectedVisitor(prev => prev ? { ...prev, ...updatedData } : null);
+      }
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      setNotificationMsg({ type: 'success', text: `Temporary RFID Badge ${tagId} issued to ${visitorId}. Visitor marked ACTIVE on Live Tracking!` });
       setSelectedVisitor(null);
     } catch (err) {
       console.error('Error issuing RFID tag:', err);
@@ -313,13 +334,20 @@ export default function VisitorsTab() {
   // Check-Out Visitor
   const handleCheckoutVisitor = async (visitorId: string) => {
     try {
-      await updateDoc(doc(db, 'visitors', visitorId), {
-        status: 'Completed',
+      const updatedData = {
+        status: 'Completed' as const,
         tag: 'Returned / Deactivated',
         location: 'Checked Out',
         duration: 'Visit Finished'
-      });
-      setNotificationMsg({ type: 'info', text: `Visitor ${visitorId} checked out. RFID Tag reclaimed.` });
+      };
+      await updateDoc(doc(db, 'visitors', visitorId), updatedData);
+      setVisitors(prev => prev.map(v => v.id === visitorId ? { ...v, ...updatedData } : v));
+      if (selectedVisitor?.id === visitorId) {
+        setSelectedVisitor(prev => prev ? { ...prev, ...updatedData } : null);
+      }
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      setNotificationMsg({ type: 'info', text: `Visitor ${visitorId} checked out. RFID Tag reclaimed and removed from live map.` });
       setSelectedVisitor(null);
     } catch (err) {
       console.error('Error checking out visitor:', err);
@@ -329,9 +357,16 @@ export default function VisitorsTab() {
   // Toggle ID Verification Status
   const handleToggleIdVerify = async (visitorId: string, status: 'VERIFIED' | 'PENDING' | 'FAILED') => {
     try {
-      await updateDoc(doc(db, 'visitors', visitorId), {
+      const updatedData = {
         idVerificationStatus: status
-      });
+      };
+      await updateDoc(doc(db, 'visitors', visitorId), updatedData);
+      setVisitors(prev => prev.map(v => v.id === visitorId ? { ...v, ...updatedData } : v));
+      if (selectedVisitor?.id === visitorId) {
+        setSelectedVisitor(prev => prev ? { ...prev, ...updatedData } : null);
+      }
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
       setNotificationMsg({ type: 'success', text: `ID Verification status set to ${status} for ${visitorId}.` });
     } catch (err) {
       console.error('Error updating ID status:', err);
@@ -701,19 +736,26 @@ export default function VisitorsTab() {
                   </TableCell>
 
                   <TableCell>
-                    {v.idVerificationStatus === 'VERIFIED' ? (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit">
-                        <ShieldCheck size={11} /> ID Verified
-                      </span>
-                    ) : v.idVerificationStatus === 'FAILED' ? (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 w-fit">
-                        <XCircle size={11} /> ID Failed
-                      </span>
-                    ) : (
-                      <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1 w-fit">
-                        <Clock size={11} /> Pending ID
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      onClick={() => handleToggleIdVerify(v.id, v.idVerificationStatus === 'VERIFIED' ? 'FAILED' : 'VERIFIED')}
+                      title="Click to toggle ID verification status"
+                      className="cursor-pointer transition-transform hover:scale-105"
+                    >
+                      {v.idVerificationStatus === 'VERIFIED' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1 w-fit shadow-2xs">
+                          <ShieldCheck size={11} /> ID Verified
+                        </span>
+                      ) : v.idVerificationStatus === 'FAILED' ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1 w-fit shadow-2xs">
+                          <XCircle size={11} /> ID Failed
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1 w-fit shadow-2xs">
+                          <Clock size={11} /> Verify ID
+                        </span>
+                      )}
+                    </button>
                   </TableCell>
 
                   <TableCell className="text-center">
@@ -741,7 +783,47 @@ export default function VisitorsTab() {
                   </TableCell>
 
                   <TableCell className="text-right">
-                    <div className="flex items-center justify-end gap-1.5">
+                    <div className="flex items-center justify-end gap-1.5 flex-wrap">
+                      {/* Direct Quick Status Buttons */}
+                      {v.status === 'Pending Approval' && (
+                        <>
+                          <button
+                            onClick={() => handleHostApprove(v.id)}
+                            className="px-2 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg font-bold text-[10px] flex items-center gap-1 shadow-2xs transition"
+                            title="Approve Visit"
+                          >
+                            <CheckCircle2 size={11} /> Approve
+                          </button>
+                          <button
+                            onClick={() => handleHostDeny(v.id)}
+                            className="px-2 py-1 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-lg font-bold text-[10px] flex items-center gap-1 transition"
+                            title="Deny Visit"
+                          >
+                            <XCircle size={11} /> Deny
+                          </button>
+                        </>
+                      )}
+
+                      {(v.status === 'Approved' || v.status === 'Pre-Registered') && (
+                        <button
+                          onClick={() => handleAssignRFIDTag(v.id)}
+                          className="px-2.5 py-1 bg-[#007BC4] hover:bg-[#0069a8] text-white rounded-lg font-bold text-[10px] flex items-center gap-1 shadow-2xs transition"
+                          title="Issue RFID Badge & Check In"
+                        >
+                          <Radio size={11} /> Check-In
+                        </button>
+                      )}
+
+                      {v.status === 'Active' && (
+                        <button
+                          onClick={() => handleCheckoutVisitor(v.id)}
+                          className="px-2 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg font-bold text-[10px] flex items-center gap-1 shadow-2xs transition"
+                          title="Check-Out Visitor"
+                        >
+                          <LogOut size={11} /> Check-Out
+                        </button>
+                      )}
+
                       <button
                         onClick={() => handleSendEmailInvitation(v)}
                         className="p-1.5 text-slate-500 hover:text-[#007BC4] hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition"
@@ -760,7 +842,7 @@ export default function VisitorsTab() {
                         onClick={() => setSelectedVisitor(v)}
                         className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-lg hover:bg-slate-200 transition"
                       >
-                        Details & Timeline
+                        Details
                       </button>
                     </div>
                   </TableCell>

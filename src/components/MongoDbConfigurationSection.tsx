@@ -58,6 +58,14 @@ export default function MongoDbConfigurationSection() {
     fetchMongoStatus();
   }, []);
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
+    return {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${token}`
+    };
+  };
+
   const handleTestConnection = async () => {
     try {
       setIsTesting(true);
@@ -65,7 +73,7 @@ export default function MongoDbConfigurationSection() {
       setSaveNotice(null);
       const res = await fetch("/api/mongodb/test-connection", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ mongodbUri: mongoUriInput || undefined })
       });
       const data = await res.json();
@@ -91,7 +99,7 @@ export default function MongoDbConfigurationSection() {
       setSaveNotice(null);
       const res = await fetch("/api/mongodb/config", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify({ mongodbUri: mongoUriInput })
       });
       const data = await res.json();

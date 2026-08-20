@@ -602,9 +602,24 @@ export default function MapEditorModal({
               <span className="text-xs font-black text-slate-500 uppercase tracking-wider">
                 Map Elements ({elements.length})
               </span>
-              <span className="text-[10px] text-slate-400 font-mono">
-                Z-Stacking Active
-              </span>
+              <div className="flex items-center gap-2">
+                {elements.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setElements([]);
+                      setSelectedIds([]);
+                      pushHistory([]);
+                    }}
+                    className="text-[10px] font-bold text-rose-500 hover:text-rose-700 bg-rose-50 px-2 py-0.5 rounded-lg border border-rose-200"
+                  >
+                    Clear All
+                  </button>
+                )}
+                <span className="text-[10px] text-slate-400 font-mono">
+                  Z-Stacking Active
+                </span>
+              </div>
             </div>
 
             <div className="space-y-1.5 flex-1 overflow-y-auto pr-1">
@@ -653,6 +668,20 @@ export default function MapEditorModal({
                           className={`p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-700 transition ${isSelected ? 'text-white' : 'text-slate-400'}`}
                         >
                           {elem.isLocked ? <Lock className="w-3.5 h-3.5" /> : <Unlock className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const next = elements.filter(item => item.id !== elem.id);
+                            setElements(next);
+                            setSelectedIds(prev => prev.filter(id => id !== elem.id));
+                            pushHistory(next);
+                          }}
+                          className={`p-1 rounded hover:bg-rose-500 hover:text-white transition ${isSelected ? 'text-rose-200' : 'text-slate-400 hover:text-rose-500'}`}
+                          title={`Delete ${elem.name}`}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </div>

@@ -234,8 +234,14 @@ export async function updateDoc(docRef: any, data: any): Promise<void> {
 
 export async function deleteDoc(docRef: any): Promise<void> {
   const { colName, docId } = getRefInfo(docRef);
+  if (!colName || !docId) return;
   const localDocs = getLocalCollection(colName);
-  saveLocalCollection(colName, localDocs.filter(d => d.id !== docId));
+  const docIdLower = docId.toLowerCase();
+  saveLocalCollection(colName, localDocs.filter(d => 
+    d.id !== docId && 
+    String(d.id || '').toLowerCase() !== docIdLower && 
+    String(d.hardhatTagId || '').toLowerCase() !== docIdLower
+  ));
   try {
     await fetch(`/api/data/${colName}/${docId}`, { method: 'DELETE', headers: getAuthHeaders() });
   } catch {}

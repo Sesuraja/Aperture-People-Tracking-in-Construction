@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import { doc, setDoc, collection, onSnapshot, db } from '../lib/db';
 import { Person } from '../types';
 import { RealtimeTag, gaoApi } from '../lib/gaoApi';
 import { 
@@ -90,15 +91,29 @@ function getAuthHeaders(): Record<string, string> {
   };
 }
 
+export const SITE_ZONE_WAYPOINTS: { name: string; x: number; y: number; minX: number; maxX: number; minY: number; maxY: number }[] = [
+  { name: 'Material Storage', x: 18.0, y: 15.0, minX: 10, maxX: 26, minY: 11, maxY: 23 },
+  { name: 'Structure Work Area', x: 50.0, y: 15.0, minX: 40, maxX: 60, minY: 11, maxY: 23 },
+  { name: 'Crane Operating Zone', x: 82.0, y: 15.0, minX: 72, maxX: 90, minY: 11, maxY: 23 },
+  { name: 'Site Office', x: 18.0, y: 45.0, minX: 10, maxX: 26, minY: 40, maxY: 53 },
+  { name: 'Open Work Area', x: 50.0, y: 45.0, minX: 40, maxX: 60, minY: 40, maxY: 53 },
+  { name: 'Equipment Parking', x: 82.0, y: 45.0, minX: 72, maxX: 90, minY: 40, maxY: 53 },
+  { name: 'Excavation Area', x: 18.0, y: 75.0, minX: 10, maxX: 26, minY: 70, maxY: 83 },
+  { name: 'Assembly Point', x: 50.0, y: 75.0, minX: 40, maxX: 60, minY: 70, maxY: 83 },
+  { name: 'High Voltage Area', x: 82.0, y: 75.0, minX: 72, maxX: 90, minY: 70, maxY: 83 }
+];
+
 const DEFAULT_INITIAL_PEOPLE: Person[] = [
-  { id: 'P-101', name: 'Marcus Vance', role: 'Crane Operator', tradeCompany: 'Apex Heavy Lifting', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'E28011606000020788842D35', currentZone: 'Crane Swing Zone', presenceState: 'MOVING', dwellTime: 45, x: 88, y: 22, rssi: -62, battery: 94, lastSeen: new Date(), trail: [] },
-  { id: 'P-102', name: 'Sarah Connor', role: 'Site Supervisor', tradeCompany: 'Apex Construction JV', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'E28011606000020788842D32', currentZone: 'Tower Core', presenceState: 'MOVING', dwellTime: 32, x: 68, y: 45, rssi: -58, battery: 88, lastSeen: new Date(), trail: [] },
-  { id: 'P-103', name: 'Carlos Mendez', role: 'Safety Engineer', tradeCompany: 'Apex Safety Group', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'E28011606000020788842D31', currentZone: 'Excavation Shaft', presenceState: 'MOVING', dwellTime: 18, x: 28, y: 38, rssi: -65, battery: 92, lastSeen: new Date(), trail: [] },
-  { id: 'P-104', name: 'David Miller', role: 'Rigging Specialist', tradeCompany: 'Apex Heavy Lifting', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'E28011606000020788842D33', currentZone: 'Excavation Shaft', presenceState: 'MOVING', dwellTime: 24, x: 34, y: 42, rssi: -70, battery: 79, lastSeen: new Date(), trail: [] },
-  { id: 'P-105', name: 'Elena Rostova', role: 'EHS Officer', tradeCompany: 'EnviroSafe Inspections', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'E28011606000020788842D34', currentZone: 'Tower Core', presenceState: 'MOVING', dwellTime: 50, x: 74, y: 40, rssi: -60, battery: 85, lastSeen: new Date(), trail: [] },
-  { id: 'P-106', name: 'Liam O\'Connor', role: 'Electrical Lead', tradeCompany: 'VoltTech Power Systems', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'E28011606000020788842D36', currentZone: 'High Voltage Area', presenceState: 'MOVING', dwellTime: 15, x: 53, y: 12, rssi: -54, battery: 95, lastSeen: new Date(), trail: [] },
-  { id: 'P-107', name: 'Aisha Patel', role: 'Structural Inspector', tradeCompany: 'Vertex Structural QA', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'E28011606000020788842D37', currentZone: 'Tower Core', presenceState: 'MOVING', dwellTime: 28, x: 62, y: 48, rssi: -64, battery: 91, lastSeen: new Date(), trail: [] },
-  { id: 'P-108', name: 'Tom Bradley', role: 'Excavation Operator', tradeCompany: 'Apex Groundworks', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'E28011606000020788842D38', currentZone: 'Excavation Shaft', presenceState: 'MOVING', dwellTime: 40, x: 22, y: 35, rssi: -68, battery: 86, lastSeen: new Date(), trail: [] }
+  { id: 'HH-1001', name: 'Viktor', role: 'Site Specialist', tradeCompany: 'Site Logistics JV', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1001', currentZone: 'Material Storage', presenceState: 'IDLE', dwellTime: 45, x: 16.0, y: 14.0, rssi: -62, battery: 94, photoUrl: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
+  { id: 'HH-1002', name: 'Carlos', role: 'Heavy Handler', tradeCompany: 'Apex Heavy Staging', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1002', currentZone: 'Material Storage', presenceState: 'IDLE', dwellTime: 32, x: 24.5, y: 14.0, rssi: -58, battery: 88, photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
+  { id: 'HH-1003', name: 'Elena', role: 'Structural Inspector', tradeCompany: 'Apex QA Group', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1003', currentZone: 'Structure Work Area', presenceState: 'IDLE', dwellTime: 18, x: 45.0, y: 22.0, rssi: -65, battery: 92, photoUrl: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
+  { id: 'HH-1004', name: 'Marcus', role: 'Contractor Lead', tradeCompany: 'Apex Contractors', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1004', currentZone: 'Site Office', presenceState: 'IDLE', dwellTime: 24, x: 18.0, y: 48.0, rssi: -70, battery: 79, photoUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
+  { id: 'HH-1005', name: 'Rachel', role: 'Contractor QA', tradeCompany: 'Apex Contractors', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1005', currentZone: 'Site Office', presenceState: 'IDLE', dwellTime: 50, x: 24.5, y: 48.0, rssi: -60, battery: 85, photoUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
+  { id: 'HH-1006', name: 'Arthur', role: 'Contractor Ops', tradeCompany: 'Apex Contractors', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1006', currentZone: 'Site Office', presenceState: 'IDLE', dwellTime: 15, x: 22.0, y: 56.0, rssi: -54, battery: 95, photoUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
+  { id: 'HH-1007', name: 'David', role: 'Rebar Lead', tradeCompany: 'Apex Steelworks', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1007', currentZone: 'Open Work Area', presenceState: 'IDLE', dwellTime: 28, x: 52.0, y: 44.0, rssi: -64, battery: 91, photoUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
+  { id: 'HH-1008', name: 'Tariq', role: 'Heavy Equip Tech', tradeCompany: 'Apex Machinery', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1008', currentZone: 'Equipment Parking', presenceState: 'IDLE', dwellTime: 40, x: 78.0, y: 54.0, rssi: -68, battery: 86, photoUrl: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
+  { id: 'HH-1009', name: 'Sarah', role: 'Excavation Contractor', tradeCompany: 'Apex Groundworks', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1009', currentZone: 'Excavation Area', presenceState: 'IDLE', dwellTime: 30, x: 24.0, y: 78.0, rssi: -66, battery: 89, photoUrl: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
+  { id: 'HH-1010', name: 'Liam', role: 'Electrical Specialist', tradeCompany: 'VoltTech Power', ppeStatus: 'WARNING', shiftStatus: 'ON_SITE', trainingStatus: 'DUE_SOON', hardhatTagId: 'HH-1010', currentZone: 'High Voltage Area', presenceState: 'IDLE', dwellTime: 22, x: 84.0, y: 78.0, rssi: -61, battery: 93, photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] }
 ];
 
 export function TrackingProvider({ children }: { children: React.ReactNode }) {
@@ -477,13 +492,14 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     try {
       setIsLoading(true);
       const authHeaders = getAuthHeaders();
-      const [zonesRes, mapRes, readersRes, assetsRes, vehiclesRes, peopleRes] = await Promise.allSettled([
+      const [zonesRes, mapRes, readersRes, assetsRes, vehiclesRes, peopleRes, visitorsRes] = await Promise.allSettled([
         fetch('/api/data/zones', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch(`/api/data/map_configurations/${activeProject}`, { headers: authHeaders }).then(r => r.ok ? r.json() : null),
         fetch('/api/data/reader_zone_mappings', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/assets', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/vehicles', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
-        fetch('/api/data/registered_people', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
+        fetch('/api/data/registered_people', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
+        fetch('/api/data/visitors', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
       ]);
 
       if (zonesRes.status === 'fulfilled' && Array.isArray(zonesRes.value) && zonesRes.value.length > 0) {
@@ -512,58 +528,108 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       const rawPeople = (peopleRes.status === 'fulfilled' && Array.isArray(peopleRes.value) && peopleRes.value.length > 0)
         ? peopleRes.value
         : DEFAULT_INITIAL_PEOPLE;
-
+        
       const loadedPeople: Person[] = rawPeople.map((p: any, idx: number) => {
-        const zone = (p.currentZone || p.location || '').toLowerCase();
-        let baseX = 50;
-        let baseY = 50;
-        if (zone.includes('excavation') || zone.includes('pit') || zone.includes('shaft')) {
-          baseX = 28; baseY = 38;
-        } else if (zone.includes('tower') || zone.includes('core') || zone.includes('building')) {
-          baseX = 68; baseY = 45;
-        } else if (zone.includes('crane') || zone.includes('swing')) {
-          baseX = 88; baseY = 22;
-        } else if (zone.includes('voltage') || zone.includes('substation')) {
-          baseX = 53; baseY = 12;
-        } else if (zone.includes('muster') || zone.includes('assembly')) {
-          baseX = 6; baseY = 16;
-        } else if (zone.includes('office') || zone.includes('hq')) {
-          baseX = 17; baseY = 73;
-        } else if (zone.includes('staging') || zone.includes('material')) {
-          baseX = 52; baseY = 70;
-        } else if (zone.includes('steel') || zone.includes('yard')) {
-          baseX = 89; baseY = 70;
-        } else {
-          baseX = 15 + ((idx * 17) % 70);
-          baseY = 15 + ((idx * 23) % 65);
-        }
-
-        const angle = (idx * 2.399) % (2 * Math.PI);
-        const radius = (idx % 5) * 2.5 + 2;
-        const finalX = (typeof p.x === 'number' && p.x !== 50) ? p.x : Math.max(5, Math.min(95, Math.round((baseX + Math.cos(angle) * radius) * 10) / 10));
-        const finalY = (typeof p.y === 'number' && p.y !== 50) ? p.y : Math.max(5, Math.min(95, Math.round((baseY + Math.sin(angle) * radius) * 10) / 10));
+        const id = p.id || p.tagId || p.TagID || `P-${idx + 101}`;
+        const defaultWaypoint = SITE_ZONE_WAYPOINTS[idx % SITE_ZONE_WAYPOINTS.length];
+        const x = typeof p.x === 'number' && p.x >= 5 && p.x <= 95 ? p.x : defaultWaypoint.x;
+        const y = typeof p.y === 'number' && p.y >= 5 && p.y <= 95 ? p.y : defaultWaypoint.y;
+        const zone = p.currentZone || p.location || defaultWaypoint.name;
 
         return {
-          id: p.id || p.tagId || p.TagID || `P-${idx + 101}`,
+          id,
           name: p.name || p.personName || 'Personnel',
           role: p.role || 'Field Personnel',
           tradeCompany: p.company || p.tradeCompany || 'Contractor',
           ppeStatus: p.ppeStatus || 'COMPLIANT',
           shiftStatus: p.shiftStatus || 'ON_SITE',
           trainingStatus: p.trainingStatus || 'COMPLIANT',
-          hardhatTagId: p.hardhatTagId || p.tagId || p.TagID || p.id,
-          currentZone: p.currentZone || p.location || 'Tower Core',
-          presenceState: p.presenceState || 'MOVING',
+          hardhatTagId: p.hardhatTagId || p.tagId || p.TagID || id,
+          currentZone: zone,
+          presenceState: 'IDLE',
           dwellTime: p.dwellTime || 0,
-          x: finalX,
-          y: finalY,
+          x,
+          y,
           rssi: p.rssi || -65,
           battery: p.battery || 90,
           lastSeen: p.lastSeen ? new Date(p.lastSeen) : new Date(),
-          trail: p.trail || [{ x: finalX, y: finalY }]
+          trail: []
         };
       });
-      setPeople(loadedPeople);
+
+      // Include allowed and verified site visitors on the live tracking map
+      const activeVisitors: Person[] = (visitorsRes.status === 'fulfilled' && Array.isArray(visitorsRes.value))
+        ? visitorsRes.value
+            .filter((v: any) => {
+              if (!v) return false;
+              const status = (v.status || '').trim();
+              const idStatus = (v.idVerificationStatus || '').toUpperCase();
+
+              // Block pending approval, denied, rejected, departed, blacklisted, or failed ID visitors
+              if (status === 'Pending Approval' || status === 'Denied' || status === 'Rejected' || status === 'Completed' || status === 'Blacklisted' || status === 'Departed') {
+                return false;
+              }
+              if (idStatus === 'FAILED' || idStatus === 'REJECTED') {
+                return false;
+              }
+
+              // Allowed if active, checked-in, overstayed on site, or approved with verified ID
+              if (status === 'Active' || status === 'Checked-in' || status === 'Overstayed') {
+                return idStatus !== 'FAILED';
+              }
+              if (status === 'Approved' && (idStatus === 'VERIFIED' || v.tag)) {
+                return true;
+              }
+              return false;
+            })
+            .map((v: any, vIdx: number) => {
+              const zone = v.location || 'Site Command HQ';
+              const defaultPoint = SITE_ZONE_WAYPOINTS[3]; // Site Command HQ
+              const x = typeof v.x === 'number' ? v.x : defaultPoint.x;
+              const y = typeof v.y === 'number' ? v.y : defaultPoint.y;
+
+              return {
+                id: v.id || `VIS-${vIdx + 880}`,
+                name: `${v.name} (Visitor)`,
+                role: 'Visitor',
+                tradeCompany: v.company || 'Auditor / Guest',
+                ppeStatus: 'COMPLIANT' as const,
+                shiftStatus: 'ON_SITE' as const,
+                trainingStatus: 'COMPLIANT' as const,
+                hardhatTagId: v.tag || `VIS-TAG-${v.id || vIdx}`,
+                currentZone: zone,
+                presenceState: 'IDLE' as const,
+                dwellTime: v.duration ? parseInt(v.duration) || 25 : 25,
+                x,
+                y,
+                rssi: -58,
+                battery: 98,
+                lastSeen: v.arrivalTime ? new Date(v.arrivalTime) : new Date(),
+                trail: []
+              };
+            })
+        : [];
+
+      setPeople(prev => {
+        const existingMap = new Map((prev || []).map(p => [p.id, p]));
+        const combined = [...loadedPeople, ...activeVisitors];
+
+        return combined.map(item => {
+          const existing = existingMap.get(item.id);
+          if (existing) {
+            return {
+              ...existing,
+              name: item.name,
+              role: item.role,
+              tradeCompany: item.tradeCompany,
+              ppeStatus: item.ppeStatus,
+              shiftStatus: item.shiftStatus,
+              trainingStatus: item.trainingStatus
+            };
+          }
+          return item;
+        });
+      });
     } catch (err) {
       console.warn('[TrackingContext] Initial config load error:', err);
       setPeople(DEFAULT_INITIAL_PEOPLE);
@@ -710,18 +776,19 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
       if (personIdx >= 0) {
         const existing = prev[personIdx];
-        const nextPeople = [...prev];
-        nextPeople[personIdx] = {
+        const hasExplicitCoords = tagUpdate.x !== undefined && tagUpdate.y !== undefined;
+        const updatedPerson = {
           ...existing,
           currentZone: matchedZone ? matchedZone.name : locName,
-          x: targetX,
-          y: targetY,
+          x: hasExplicitCoords ? targetX : (existing.x || targetX),
+          y: hasExplicitCoords ? targetY : (existing.y || targetY),
           rssi,
           lastReader: readerId || existing.lastReader,
-          lastSeen: new Date(timestamp),
-          presenceState: 'MOVING',
-          trail: [...(existing.trail || []).slice(-10), { x: targetX, y: targetY }]
+          lastSeen: new Date(timestamp)
         };
+
+        const nextPeople = [...prev];
+        nextPeople[personIdx] = updatedPerson;
         return nextPeople;
       } else {
         const newPerson: Person = {
@@ -734,15 +801,23 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
           trainingStatus: 'COMPLIANT',
           hardhatTagId: tagId,
           currentZone: matchedZone ? matchedZone.name : locName,
-          presenceState: 'MOVING',
+          presenceState: 'IDLE',
           dwellTime: 1,
           x: targetX,
           y: targetY,
           rssi,
           lastReader: readerId,
+          photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=120',
           lastSeen: new Date(timestamp),
           trail: [{ x: targetX, y: targetY }]
         };
+
+        // Persist new RFID worker detection to MongoDB Atlas
+        setDoc(doc(db, 'people', newPerson.id), {
+          ...newPerson,
+          lastSeen: new Date(timestamp).toISOString()
+        }, { merge: true }).catch(() => {});
+
         return [...prev, newPerson];
       }
     });
@@ -846,6 +921,33 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
+    // Real-time MongoDB Atlas Firestore listeners for site assets & infrastructure
+    const unsubAssets = onSnapshot(collection(db, 'assets'), (snap) => {
+      const items: any[] = snap.docs.map(docSnap => docSnap.data());
+      if (items.length > 0) {
+        setAssets(items);
+        localStorage.setItem('gao_db_assets', JSON.stringify(items));
+      }
+    });
+
+    const unsubVehicles = onSnapshot(collection(db, 'vehicles'), (snap) => {
+      const items: any[] = snap.docs.map(docSnap => docSnap.data());
+      if (items.length > 0) {
+        setVehicles(items);
+        localStorage.setItem('gao_db_vehicles', JSON.stringify(items));
+      }
+    });
+
+    const unsubCameras = onSnapshot(collection(db, 'cameras'), (snap) => {
+      const items: any[] = snap.docs.map(docSnap => docSnap.data());
+      if (items.length > 0) setCameras(items);
+    });
+
+    const unsubSensors = onSnapshot(collection(db, 'sensors'), (snap) => {
+      const items: any[] = snap.docs.map(docSnap => docSnap.data());
+      if (items.length > 0) setEnvSensors(items);
+    });
+
     connectWebSocket();
     loadDatabaseConfig();
 
@@ -853,6 +955,10 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       isCleanedUp = true;
       if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
       if (ws) ws.close();
+      unsubAssets();
+      unsubVehicles();
+      unsubCameras();
+      unsubSensors();
     };
   }, [loadDatabaseConfig, handleNormalizedTagUpdate, mode]);
 
@@ -860,163 +966,108 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const pollInterval = setInterval(() => {
       refreshLiveState();
-    }, 4000);
+    }, 5000);
 
     return () => clearInterval(pollInterval);
   }, [refreshLiveState]);
 
-  // Continuous real-time movement and telemetry dynamics engine
+  // 10-second Single-Worker Rotating Movement Engine
+  // 1 worker moves for 10 seconds to a different zone point while all other workers rest (IDLE).
+  // Then the next worker takes their 10-second turn, and so on.
   useEffect(() => {
-    // Corridor waypoints graph connecting zones and RFID reader portals
-    const ZONES_GRAPH: Record<string, { x: number; y: number; corridorHub: { x: number; y: number } }> = {
-      'Excavation Shaft': { x: 28, y: 38, corridorHub: { x: 28, y: 65 } },
-      'Tower Core': { x: 72, y: 45, corridorHub: { x: 72, y: 65 } },
-      'Crane Swing Zone': { x: 88, y: 22, corridorHub: { x: 88, y: 65 } },
-      'High Voltage Area': { x: 53, y: 14, corridorHub: { x: 53, y: 65 } },
-      'Muster Point A': { x: 10, y: 16, corridorHub: { x: 18, y: 65 } },
-      'Site Office': { x: 18, y: 72, corridorHub: { x: 18, y: 65 } },
-      'Material Staging Yard': { x: 48, y: 72, corridorHub: { x: 48, y: 65 } },
-      'Steel Yard': { x: 88, y: 72, corridorHub: { x: 88, y: 65 } }
-    };
+    let activeWorkerIndex = 0;
+    let ticksInCycle = 0;
+    const TICKS_PER_CYCLE = 100; // 100 ticks * 100ms = 10,000ms (10 seconds)
+    let isInitialized = false;
 
-    const ZONE_KEYS = Object.keys(ZONES_GRAPH);
-
-    // Realistic pacing: 1000ms tick with staggered, human-like worker movement
     const moveInterval = setInterval(() => {
+      ticksInCycle += 1;
+      const isNewTurn = ticksInCycle >= TICKS_PER_CYCLE;
+
       setPeople(prevPeople => {
         if (!prevPeople || prevPeople.length === 0) return prevPeople;
 
-        // Count how many workers are currently in transit between zones
-        const activeMoversCount = prevPeople.filter(p => 
-          ((p as any).waypoints && (p as any).waypoints.length > 0) || 
-          p.presenceState === 'MOVING'
-        ).length;
+        if (isNewTurn || !isInitialized) {
+          if (isNewTurn) {
+            ticksInCycle = 0;
+            activeWorkerIndex = (activeWorkerIndex + 1) % prevPeople.length;
+          }
+          isInitialized = true;
+        }
 
-        // Concurrency budget: Only 1 or 2 workers moving simultaneously across site corridors
-        const maxConcurrentMovers = 2;
+        const safeIndex = activeWorkerIndex % prevPeople.length;
 
         return prevPeople.map((p, idx) => {
-          let currX = p.x;
-          let currY = p.y;
+          const isMover = idx === safeIndex;
+
+          if (!isMover) {
+            // Worker is resting in their current zone
+            return {
+              ...p,
+              presenceState: 'IDLE' as const,
+              speed: 0,
+              dwellTime: (p.dwellTime || 0) + 1,
+              lastSeen: new Date()
+            };
+          }
+
+          // Active Mover: At the start of their 10s turn, pick a new destination zone different from current
+          let startX = (p as any).startX;
+          let startY = (p as any).startY;
           let targetX = (p as any).targetX;
           let targetY = (p as any).targetY;
-          let waypoints: { x: number; y: number }[] = (p as any).waypoints || [];
-          let idleTicks = (p as any).idleRemaining !== undefined ? (p as any).idleRemaining : (idx * 5 + 8);
-          let currentZone = p.currentZone || 'Tower Core';
+          let targetZone = (p as any).targetZone;
 
-          const hasReachedTarget = targetX === undefined || targetY === undefined || Math.hypot(targetX - currX, targetY - currY) < 0.8;
+          if (ticksInCycle === 1 || startX === undefined || targetX === undefined || !targetZone) {
+            startX = typeof p.x === 'number' ? p.x : 50;
+            startY = typeof p.y === 'number' ? p.y : 50;
 
-          // If reached current waypoint or stationary
-          if (hasReachedTarget) {
-            if (waypoints.length > 0) {
-              // Move to next waypoint in the route
-              const nextWp = waypoints[0];
-              waypoints = waypoints.slice(1);
-              targetX = nextWp.x;
-              targetY = nextWp.y;
-            } else if (idleTicks > 0) {
-              // Worker is currently stationary working/dwelling at their station
-              idleTicks -= 1;
-              targetX = currX;
-              targetY = currY;
-            } else if (activeMoversCount < maxConcurrentMovers && Math.random() < 0.25) {
-              // Worker finished task and is selected to move to a new zone
-              const otherZones = ZONE_KEYS.filter(z => z !== currentZone);
-              const nextZone = otherZones[Math.floor(Math.random() * otherZones.length)] || currentZone;
-              const srcInfo = ZONES_GRAPH[currentZone] || ZONES_GRAPH['Tower Core'];
-              const destInfo = ZONES_GRAPH[nextZone] || ZONES_GRAPH['Tower Core'];
+            const currentZoneName = p.currentZone || '';
+            const eligibleZones = SITE_ZONE_WAYPOINTS.filter(
+              z => z.name.toLowerCase() !== currentZoneName.toLowerCase()
+            );
+            const chosenZone = eligibleZones.length > 0
+              ? eligibleZones[Math.floor(Math.random() * eligibleZones.length)]
+              : SITE_ZONE_WAYPOINTS[Math.floor(Math.random() * SITE_ZONE_WAYPOINTS.length)];
 
-              const destRandomX = destInfo.x + (Math.random() - 0.5) * 5;
-              const destRandomY = destInfo.y + (Math.random() - 0.5) * 5;
-
-              // Route through designated corridor hubs
-              waypoints = [
-                srcInfo.corridorHub,
-                destInfo.corridorHub,
-                { x: destRandomX, y: destRandomY }
-              ];
-              const first = waypoints[0];
-              waypoints = waypoints.slice(1);
-              targetX = first.x;
-              targetY = first.y;
-              currentZone = nextZone;
-              // Reset idle counter for when they arrive at the new zone (15-35s dwell time)
-              idleTicks = Math.floor(Math.random() * 20) + 15;
-            } else {
-              // Remain working in place
-              idleTicks = Math.floor(Math.random() * 12) + 8;
-              targetX = currX;
-              targetY = currY;
-            }
+            // Destination coordinate strictly clamped inside zone boundary box
+            targetZone = chosenZone.name;
+            targetX = Math.round((chosenZone.minX + Math.random() * (chosenZone.maxX - chosenZone.minX)) * 10) / 10;
+            targetY = Math.round((chosenZone.minY + Math.random() * (chosenZone.maxY - chosenZone.minY)) * 10) / 10;
           }
 
-          let isMoving = false;
-          let heading = p.heading || 0;
-          let speed = 0;
-          let nextX = currX;
-          let nextY = currY;
+          // Interpolate progress across the 100 ticks (10.0 seconds)
+          const progress = Math.min(1.0, Math.max(0.0, ticksInCycle / TICKS_PER_CYCLE));
+          // Smooth easeInOut sine interpolation for organic human walking
+          const easeProgress = 0.5 - Math.cos(progress * Math.PI) / 2;
 
-          if (targetX !== undefined && targetY !== undefined) {
-            const dx = targetX - currX;
-            const dy = targetY - currY;
-            const dist = Math.hypot(dx, dy);
+          const currX = startX + (targetX - startX) * easeProgress;
+          const currY = startY + (targetY - startY) * easeProgress;
 
-            if (dist > 0.4) {
-              isMoving = true;
-              // Gentle, realistic human walking step (~ 1.1 m/s)
-              const step = Math.min(0.32, dist);
-              nextX += (dx / dist) * step;
-              nextY += (dy / dist) * step;
-              heading = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360);
-              speed = 1.1;
-            }
-          }
-
-          // Boundary clamping
-          nextX = Math.max(4, Math.min(96, Math.round(nextX * 100) / 100));
-          nextY = Math.max(6, Math.min(94, Math.round(nextY * 100) / 100));
-
-          const currentTrail = p.trail || [];
-          const newTrail = isMoving 
-            ? [...currentTrail.slice(-20), { x: nextX, y: nextY }] 
-            : (currentTrail.length > 10 ? currentTrail.slice(1) : currentTrail);
+          const dx = targetX - startX;
+          const dy = targetY - startY;
+          const heading = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360);
+          const isArrived = progress >= 0.99;
 
           return {
             ...p,
-            x: nextX,
-            y: nextY,
-            currentZone,
+            x: Math.round(currX * 100) / 100,
+            y: Math.round(currY * 100) / 100,
+            startX,
+            startY,
             targetX,
             targetY,
-            waypoints,
-            idleRemaining: idleTicks,
+            targetZone,
+            currentZone: progress >= 0.5 ? targetZone : p.currentZone,
             heading,
-            speed,
-            presenceState: isMoving ? 'MOVING' : 'IDLE',
-            dwellTime: isMoving ? 0 : (p.dwellTime || 0) + 1,
-            lastSeen: new Date(),
-            trail: newTrail
+            speed: isArrived ? 0 : 1.4,
+            presenceState: isArrived ? ('IDLE' as const) : ('MOVING' as const),
+            dwellTime: isArrived ? (p.dwellTime || 0) + 1 : 0,
+            lastSeen: new Date()
           };
         });
       });
-
-      // Smooth realistic construction vehicle movement (slow crawler speed)
-      setVehicles(prevVehicles => {
-        if (!prevVehicles || prevVehicles.length === 0) return prevVehicles;
-        return prevVehicles.map((v, vIdx) => {
-          const speed = 0.25;
-          const t = (Date.now() / 6000 + vIdx * 2.1) % (Math.PI * 2);
-          const nextX = Math.max(10, Math.min(90, v.x + Math.sin(t) * speed));
-          const nextY = Math.max(15, Math.min(85, v.y + Math.cos(t * 0.8) * speed * 0.3));
-          return {
-            ...v,
-            x: Math.round(nextX * 100) / 100,
-            y: Math.round(nextY * 100) / 100,
-            trail: [...(v.trail || []).slice(-10), { x: nextX, y: nextY }]
-          };
-        });
-      });
-    }, 1000);
+    }, 100);
 
     return () => clearInterval(moveInterval);
   }, []);

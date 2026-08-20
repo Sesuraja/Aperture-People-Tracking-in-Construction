@@ -15,242 +15,273 @@ export interface MaterialAsset { id: string; name: string; type: string; x: numb
 export type MapMode = 'standard' | 'bim' | 'satellite' | 'heatmap' | 'coverage' | 'evacuation' | 'asset' | 'hardware' | 'productivity' | 'security' | 'inventory' | 'environment';
 
 export function getBlueprintSvg(projectId: string, title: string, contractor: string, dimensions: string, mode: MapMode = 'standard'): string {
-  // Clean architectural white/light theme CAD blueprint
-  const bgColor = '#f8fafc';
-  const gridColor = 'rgba(100,116,139,0.12)';
-  const subGridColor = 'rgba(100,116,139,0.05)';
-  const lineStroke = '#0284c7';
-  const wallFill = '#ffffff';
-  const wallStroke = '#cbd5e1';
-
   const svg = `
     <svg width="1200" height="800" viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <!-- CAD Grid Patterns -->
-        <pattern id="cadGrid" width="60" height="60" patternUnits="userSpaceOnUse">
-          <path d="M 60 0 L 0 0 0 60" fill="none" stroke="${gridColor}" stroke-width="1"/>
+        <!-- Precision Dot Grid for Open Areas -->
+        <pattern id="dotGrid" width="20" height="20" patternUnits="userSpaceOnUse">
+          <circle cx="2" cy="2" r="1" fill="#cbd5e1" opacity="0.6"/>
         </pattern>
-        <pattern id="cadSubGrid" width="12" height="12" patternUnits="userSpaceOnUse">
-          <path d="M 12 0 L 0 0 0 12" fill="none" stroke="${subGridColor}" stroke-width="0.5"/>
+        <!-- Diagonal Hatches for Hazard Zones -->
+        <pattern id="hatchYellow" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="16" y2="0" stroke="#fef08a" stroke-width="3" opacity="0.7"/>
         </pattern>
-        <!-- Rebar grid for concrete pads -->
-        <pattern id="rebarGrid" width="15" height="15" patternUnits="userSpaceOnUse">
-          <path d="M 15 0 L 0 0 0 15" fill="none" stroke="rgba(2,132,199,0.10)" stroke-width="0.5"/>
+        <pattern id="hatchRed" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="16" y2="0" stroke="#fecdd3" stroke-width="3" opacity="0.7"/>
         </pattern>
-        <!-- Hazard Stripes -->
-        <pattern id="hazardStripes" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <rect width="10" height="20" fill="rgba(239,68,68,0.12)" />
-          <rect x="10" width="10" height="20" fill="rgba(248,250,252,0.6)" />
-        </pattern>
-        <!-- Dirt hatch for Excavation -->
-        <pattern id="dirtHatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
-          <line x1="0" y1="0" x2="0" y2="10" stroke="rgba(217,119,6,0.18)" stroke-width="1.5" />
+        <pattern id="hatchOrange" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="16" y2="0" stroke="#fed7aa" stroke-width="3" opacity="0.7"/>
         </pattern>
       </defs>
-      
-      <!-- Canvas Background -->
-      <rect width="100%" height="100%" fill="${bgColor}"/>
-      <rect width="100%" height="100%" fill="url(#cadSubGrid)"/>
-      <rect width="100%" height="100%" fill="url(#cadGrid)"/>
 
-      <!-- ========================================== -->
-      <!-- ACCESS ROADS & VEHICULAR LANES             -->
-      <!-- ========================================== -->
-      <g opacity="0.95">
-        <!-- Main Entrance Road (Clean slate pavement) -->
-        <path d="M 10 520 L 150 520 L 150 780" fill="none" stroke="#e2e8f0" stroke-width="48" stroke-linecap="round" />
-        <path d="M 150 520 L 1180 520" fill="none" stroke="#e2e8f0" stroke-width="40" stroke-linecap="round" />
-        
-        <!-- Road borders -->
-        <path d="M 10 520 L 150 520 L 150 780" fill="none" stroke="#cbd5e1" stroke-width="50" stroke-linecap="round" opacity="0.4" />
-        <path d="M 150 520 L 1180 520" fill="none" stroke="#cbd5e1" stroke-width="42" stroke-linecap="round" opacity="0.4" />
+      <!-- Clean Map Background -->
+      <rect width="100%" height="100%" fill="#f1f5f9"/>
 
-        <!-- Road center dash lines -->
-        <path d="M 10 520 L 150 520 L 150 780" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="10,10" stroke-linecap="round" />
-        <path d="M 150 520 L 1180 520" fill="none" stroke="#f59e0b" stroke-width="2" stroke-dasharray="10,10" stroke-linecap="round" />
-        
-        <!-- Road Label Text -->
-        <text x="80" y="505" font-family="sans-serif" font-size="9" font-weight="900" fill="#475569" letter-spacing="1">MAIN ENTERPRISE ROUTE</text>
-        <text x="400" y="535" font-family="sans-serif" font-size="9" font-weight="900" fill="#475569" letter-spacing="1">HEAVY TRUCK ACCESS CORRIDOR</text>
+      <!-- Roadways Network (Corridors between 3x3 zones) -->
+      <!-- Perimeter Road -->
+      <rect x="25" y="20" width="1150" height="740" rx="30" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1.5"/>
+      <!-- Inner Island clearing -->
+      <rect x="65" y="55" width="1070" height="670" rx="16" fill="#f8fafc"/>
+
+      <!-- Horizontal Road Corridors -->
+      <rect x="25" y="245" width="1150" height="48" fill="#e2e8f0"/>
+      <rect x="25" y="485" width="1150" height="48" fill="#e2e8f0"/>
+
+      <!-- Vertical Road Corridors -->
+      <rect x="375" y="20" width="50" height="740" fill="#e2e8f0"/>
+      <rect x="765" y="20" width="50" height="740" fill="#e2e8f0"/>
+
+      <!-- Road Dashed Centerlines -->
+      <g stroke="#ffffff" stroke-width="2.5" stroke-dasharray="10,8" opacity="0.9">
+        <!-- Horizontal Centerlines -->
+        <line x1="35" y1="269" x2="1165" y2="269"/>
+        <line x1="35" y1="509" x2="1165" y2="509"/>
+        <!-- Vertical Centerlines -->
+        <line x1="400" y1="30" x2="400" y2="750"/>
+        <line x1="790" y1="30" x2="790" y2="750"/>
+        <!-- Outer Perimeter Centerlines -->
+        <rect x="42" y="36" width="1116" height="708" rx="22" fill="none" stroke="#64748b" stroke-width="1.8" stroke-dasharray="8,6" opacity="0.6"/>
       </g>
 
-      <!-- ========================================== -->
-      <!-- SITE AREA 1: MUSTER ASSEMBLY POINT         -->
-      <!-- (Corresponds to: Muster Point A)          -->
-      <!-- ========================================== -->
-      <g>
-        <rect x="24" y="80" width="96" height="96" rx="12" fill="#ecfdf5" stroke="#10b981" stroke-width="2.5" />
-        <rect x="28" y="84" width="88" height="88" rx="8" fill="none" stroke="rgba(16,185,129,0.15)" stroke-width="6" stroke-dasharray="4,8" />
-        <!-- Green muster point symbol -->
-        <circle cx="72" cy="120" r="18" fill="#10b981" />
-        <circle cx="72" cy="120" r="8" fill="#ffffff" />
-        <text x="72" y="162" text-anchor="middle" font-family="sans-serif" font-size="9" font-weight="900" fill="#065f46" letter-spacing="0.5">MUSTER POINT A</text>
-        <text x="72" y="98" text-anchor="middle" font-family="sans-serif" font-size="7.5" font-weight="bold" fill="#059669">SAFE ZONE</text>
-      </g>
+      <!-- ================= 3x3 ZONE CARDS ================= -->
 
-      <!-- ========================================== -->
-      <!-- SITE AREA 2: DEEP EXCAVATION PIT SHAFT     -->
-      <!-- (Corresponds to: Excavation Shaft)        -->
-      <!-- ========================================== -->
-      <g>
-        <!-- Outer Boundary -->
-        <rect x="120" y="120" width="408" height="496" rx="16" fill="#fef3c7" stroke="#d97706" stroke-width="2.5" stroke-dasharray="6,4" />
-        <rect x="120" y="120" width="408" height="496" rx="16" fill="url(#dirtHatch)" />
-        
-        <!-- Excavation Stepped Rings -->
-        <rect x="150" y="150" width="348" height="436" rx="12" fill="#fef9c3" stroke="rgba(217,119,6,0.4)" stroke-width="2" />
-        <rect x="180" y="180" width="288" height="376" rx="8" fill="#fffbeb" stroke="rgba(217,119,6,0.3)" stroke-width="2" />
-        <rect x="210" y="210" width="228" height="316" rx="6" fill="#ffffff" stroke="rgba(217,119,6,0.25)" stroke-width="1.5" />
-        
-        <!-- Labels -->
-        <rect x="230" y="340" width="188" height="56" rx="8" fill="#ffffff" stroke="#d97706" stroke-width="1.5" filter="drop-shadow(0 2px 4px rgba(0,0,0,0.06))" />
-        <text x="324" y="358" text-anchor="middle" font-family="sans-serif" font-size="10" font-weight="900" fill="#92400e">EXCAVATION PIT</text>
-        <text x="324" y="372" text-anchor="middle" font-family="sans-serif" font-size="8" font-weight="bold" fill="#b45309">ELEV: -14.50 METERS</text>
-        <text x="324" y="384" text-anchor="middle" font-family="sans-serif" font-size="7" font-weight="bold" fill="#64748b">SHORING & PILING MONITORED</text>
-        
-        <text x="140" y="142" font-family="sans-serif" font-size="9" font-weight="900" fill="#92400e" letter-spacing="0.5">⚠️ HAZARD SHAFT PERIMETER</text>
-      </g>
-
-      <!-- ========================================== -->
-      <!-- SITE AREA 3: BUILDING A (TOWER CORE)       -->
-      <!-- (Corresponds to: Tower Core / Building A)  -->
-      <!-- ========================================== -->
-      <g>
-        <!-- Main Foundation Slab Footprint -->
-        <rect x="612" y="200" width="384" height="400" rx="20" fill="#f0f9ff" stroke="#0284c7" stroke-width="3" />
-        <rect x="612" y="200" width="384" height="400" rx="20" fill="url(#rebarGrid)" />
-        
-        <!-- Outer Concrete Shear Walls -->
-        <rect x="650" y="240" width="308" height="320" rx="10" fill="#ffffff" stroke="#0284c7" stroke-width="3.5" />
-        
-        <!-- Internal Columns & Structural Grid Matrix -->
-        <g stroke="#0284c7" stroke-width="1.2" opacity="0.35">
-          <line x1="650" y1="320" x2="958" y2="320" stroke-dasharray="4,4" />
-          <line x1="650" y1="400" x2="958" y2="400" stroke-dasharray="4,4" />
-          <line x1="650" y1="480" x2="958" y2="480" stroke-dasharray="4,4" />
-          
-          <line x1="727" y1="240" x2="727" y2="560" stroke-dasharray="4,4" />
-          <line x1="804" y1="240" x2="804" y2="560" stroke-dasharray="4,4" />
-          <line x1="881" y1="240" x2="881" y2="560" stroke-dasharray="4,4" />
+      <!-- ZONE 1 (Row 1, Col 1): MATERIAL STORAGE -->
+      <g id="zone-svg-material-storage">
+        <rect x="80" y="65" width="280" height="170" rx="18" fill="#fefce8" stroke="#eab308" stroke-width="2.5" stroke-dasharray="7,5"/>
+        <rect x="80" y="65" width="280" height="170" rx="18" fill="url(#hatchYellow)"/>
+        <!-- Card Icon & Hazard -->
+        <g transform="translate(220, 105)" fill="none" stroke="#ca8a04" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M 0 0 L -12 -8 L -12 -20 L 0 -12 L 12 -20 L 12 -8 Z"/>
+          <path d="M 0 -12 L 0 0"/>
         </g>
-        
-        <!-- Heavy Structural Column Footings -->
-        <g fill="#0284c7" opacity="0.85">
-          <rect x="717" y="310" width="20" height="20" rx="3" />
-          <rect x="794" y="310" width="20" height="20" rx="3" />
-          <rect x="871" y="310" width="20" height="20" rx="3" />
-          <rect x="717" y="390" width="20" height="20" rx="3" />
-          <rect x="794" y="390" width="20" height="20" rx="3" />
-          <rect x="871" y="390" width="20" height="20" rx="3" />
-          <rect x="717" y="470" width="20" height="20" rx="3" />
-          <rect x="794" y="470" width="20" height="20" rx="3" />
-          <rect x="871" y="470" width="20" height="20" rx="3" />
+        <text x="220" y="150" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#a16207" letter-spacing="1">MATERIAL STORAGE</text>
+        <text x="220" y="185" text-anchor="middle" font-family="system-ui, sans-serif" font-size="9" font-weight="bold" fill="#ca8a04">Risk: Falling Objects</text>
+      </g>
+
+      <!-- ZONE 2 (Row 1, Col 2): STRUCTURE WORK AREA -->
+      <g id="zone-svg-structure-work">
+        <rect x="440" y="65" width="310" height="170" rx="18" fill="#faf5ff" stroke="#a855f7" stroke-width="2.5" stroke-dasharray="7,5"/>
+        <!-- Scaffolding Icon -->
+        <g transform="translate(595, 110)" stroke="#9333ea" stroke-width="2.2" stroke-linecap="round">
+          <line x1="-16" y1="-20" x2="-16" y2="10"/>
+          <line x1="16" y1="-20" x2="16" y2="10"/>
+          <line x1="-16" y1="-20" x2="16" y2="-20"/>
+          <line x1="-16" y1="-5" x2="16" y2="-5"/>
+          <line x1="-16" y1="10" x2="16" y2="10"/>
+          <line x1="-16" y1="-20" x2="16" y2="-5"/>
+          <line x1="-16" y1="-5" x2="16" y2="10"/>
         </g>
-
-        <!-- Elevator core shaft wells -->
-        <rect x="764" y="250" width="80" height="40" rx="4" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" />
-        
-        <text x="804" y="232" text-anchor="middle" font-family="sans-serif" font-size="11" font-weight="900" fill="#0369a1">BUILDING A (CORE TOWER)</text>
-        <text x="804" y="415" text-anchor="middle" font-family="sans-serif" font-size="8" font-weight="bold" fill="#0284c7">LEVEL 7 - REINFORCING ACTIVE</text>
-        <text x="804" y="430" text-anchor="middle" font-family="sans-serif" font-size="7" font-weight="bold" fill="#64748b">88.00m SITE SPAN GRID</text>
+        <text x="595" y="150" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#7e22ce" letter-spacing="1">STRUCTURE WORK AREA</text>
+        <!-- Safe Zone Badge -->
+        <rect x="555" y="172" width="80" height="18" rx="4" fill="#f3e8ff"/>
+        <text x="595" y="185" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#9333ea">Safe Zone</text>
       </g>
 
-      <!-- ========================================== -->
-      <!-- SITE AREA 4: CRANE SWING & RESTRICTED AREA -->
-      <!-- (Corresponds to: Crane Swing Zone)         -->
-      <!-- ========================================== -->
-      <g>
-        <!-- Boundary Box -->
-        <rect x="960" y="40" width="192" height="336" rx="16" fill="#fff1f2" stroke="#ef4444" stroke-width="2" stroke-dasharray="8,4" />
-        
-        <!-- Large Transparent Crane Jib Swing Circle -->
-        <circle cx="1040" cy="190" r="140" fill="url(#hazardStripes)" stroke="#ef4444" stroke-width="1.5" stroke-dasharray="4,4" />
-        
-        <!-- Structural Yellow Lattice Crane Base -->
-        <rect x="1025" y="175" width="30" height="30" rx="4" fill="#fbbf24" stroke="#d97706" stroke-width="2" />
-        
-        <!-- Crane Jib Slewing Ring Assembly & Long Slewing Arm Jib Line -->
-        <circle cx="1040" cy="190" r="6" fill="#ffffff" stroke="#d97706" stroke-width="2.5" />
-        <line x1="1040" y1="190" x2="940" y2="100" stroke="#f59e0b" stroke-width="3.5" stroke-linecap="round" />
-        <line x1="1040" y1="190" x2="1080" y2="226" stroke="#f59e0b" stroke-width="3" stroke-linecap="round" />
-        <rect x="1074" y="220" width="12" height="12" rx="2" fill="#d97706" />
-
-        <text x="1040" y="354" text-anchor="middle" font-family="sans-serif" font-size="10" font-weight="900" fill="#dc2626">CRANE SWING ZONE</text>
-        <text x="1040" y="62" text-anchor="middle" font-family="sans-serif" font-size="7" font-weight="bold" fill="#ef4444">CRITICAL DANGER ZONE</text>
-        <text x="1040" y="130" text-anchor="middle" font-family="sans-serif" font-size="7" font-weight="bold" fill="#b45309">CRANE T1 ACTIVE</text>
+      <!-- ZONE 3 (Row 1, Col 3): CRANE OPERATING ZONE -->
+      <g id="zone-svg-crane-operating">
+        <rect x="830" y="65" width="290" height="170" rx="18" fill="#fff1f2" stroke="#f43f5e" stroke-width="2.5" stroke-dasharray="7,5"/>
+        <rect x="830" y="65" width="290" height="170" rx="18" fill="url(#hatchRed)"/>
+        <!-- Tower Crane Icon -->
+        <g transform="translate(975, 110)" stroke="#e11d48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <line x1="-25" y1="-18" x2="25" y2="-18"/>
+          <line x1="-5" y1="-18" x2="-5" y2="10"/>
+          <line x1="5" y1="-18" x2="5" y2="10"/>
+          <line x1="-25" y1="-18" x2="0" y2="-30"/>
+          <line x1="0" y1="-30" x2="18" y2="-18"/>
+          <circle cx="15" cy="-8" r="4" fill="#e11d48"/>
+          <!-- Warning Triangle -->
+          <polygon points="26,2 34,16 18,16" stroke="#e11d48" stroke-width="1.5" fill="#fff1f2"/>
+        </g>
+        <text x="975" y="150" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#be123c" letter-spacing="1">CRANE OPERATING ZONE</text>
+        <text x="975" y="185" text-anchor="middle" font-family="system-ui, sans-serif" font-size="9" font-weight="bold" fill="#e11d48">Risk: Overhead Load</text>
       </g>
 
-      <!-- ========================================== -->
-      <!-- COMPACT SECONDARY AREAS                    -->
-      <!-- ========================================== -->
-      
-      <!-- 1. Site Admin Offices -->
-      <g>
-        <rect x="140" y="640" width="130" height="90" rx="6" fill="#eff6ff" stroke="#3b82f6" stroke-width="2" />
-        <line x1="180" y1="640" x2="180" y2="730" stroke="#3b82f6" stroke-width="1" stroke-dasharray="3,3" />
-        <line x1="225" y1="640" x2="225" y2="730" stroke="#3b82f6" stroke-width="1" stroke-dasharray="3,3" />
-        <text x="205" y="688" text-anchor="middle" font-family="sans-serif" font-size="9" font-weight="900" fill="#1d4ed8">SITE OFFICE</text>
-        <text x="205" y="704" text-anchor="middle" font-family="sans-serif" font-size="7" font-weight="bold" fill="#3b82f6">HQ & COMMAND</text>
-      </g>
-      
-      <!-- 2. Vehicle Parking Bay Area -->
-      <g>
-        <rect x="24" y="640" width="96" height="96" rx="6" fill="#f8fafc" stroke="#94a3b8" stroke-width="1.5" />
-        <line x1="24" y1="664" x2="120" y2="664" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,2" />
-        <line x1="24" y1="688" x2="120" y2="688" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,2" />
-        <line x1="24" y1="712" x2="120" y2="712" stroke="#94a3b8" stroke-width="1" stroke-dasharray="4,2" />
-        <text x="72" y="654" text-anchor="middle" font-family="sans-serif" font-size="8" font-weight="900" fill="#475569">PARKING</text>
-        <text x="72" y="726" text-anchor="middle" font-family="sans-serif" font-size="6.5" font-weight="bold" fill="#64748b">14 VEHICLES MAX</text>
-      </g>
-      
-      <!-- 3. Material Staging Area -->
-      <g>
-        <rect x="480" y="640" width="180" height="90" rx="8" fill="#faf5ff" stroke="#8b5cf6" stroke-width="1.5" />
-        <rect x="492" y="652" width="48" height="20" rx="2" fill="#c084fc" opacity="0.5" stroke="#8b5cf6" stroke-width="1" />
-        <rect x="492" y="682" width="48" height="20" rx="2" fill="#60a5fa" opacity="0.5" stroke="#3b82f6" stroke-width="1" />
-        <rect x="552" y="652" width="48" height="20" rx="2" fill="#34d399" opacity="0.5" stroke="#10b981" stroke-width="1" />
-        <rect x="552" y="682" width="48" height="20" rx="2" fill="#fbbf24" opacity="0.5" stroke="#f59e0b" stroke-width="1" />
-        
-        <text x="618" y="700" font-family="sans-serif" font-size="9" font-weight="900" fill="#6b21a8">MATERIAL</text>
-        <text x="618" y="712" font-family="sans-serif" font-size="9" font-weight="900" fill="#6b21a8">STAGING</text>
-        <text x="570" y="648" text-anchor="middle" font-family="sans-serif" font-size="7" font-weight="bold" fill="#7c3aed">YARD B</text>
+      <!-- ZONE 4 (Row 2, Col 1): SITE OFFICE -->
+      <g id="zone-svg-site-office">
+        <rect x="80" y="305" width="280" height="170" rx="18" fill="#f0f9ff" stroke="#0284c7" stroke-width="2.5" stroke-dasharray="7,5"/>
+        <!-- Office Window Icon -->
+        <g transform="translate(220, 345)" fill="#0284c7" stroke="#0284c7">
+          <rect x="-12" y="-12" width="10" height="10" rx="1"/>
+          <rect x="2" y="-12" width="10" height="10" rx="1"/>
+          <rect x="-12" y="2" width="10" height="10" rx="1"/>
+          <rect x="2" y="2" width="10" height="10" rx="1"/>
+        </g>
+        <text x="220" y="388" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#0369a1" letter-spacing="1">SITE OFFICE</text>
+        <!-- Safe Zone Badge -->
+        <rect x="180" y="412" width="80" height="18" rx="4" fill="#e0f2fe"/>
+        <text x="220" y="425" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#0284c7">Safe Zone</text>
       </g>
 
-      <!-- 4. Steel Storage Yard -->
-      <g>
-        <rect x="820" y="620" width="180" height="90" rx="8" fill="#fffbeb" stroke="#f59e0b" stroke-width="1.5" />
-        <line x1="840" y1="645" x2="900" y2="645" stroke="#d97706" stroke-width="4" stroke-linecap="round" opacity="0.9" />
-        <line x1="840" y1="655" x2="900" y2="655" stroke="#d97706" stroke-width="4" stroke-linecap="round" opacity="0.9" />
-        <line x1="840" y1="665" x2="900" y2="665" stroke="#d97706" stroke-width="4" stroke-linecap="round" opacity="0.9" />
-        <line x1="840" y1="675" x2="900" y2="675" stroke="#d97706" stroke-width="4" stroke-linecap="round" opacity="0.9" />
-        
-        <rect x="912" y="640" width="76" height="40" rx="4" fill="#ffffff" stroke="#f59e0b" stroke-width="1" />
-        <text x="950" y="656" text-anchor="middle" font-family="sans-serif" font-size="8" font-weight="900" fill="#b45309">STEEL</text>
-        <text x="950" y="670" text-anchor="middle" font-family="sans-serif" font-size="8" font-weight="900" fill="#b45309">YARD</text>
-        <text x="910" y="632" text-anchor="middle" font-family="sans-serif" font-size="7" font-weight="bold" fill="#d97706">ZONE S3</text>
+      <!-- ZONE 5 (Row 2, Col 2): OPEN WORK AREA -->
+      <g id="zone-svg-open-work">
+        <rect x="440" y="305" width="310" height="170" rx="18" fill="#ffffff" stroke="#94a3b8" stroke-width="2.5" stroke-dasharray="7,5"/>
+        <rect x="440" y="305" width="310" height="170" rx="18" fill="url(#dotGrid)"/>
+        <!-- Worker Hardhat Silhouette Icon -->
+        <g transform="translate(595, 350)" fill="#475569">
+          <circle cx="0" cy="-6" r="8"/>
+          <path d="M -12 -6 C -12 -12, 12 -12, 12 -6 Z" fill="#64748b"/>
+          <path d="M -14 12 C -14 4, 14 4, 14 12 Z"/>
+        </g>
+        <text x="595" y="388" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#334155" letter-spacing="1">OPEN WORK AREA</text>
+        <!-- Safe Zone Badge -->
+        <rect x="555" y="412" width="80" height="18" rx="4" fill="#f1f5f9"/>
+        <text x="595" y="425" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#64748b">Safe Zone</text>
       </g>
 
-      <!-- ========================================== -->
-      <!-- TECHNICAL DIMENSION LINES                  -->
-      <!-- ========================================== -->
-      <g stroke="#64748b" stroke-width="0.8" opacity="0.5" font-family="sans-serif" font-size="8" fill="#475569">
-        <line x1="16" y1="20" x2="16" y2="780" stroke-dasharray="2,4" />
-        <line x1="1184" y1="20" x2="1184" y2="780" stroke-dasharray="2,4" />
-        
-        <line x1="16" y1="40" x2="1184" y2="40" />
-        <text x="600" y="34" text-anchor="middle" font-weight="bold" letter-spacing="1">SITE HORIZONTAL MATRIX: 250 METERS</text>
-        
-        <line x1="20" y1="760" x2="1180" y2="760" stroke-dasharray="8,2" />
-        <text x="600" y="754" text-anchor="middle" font-weight="bold">GAO AUTOMATED RFID TELEMETRY BLUEPRINT</text>
+      <!-- ZONE 6 (Row 2, Col 3): EQUIPMENT PARKING -->
+      <g id="zone-svg-equipment-parking">
+        <rect x="830" y="305" width="290" height="170" rx="18" fill="#fff7ed" stroke="#f97316" stroke-width="2.5" stroke-dasharray="7,5"/>
+        <!-- Excavator Icon -->
+        <g transform="translate(975, 348)" stroke="#ea580c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <rect x="-14" y="0" width="28" height="10" rx="4" fill="#fed7aa"/>
+          <rect x="-10" y="-10" width="14" height="10" rx="2" fill="#fff7ed"/>
+          <path d="M 4 -5 L 18 -16 L 24 -6 L 20 0"/>
+        </g>
+        <text x="975" y="388" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#c2410c" letter-spacing="1">EQUIPMENT PARKING</text>
+        <rect x="925" y="412" width="100" height="18" rx="4" fill="#ffedd5"/>
+        <text x="975" y="425" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8" font-weight="bold" fill="#ea580c">Heavy Equipment Zone</text>
       </g>
 
-      <!-- Compass North Indicator -->
-      <g transform="translate(1140, 720) scale(0.75)">
-        <circle cx="0" cy="0" r="24" fill="#ffffff" stroke="#0284c7" stroke-width="1.5" />
-        <path d="M 0 -20 L 6 0 L 0 4 L -6 0 Z" fill="#0284c7" />
-        <text x="0" y="-26" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="900" fill="#0284c7">N</text>
+      <!-- ZONE 7 (Row 3, Col 1): EXCAVATION AREA -->
+      <g id="zone-svg-excavation-area">
+        <rect x="80" y="545" width="280" height="170" rx="18" fill="#fff1f2" stroke="#f43f5e" stroke-width="2.5" stroke-dasharray="7,5"/>
+        <rect x="80" y="545" width="280" height="170" rx="18" fill="url(#hatchRed)"/>
+        <!-- Shovel & Warning Icon -->
+        <g transform="translate(220, 585)" stroke="#e11d48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M -16 6 L -6 -6 L -2 -2 L -12 10 Z"/>
+          <polygon points="10,-6 18,8 2,8" stroke="#e11d48" stroke-width="1.5" fill="#fff1f2"/>
+        </g>
+        <text x="220" y="628" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#be123c" letter-spacing="1">EXCAVATION AREA</text>
+        <text x="220" y="663" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#e11d48">Risk: Cave-in / Falling Debris</text>
       </g>
 
+      <!-- ZONE 8 (Row 3, Col 2): ASSEMBLY POINT -->
+      <g id="zone-svg-assembly-point">
+        <rect x="440" y="545" width="310" height="170" rx="18" fill="#f0fdf4" stroke="#10b981" stroke-width="2.5" stroke-dasharray="7,5"/>
+        <!-- 3 Gathering People Icon -->
+        <g transform="translate(595, 585)" fill="#059669">
+          <circle cx="0" cy="-6" r="6"/>
+          <path d="M -9 8 C -9 2, 9 2, 9 8 Z"/>
+          <circle cx="-14" cy="-4" r="4.5" opacity="0.8"/>
+          <path d="M -20 8 C -20 3, -8 3, -8 8 Z" opacity="0.8"/>
+          <circle cx="14" cy="-4" r="4.5" opacity="0.8"/>
+          <path d="M 8 8 C 8 3, 20 3, 20 8 Z" opacity="0.8"/>
+        </g>
+        <text x="595" y="628" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#047857" letter-spacing="1">ASSEMBLY POINT</text>
+        <!-- Safe Zone Badge -->
+        <rect x="555" y="652" width="80" height="18" rx="4" fill="#dcfce7"/>
+        <text x="595" y="665" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#059669">Safe Zone</text>
+      </g>
+
+      <!-- ZONE 9 (Row 3, Col 3): HIGH VOLTAGE AREA -->
+      <g id="zone-svg-high-voltage">
+        <rect x="830" y="545" width="290" height="170" rx="18" fill="#fff1f2" stroke="#f43f5e" stroke-width="2.5" stroke-dasharray="7,5"/>
+        <rect x="830" y="545" width="290" height="170" rx="18" fill="url(#hatchRed)"/>
+        <!-- Lightning Bolt Icon -->
+        <g transform="translate(975, 585)">
+          <path d="M 0 -14 L -8 0 L -1 0 L -4 14 L 6 -2 L -1 -2 Z" fill="#e11d48"/>
+          <polygon points="14,-6 22,8 6,8" stroke="#e11d48" stroke-width="1.5" fill="#fff1f2"/>
+        </g>
+        <text x="975" y="628" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#be123c" letter-spacing="1">HIGH VOLTAGE AREA</text>
+        <text x="975" y="663" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#e11d48">Risk: Electrical Hazard</text>
+      </g>
+
+      <!-- ================= ACCESS POINTS (AP1 - AP4) ================= -->
+      <!-- AP1 (Top Center) -->
+      <g transform="translate(575, 14)">
+        <rect x="0" y="0" width="48" height="24" rx="12" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
+        <text x="24" y="16" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#16a34a">AP1</text>
+      </g>
+      <!-- AP2 (Right Center) -->
+      <g transform="translate(1145, 375)">
+        <rect x="0" y="0" width="48" height="24" rx="12" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
+        <text x="24" y="16" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#16a34a">AP2</text>
+      </g>
+      <!-- AP3 (Bottom Center) -->
+      <g transform="translate(525, 742)">
+        <rect x="0" y="0" width="48" height="24" rx="12" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
+        <text x="24" y="16" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#16a34a">AP3</text>
+      </g>
+      <!-- AP4 (Left Center) -->
+      <g transform="translate(15, 375)">
+        <rect x="0" y="0" width="48" height="24" rx="12" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
+        <text x="24" y="16" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#16a34a">AP4</text>
+      </g>
+
+      <!-- ================= READERS (R1 - R6) ================= -->
+      <!-- R1 (Top Road) -->
+      <g transform="translate(290, 16)">
+        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
+        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R1</text>
+      </g>
+      <!-- R2 (Right Top Road) -->
+      <g transform="translate(1155, 260)">
+        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
+        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R2</text>
+      </g>
+      <!-- R3 (Right Bottom Road) -->
+      <g transform="translate(1155, 630)">
+        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
+        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R3</text>
+      </g>
+      <!-- R4 (Bottom Road Center) -->
+      <g transform="translate(425, 744)">
+        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
+        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R4</text>
+      </g>
+      <!-- R5 (Bottom Road Left) -->
+      <g transform="translate(95, 744)">
+        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
+        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R5</text>
+      </g>
+      <!-- R6 (Left Top Road) -->
+      <g transform="translate(15, 260)">
+        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
+        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R6</text>
+      </g>
+
+      <!-- ================= SCALE BAR & NORTH COMPASS ================= -->
+      <g transform="translate(480, 755)" font-family="system-ui, sans-serif" font-size="8" fill="#64748b">
+        <!-- Scale Ruler -->
+        <line x1="120" y1="5" x2="280" y2="5" stroke="#94a3b8" stroke-width="1.5"/>
+        <line x1="120" y1="0" x2="120" y2="10" stroke="#94a3b8" stroke-width="1.5"/>
+        <line x1="160" y1="2" x2="160" y2="8" stroke="#94a3b8" stroke-width="1"/>
+        <line x1="200" y1="0" x2="200" y2="10" stroke="#94a3b8" stroke-width="1.5"/>
+        <line x1="240" y1="2" x2="240" y2="8" stroke="#94a3b8" stroke-width="1"/>
+        <line x1="280" y1="0" x2="280" y2="10" stroke="#94a3b8" stroke-width="1.5"/>
+        <text x="120" y="20" text-anchor="middle">0m</text>
+        <text x="160" y="20" text-anchor="middle">25m</text>
+        <text x="200" y="20" text-anchor="middle">50m</text>
+        <text x="240" y="20" text-anchor="middle">75m</text>
+        <text x="280" y="20" text-anchor="middle">100m</text>
+
+        <!-- North Compass Arrow -->
+        <g transform="translate(100, 6)">
+          <line x1="0" y1="12" x2="0" y2="-10" stroke="#0284c7" stroke-width="1.5"/>
+          <polygon points="0,-12 3,-4 -3,-4" fill="#0284c7"/>
+          <text x="0" y="-15" text-anchor="middle" font-weight="900" fill="#0284c7" font-size="8">N</text>
+        </g>
+      </g>
     </svg>
   `;
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
@@ -285,78 +316,59 @@ export function InteractiveSiteMap({
   };
 
   const isExcavationShaftBreached = getRFIDMarkersInZone('Excavation Shaft').length > 0;
-  const isTowerCoreBreached = getRFIDMarkersInZone('Tower Core').length > 0;
   const isCraneSwingBreached = getRFIDMarkersInZone('Crane Swing Zone').length > 0;
   const isHighVoltageBreached = getRFIDMarkersInZone('High Voltage Area').length > 0;
 
-  const floorTitles: Record<string, string> = {
-    'ALL': 'MASTER SITE COMPOSITE BLUEPRINT — ALL LEVELS',
-    'Floor 1': 'LEVEL 1 — GROUND ACCESS & LOGISTICS PORTAL',
-    'Floor 2': 'LEVEL 2 — 440V SUBSTATION & MEP RISERS',
-    'Floor 3': 'LEVEL 3 — REBAR & CONCRETE POUR SLAB',
-    'Floor 4': 'LEVEL 4 — STEEL FRAMING & INTERIOR RISERS',
-    'Floor 5': 'LEVEL 5 — CURTAIN WALL & FACADE DECK',
-    'Floor 6': 'LEVEL 6 — MECHANICAL PENTHOUSE & CHILLER PLANT',
-    'Floor 7': 'LEVEL 7 — TOWER CORE & 360° CRANE SWING RADIUS'
-  };
-
-  const currentFloorTitle = floorTitles[activeFloor] || `${(activeFloor || 'Level 1').toUpperCase()} ARCHITECTURAL BLUEPRINT`;
-
   return (
-    <svg viewBox="0 0 1200 800" className="absolute inset-0 w-full h-full bg-slate-50 dark:bg-slate-900 select-none">
+    <svg viewBox="0 0 1200 800" className="absolute inset-0 w-full h-full bg-slate-50 select-none">
       <defs>
-        <pattern id="cadGrid" width="60" height="60" patternUnits="userSpaceOnUse">
-          <path d="M 60 0 L 0 0 0 60" fill="none" stroke="rgba(100,116,139,0.12)" strokeWidth="1"/>
+        <pattern id="cadGridMajor" width="80" height="80" patternUnits="userSpaceOnUse">
+          <path d="M 80 0 L 0 0 0 80" fill="none" stroke="rgba(100,116,139,0.18)" strokeWidth="1"/>
         </pattern>
-        <pattern id="cadSubGrid" width="12" height="12" patternUnits="userSpaceOnUse">
-          <path d="M 12 0 L 0 0 0 12" fill="none" stroke="rgba(100,116,139,0.05)" strokeWidth="0.5"/>
+        <pattern id="cadGridMinor" width="20" height="20" patternUnits="userSpaceOnUse">
+          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(100,116,139,0.07)" strokeWidth="0.5"/>
         </pattern>
-        <pattern id="rebarGrid" width="15" height="15" patternUnits="userSpaceOnUse">
-          <path d="M 15 0 L 0 0 0 15" fill="none" stroke="rgba(2,132,199,0.10)" strokeWidth="0.5"/>
+        <pattern id="concreteHatch" width="24" height="24" patternUnits="userSpaceOnUse">
+          <path d="M 0 24 L 24 0 M 0 0 L 24 24" stroke="rgba(2,132,199,0.09)" strokeWidth="0.75"/>
         </pattern>
-        <pattern id="hazardStripes" width="20" height="20" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <rect width="10" height="20" fill="rgba(239,68,68,0.15)" />
-          <rect x="10" width="10" height="20" fill="rgba(248,250,252,0.6)" />
-        </pattern>
-        <pattern id="dirtHatch" width="10" height="10" patternUnits="userSpaceOnUse" patternTransform="rotate(30)">
-          <line x1="0" y1="0" x2="0" y2="10" stroke="rgba(217,119,6,0.18)" strokeWidth="1.5" />
+        <pattern id="earthHatch" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(217,119,6,0.22)" strokeWidth="1.5" strokeDasharray="4,4" />
         </pattern>
       </defs>
 
       <rect width="100%" height="100%" fill="#f8fafc"/>
-      <rect width="100%" height="100%" fill="url(#cadSubGrid)"/>
-      <rect width="100%" height="100%" fill="url(#cadGrid)"/>
+      <rect width="100%" height="100%" fill="url(#cadGridMinor)"/>
+      <rect width="100%" height="100%" fill="url(#cadGridMajor)"/>
 
-      {/* ACCESS ROADS & VEHICULAR LANES */}
-      <g opacity="0.95" className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'road-access',
-            name: 'Heavy Truck Access Route',
-            type: 'IoT Edge Gateway',
-            location: 'Main Logistics Gate',
-            status: 'Online',
-            occupancy: 'Unrestricted',
-            x: 10,
-            y: 52
-          }
-        });
-      }}>
-        <path d="M 10 520 L 150 520 L 150 780" fill="none" stroke="#cbd5e1" strokeWidth="52" strokeLinecap="round" />
-        <path d="M 150 520 L 1180 520" fill="none" stroke="#cbd5e1" strokeWidth="44" strokeLinecap="round" />
-        <path d="M 10 520 L 150 520 L 150 780" fill="none" stroke="#e2e8f0" strokeWidth="48" strokeLinecap="round" />
-        <path d="M 150 520 L 1180 520" fill="none" stroke="#e2e8f0" strokeWidth="40" strokeLinecap="round" />
-        
-        <path d="M 10 520 L 150 520 L 150 780" fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="10,10" strokeLinecap="round" opacity="0.9" />
-        <path d="M 150 520 L 1180 520" fill="none" stroke="#f59e0b" strokeWidth="2" strokeDasharray="10,10" strokeLinecap="round" opacity="0.9" />
-        
-        <text x="80" y="505" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#475569" letterSpacing="1">MAIN ENTERPRISE ROUTE</text>
-        <text x="400" y="535" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#475569" letterSpacing="1">HEAVY TRUCK ACCESS CORRIDOR</text>
+      {/* Outer Engineering CAD Dashed Perimeter */}
+      <rect x="55" y="35" width="1090" height="730" rx="4" fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="14,8"/>
+      <rect x="62" y="42" width="1076" height="716" rx="2" fill="none" stroke="#e2e8f0" strokeWidth="1"/>
+
+      {/* Grid Axis Coordinate Bubble Markers (Top 01-08) */}
+      <g fontFamily="'JetBrains Mono', monospace" fontSize="9" fontWeight="bold" fill="#0284c7">
+        {[
+          { x: 130, label: '01' }, { x: 250, label: '02' }, { x: 380, label: '03' }, { x: 510, label: '04' },
+          { x: 640, label: '05' }, { x: 770, label: '06' }, { x: 900, label: '07' }, { x: 1010, label: '08' }, { x: 1100, label: '09' }
+        ].map(a => (
+          <g key={`axis-x-${a.label}`}>
+            <line x1={a.x} y1={42} x2={a.x} y2={758} stroke="rgba(56,189,248,0.2)" strokeDasharray="4,6" strokeWidth={0.8}/>
+            <circle cx={a.x} cy={35} r={10} fill="#ffffff" stroke="#38bdf8" strokeWidth={1.6}/>
+            <text x={a.x} y={38.5} textAnchor="middle">{a.label}</text>
+          </g>
+        ))}
+        {[
+          { y: 110, label: 'A' }, { y: 230, label: 'B' }, { y: 350, label: 'C' },
+          { y: 470, label: 'D' }, { y: 590, label: 'E' }, { y: 700, label: 'F' }
+        ].map(b => (
+          <g key={`axis-y-${b.label}`}>
+            <line x1={62} y1={b.y} x2={1138} y2={b.y} stroke="rgba(56,189,248,0.2)" strokeDasharray="4,6" strokeWidth={0.8}/>
+            <circle cx={55} cy={b.y} r={10} fill="#ffffff" stroke="#38bdf8" strokeWidth={1.6}/>
+            <text x={55} y={b.y + 3.5} textAnchor="middle">{b.label}</text>
+          </g>
+        ))}
       </g>
 
-      {/* MUSTER ASSEMBLY POINT A */}
+      {/* MUSTER POINT A (Top Left) */}
       <g className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
         e.stopPropagation();
         onSelectEntity?.({
@@ -373,150 +385,17 @@ export function InteractiveSiteMap({
           }
         });
       }}>
-        <rect x="24" y="80" width="96" height="96" rx="12" fill="#ecfdf5" stroke="#10b981" strokeWidth="2.5" />
-        <rect x="28" y="84" width="88" height="88" rx="8" fill="none" stroke="rgba(16,185,129,0.15)" strokeWidth="6" strokeDasharray="4,8" />
-        <circle cx="72" cy="120" r="18" fill="#10b981" />
-        <circle cx="72" cy="120" r="8" fill="#ffffff" />
-        <text x="72" y="162" textAnchor="middle" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#065f46" letterSpacing="0.5">MUSTER POINT A</text>
-        <text x="72" y="98" textAnchor="middle" fontFamily="sans-serif" fontSize="7.5" fontWeight="bold" fill="#059669">SAFE ZONE</text>
+        <rect x="80" y="90" width="100" height="115" rx="14" fill="#f0fdf4" stroke="#10b981" strokeWidth="2.5" />
+        <rect x="86" y="96" width="88" height="88" rx="10" fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4,4" opacity="0.6" />
+        <circle cx="130" cy="140" r="18" fill="#10b981" />
+        <circle cx="130" cy="140" r="9" fill="#ffffff" />
+        <circle cx="130" cy="140" r="4" fill="#10b981" />
+        <line x1="130" y1="116" x2="130" y2="164" stroke="#10b981" strokeWidth="1.8"/>
+        <line x1="106" y1="140" x2="154" y2="140" stroke="#10b981" strokeWidth="1.8"/>
+        <text x="130" y="195" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill="#047857" letterSpacing="0.5">MUSTER POINT A</text>
       </g>
 
-      {/* DEEP EXCAVATION PIT SHAFT */}
-      <g className="transition-all cursor-pointer group" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'zone-excavation-shaft',
-            name: 'Deep Excavation Pit Shaft',
-            type: 'IoT Edge Gateway',
-            location: 'Central West Sector',
-            status: isExcavationShaftBreached ? 'Warning' : 'Online',
-            occupancy: `${getRFIDMarkersInZone('Excavation Shaft').length} Entities`,
-            x: 10,
-            y: 15
-          }
-        });
-      }}>
-        <rect x="120" y="120" width="408" height="496" rx="16" fill="#fef3c7" stroke={isExcavationShaftBreached ? '#ef4444' : '#d97706'} strokeWidth="2.5" strokeDasharray="6,4" className="transition-colors duration-300" />
-        <rect x="120" y="120" width="408" height="496" rx="16" fill="url(#dirtHatch)" />
-        
-        <rect x="150" y="150" width="348" height="436" rx="12" fill="#fef9c3" stroke={isExcavationShaftBreached ? 'rgba(239,68,68,0.5)' : 'rgba(217,119,6,0.4)'} strokeWidth="2" />
-        <rect x="180" y="180" width="288" height="376" rx="8" fill="#fffbeb" stroke="rgba(217,119,6,0.3)" strokeWidth="2" />
-        <rect x="210" y="210" width="228" height="316" rx="6" fill="#ffffff" stroke="rgba(217,119,6,0.25)" strokeWidth="1.5" />
-        
-        <line x1="324" y1="120" x2="324" y2="210" stroke="#94a3b8" strokeWidth="2.5" />
-        <line x1="324" y1="616" x2="324" y2="526" stroke="#94a3b8" strokeWidth="2.5" />
-        <line x1="120" y1="368" x2="210" y2="368" stroke="#94a3b8" strokeWidth="2.5" />
-        <line x1="528" y1="368" x2="438" y2="368" stroke="#94a3b8" strokeWidth="2.5" />
-
-        {isExcavationShaftBreached && (
-          <rect x="120" y="120" width="408" height="496" rx="16" fill="rgba(239, 68, 68, 0.12)" />
-        )}
-
-        <rect x="230" y="340" width="188" height="56" rx="8" fill="#ffffff" stroke={isExcavationShaftBreached ? '#ef4444' : '#d97706'} strokeWidth="1.5" />
-        <text x="324" y="358" textAnchor="middle" fontFamily="sans-serif" fontSize="10" fontWeight="900" fill={isExcavationShaftBreached ? '#dc2626' : '#92400e'}>
-          {isExcavationShaftBreached ? "🚨 SHAFT OCCUPIED" : "EXCAVATION PIT"}
-        </text>
-        <text x="324" y="372" textAnchor="middle" fontFamily="sans-serif" fontSize="8" fontWeight="bold" fill="#b45309">ELEV: -14.50 METERS</text>
-        <text x="324" y="384" textAnchor="middle" fontFamily="sans-serif" fontSize="7" fontWeight="bold" fill="#64748b">RFID GEOMATRIX CALIBRATED</text>
-        <text x="140" y="142" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#92400e" letterSpacing="0.5">⚠️ EXCAVATION PERIMETER</text>
-      </g>
-
-      {/* BUILDING A (TOWER CORE) */}
-      <g className="transition-all cursor-pointer group" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'zone-building-a',
-            name: 'Building A (Core Tower Structure)',
-            type: 'IoT Edge Gateway',
-            location: 'Central East Sector',
-            status: 'Online',
-            occupancy: `${getRFIDMarkersInZone('Tower Core').length} Onsite`,
-            x: 51,
-            y: 25
-          }
-        });
-      }}>
-        <rect x="612" y="200" width="384" height="400" rx="20" fill="#f0f9ff" stroke="#0284c7" strokeWidth="3" />
-        <rect x="612" y="200" width="384" height="400" rx="20" fill="url(#rebarGrid)" />
-        
-        <rect x="650" y="240" width="308" height="320" rx="10" fill="#ffffff" stroke="#0284c7" strokeWidth="3.5" />
-        
-        <g stroke="#0284c7" strokeWidth="1.2" opacity="0.35">
-          <line x1="650" y1="320" x2="958" y2="320" strokeDasharray="4,4" />
-          <line x1="650" y1="400" x2="958" y2="400" strokeDasharray="4,4" />
-          <line x1="650" y1="480" x2="958" y2="480" strokeDasharray="4,4" />
-          
-          <line x1="727" y1="240" x2="727" y2="560" strokeDasharray="4,4" />
-          <line x1="804" y1="240" x2="804" y2="560" strokeDasharray="4,4" />
-          <line x1="881" y1="240" x2="881" y2="560" strokeDasharray="4,4" />
-        </g>
-        
-        <g fill="#0284c7" opacity="0.85">
-          <rect x="717" y="310" width="20" height="20" rx="3" />
-          <rect x="794" y="310" width="20" height="20" rx="3" />
-          <rect x="871" y="310" width="20" height="20" rx="3" />
-          <rect x="717" y="390" width="20" height="20" rx="3" />
-          <rect x="794" y="390" width="20" height="20" rx="3" />
-          <rect x="871" y="390" width="20" height="20" rx="3" />
-          <rect x="717" y="470" width="20" height="20" rx="3" />
-          <rect x="794" y="470" width="20" height="20" rx="3" />
-          <rect x="871" y="470" width="20" height="20" rx="3" />
-        </g>
-
-        <rect x="764" y="250" width="80" height="40" rx="4" fill="#e0f2fe" stroke="#0284c7" strokeWidth="2" />
-        
-        <text x="804" y="232" textAnchor="middle" fontFamily="sans-serif" fontSize="11" fontWeight="900" fill="#0369a1">BUILDING A (CORE TOWER)</text>
-        <text x="804" y="415" textAnchor="middle" fontFamily="sans-serif" fontSize="8" fontWeight="bold" fill="#0284c7">LEVEL 7 - REINFORCING ACTIVE</text>
-        <text x="804" y="430" textAnchor="middle" fontFamily="sans-serif" fontSize="7" fontWeight="bold" fill="#64748b">88.00m SITE SPAN GRID</text>
-      </g>
-
-      {/* DYNAMIC RED-TINTED OVERLAYS & COLLISION ALERTS */}
-      
-      {/* 1. Crane Swing & Restricted Area */}
-      <g className="transition-all cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'zone-crane-swing',
-            name: 'Crane Swing Exclusion Radius',
-            type: 'IoT Edge Gateway',
-            location: 'North East Sector',
-            status: isCraneSwingBreached ? 'Warning' : 'Online',
-            occupancy: `${getRFIDMarkersInZone('Crane Swing Zone').length} Active Markers`,
-            x: 80,
-            y: 5
-          }
-        });
-      }}>
-        <rect x="960" y="40" width="192" height="336" rx="16" fill="#fff1f2" stroke={isCraneSwingBreached ? "#dc2626" : "#ef4444"} strokeWidth={isCraneSwingBreached ? 3.5 : 2} strokeDasharray={isCraneSwingBreached ? "4,4" : "8,4"} className="transition-all duration-300" />
-        
-        <circle cx="1040" cy="190" r="140" fill={isCraneSwingBreached ? "rgba(239, 68, 68, 0.20)" : "rgba(239, 68, 68, 0.08)"} stroke="#ef4444" strokeWidth="1.5" strokeDasharray="4,4" className="transition-all duration-300" />
-        {isCraneSwingBreached && (
-          <circle cx="1040" cy="190" r="140" fill="url(#hazardStripes)" opacity="0.65" />
-        )}
-        
-        <rect x="1025" y="175" width="30" height="30" rx="4" fill="#fbbf24" stroke="#d97706" strokeWidth="2" />
-        
-        <circle cx="1040" cy="190" r="6" fill="#ffffff" stroke="#d97706" strokeWidth="2.5" />
-        <line x1="1040" y1="190" x2="940" y2="100" stroke="#f59e0b" strokeWidth="3.5" strokeLinecap="round" />
-        <line x1="1040" y1="190" x2="1080" y2="226" stroke="#f59e0b" strokeWidth="3" strokeLinecap="round" />
-        <rect x="1074" y="220" width="12" height="12" rx="2" fill="#d97706" />
-
-        <text x="1040" y="354" textAnchor="middle" fontFamily="sans-serif" fontSize="10" fontWeight="900" fill={isCraneSwingBreached ? "#b91c1c" : "#dc2626"}>
-          {isCraneSwingBreached ? "🚨 CRITICAL SWING BREACH" : "CRANE SWING ZONE"}
-        </text>
-        <text x="1040" y="62" textAnchor="middle" fontFamily="sans-serif" fontSize="7" fontWeight="bold" fill={isCraneSwingBreached ? "#b91c1c" : "#ef4444"}>
-          {isCraneSwingBreached ? "⚠️ PERSONNEL DETECTED" : "CRITICAL DANGER ZONE"}
-        </text>
-        <text x="1040" y="130" textAnchor="middle" fontFamily="sans-serif" fontSize="7" fontWeight="bold" fill="#b45309">CRANE T1 ACTIVE</text>
-      </g>
-
-      {/* 2. High Voltage Area Substation */}
+      {/* 480V SUBSTATION (Top Center) */}
       <g className="transition-all cursor-pointer" onClick={(e) => {
         e.stopPropagation();
         onSelectEntity?.({
@@ -533,31 +412,167 @@ export function InteractiveSiteMap({
           }
         });
       }}>
-        <rect x="548" y="40" width="172" height="128" rx="12" fill={isHighVoltageBreached ? "rgba(239, 68, 68, 0.22)" : "rgba(239, 68, 68, 0.06)"} stroke={isHighVoltageBreached ? "#dc2626" : "#ef4444"} strokeWidth={isHighVoltageBreached ? 3.5 : 1.8} strokeDasharray={isHighVoltageBreached ? "2,2" : "6,4"} className="transition-all duration-300" />
-        {isHighVoltageBreached && (
-          <rect x="548" y="40" width="172" height="128" rx="12" fill="url(#hazardStripes)" opacity="0.65" />
-        )}
-
-        <path d="M 634 60 L 618 100 L 632 100 L 622 136 L 642 90 L 628 90 Z" fill={isHighVoltageBreached ? "#d97706" : "rgba(239, 68, 68, 0.3)"} />
-
-        <text x="634" y="148" textAnchor="middle" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill={isHighVoltageBreached ? "#b91c1c" : "#dc2626"}>
-          {isHighVoltageBreached ? "⚡ HIGH VOLTAGE BREACH" : "HIGH VOLTAGE AREA"}
-        </text>
-        <text x="634" y="52" textAnchor="middle" fontFamily="sans-serif" fontSize="6.5" fontWeight="bold" fill={isHighVoltageBreached ? "#b91c1c" : "#ef4444"}>
-          {isHighVoltageBreached ? "🚨 INTRUDER RFID TAGGED" : "DANGER: 440V SUBSTATION"}
+        <rect x="395" y="60" width="115" height="50" rx="6" fill={isHighVoltageBreached ? "rgba(239, 68, 68, 0.22)" : "#fff7ed"} stroke={isHighVoltageBreached ? "#dc2626" : "#f97316"} strokeWidth={2} />
+        <text x="452" y="90" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill={isHighVoltageBreached ? "#b91c1c" : "#c2410c"}>
+          {isHighVoltageBreached ? "⚡ SUBSTATION BREACH" : "480V SUBSTATION"}
         </text>
       </g>
 
-      {/* COMPACT STAGING & STORAGE AREAS */}
-      
-      {/* Site Admin Offices */}
+      {/* EXCAVATION & SHORING PIT (Left Center) */}
+      <g className="transition-all cursor-pointer group" onClick={(e) => {
+        e.stopPropagation();
+        onSelectEntity?.({
+          type: 'infrastructure',
+          data: {
+            id: 'zone-excavation-shaft',
+            name: 'Deep Excavation Pit Shaft',
+            type: 'IoT Edge Gateway',
+            location: 'Central West Sector',
+            status: isExcavationShaftBreached ? 'Warning' : 'Online',
+            occupancy: `${getRFIDMarkersInZone('Excavation Shaft').length} Entities`,
+            x: 10,
+            y: 15
+          }
+        });
+      }}>
+        <rect x="180" y="125" width="320" height="360" rx="16" fill="#fefce8" stroke={isExcavationShaftBreached ? '#ef4444' : '#f59e0b'} strokeWidth="2.5" strokeDasharray="6,4" className="transition-colors duration-300" />
+        <rect x="180" y="125" width="320" height="360" rx="16" fill="url(#earthHatch)" />
+        
+        <rect x="205" y="150" width="270" height="310" rx="12" fill="#fffbeb" stroke={isExcavationShaftBreached ? 'rgba(239,68,68,0.5)' : 'rgba(245,158,11,0.45)'} strokeWidth="1.8" />
+        <rect x="230" y="175" width="220" height="260" rx="8" fill="#ffffff" stroke="rgba(245,158,11,0.35)" strokeWidth="1.4" />
+
+        <rect x="255" y="133" width="170" height="22" rx="4" fill="#ffffff" stroke={isExcavationShaftBreached ? '#ef4444' : '#f59e0b'} strokeWidth="1.5" />
+        <text x="340" y="148" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill={isExcavationShaftBreached ? '#dc2626' : '#b45309'} letterSpacing="0.5">
+          {isExcavationShaftBreached ? "🚨 SHAFT OCCUPIED" : "EXCAVATION & SHORING PIT"}
+        </text>
+
+        <circle cx="340" cy="320" r="26" fill="#f0f9ff" stroke="#0284c7" strokeWidth="1.8"/>
+        <text x="340" y="316" textAnchor="middle" fontFamily="sans-serif" fontSize="7.5" fontWeight="900" fill="#0369a1">SUMP PUMP</text>
+        <text x="340" y="328" textAnchor="middle" fontFamily="'JetBrains Mono', monospace" fontSize="7" fontWeight="bold" fill="#0284c7">-12.50 FT</text>
+      </g>
+
+      {/* BUILDING A • TOWER CORE (Center Right) */}
+      <g className="transition-all cursor-pointer group" onClick={(e) => {
+        e.stopPropagation();
+        onSelectEntity?.({
+          type: 'infrastructure',
+          data: {
+            id: 'zone-building-a',
+            name: 'Building A (Core Tower Structure)',
+            type: 'IoT Edge Gateway',
+            location: 'Central East Sector',
+            status: 'Online',
+            occupancy: `${getRFIDMarkersInZone('Tower Core').length} Onsite`,
+            x: 51,
+            y: 25
+          }
+        });
+      }}>
+        <rect x="525" y="180" width="330" height="320" rx="18" fill="#f0f9ff" stroke="#0284c7" strokeWidth="3.5" />
+        <rect x="525" y="180" width="330" height="320" rx="18" fill="url(#concreteHatch)" />
+        <rect x="550" y="205" width="280" height="270" rx="10" fill="#ffffff" stroke="#0284c7" strokeWidth="2.5" />
+        
+        <g stroke="#0284c7" strokeWidth="1.2" opacity="0.35">
+          <line x1="550" y1="270" x2="830" y2="270" strokeDasharray="4,4" />
+          <line x1="550" y1="340" x2="830" y2="340" strokeDasharray="4,4" />
+          <line x1="550" y1="410" x2="830" y2="410" strokeDasharray="4,4" />
+          <line x1="620" y1="205" x2="620" y2="475" strokeDasharray="4,4" />
+          <line x1="690" y1="205" x2="690" y2="475" strokeDasharray="4,4" />
+          <line x1="760" y1="205" x2="760" y2="475" strokeDasharray="4,4" />
+        </g>
+
+        <g fill="#0284c7" stroke="#0369a1" strokeWidth="1">
+          {[620, 690, 760].flatMap(x => [270, 340, 410].map(y => {
+            if (x === 690 && y === 340) return null;
+            return (
+              <g key={`col-pad-${x}-${y}`}>
+                <rect x={x - 7} y={y - 7} width={14} height={14} rx={2}/>
+                <line x1={x - 4} y1={y} x2={x + 4} y2={y} stroke="#ffffff" strokeWidth={1}/>
+                <line x1={x} y1={y - 4} x2={x} y2={y + 4} stroke="#ffffff" strokeWidth={1}/>
+              </g>
+            );
+          }))}
+        </g>
+
+        <rect x="655" y="305" width="70" height="70" rx="4" fill="#e0f2fe" stroke="#0284c7" strokeWidth="2.5" />
+        <line x1="655" y1="305" x2="725" y2="375" stroke="#0284c7" strokeWidth="2"/>
+        <line x1="725" y1="305" x2="655" y2="375" stroke="#0284c7" strokeWidth="2"/>
+
+        <rect x="605" y="188" width="170" height="22" rx="4" fill="#ffffff" stroke="#0284c7" strokeWidth="1.5" />
+        <text x="690" y="203" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill="#0369a1" letterSpacing="0.5">BUILDING A • TOWER CORE</text>
+      </g>
+
+      {/* HEAVY CRANE EXCLUSION (Top Right) */}
+      <g className="transition-all cursor-pointer" onClick={(e) => {
+        e.stopPropagation();
+        onSelectEntity?.({
+          type: 'infrastructure',
+          data: {
+            id: 'zone-crane-swing',
+            name: 'Crane Swing Exclusion Radius',
+            type: 'IoT Edge Gateway',
+            location: 'North East Sector',
+            status: isCraneSwingBreached ? 'Warning' : 'Online',
+            occupancy: `${getRFIDMarkersInZone('Crane Swing Zone').length} Active Markers`,
+            x: 80,
+            y: 5
+          }
+        });
+      }}>
+        <rect x="885" y="65" width="215" height="435" rx="14" fill="#fff1f2" stroke={isCraneSwingBreached ? "#dc2626" : "#ef4444"} strokeWidth={isCraneSwingBreached ? 3.5 : 2} strokeDasharray={isCraneSwingBreached ? "4,4" : "8,4"} className="transition-all duration-300" />
+        <circle cx="985" cy="245" r="145" fill={isCraneSwingBreached ? "rgba(239, 68, 68, 0.22)" : "rgba(239, 68, 68, 0.06)"} stroke="#ef4444" strokeWidth="1.8" strokeDasharray="4,4" />
+        
+        <rect x="963" y="223" width="44" height="44" rx="8" fill="#fbbf24" stroke="#b45309" strokeWidth="2" />
+        <circle cx="985" cy="245" r="7" fill="#d97706" />
+        
+        <line x1="985" y1="245" x2="875" y2="135" stroke="#d97706" strokeWidth={4.5} strokeLinecap="round" />
+        <line x1="985" y1="245" x2="1040" y2="300" stroke="#d97706" strokeWidth={5.5} strokeLinecap="round" />
+
+        <rect x="920" y="73" width="145" height="20" rx="4" fill="#ffffff" stroke={isCraneSwingBreached ? "#dc2626" : "#ef4444"} strokeWidth="1.5" />
+        <text x="992" y="87" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill={isCraneSwingBreached ? "#b91c1c" : "#dc2626"} letterSpacing="0.5">
+          {isCraneSwingBreached ? "🚨 CRITICAL SWING BREACH" : "HEAVY CRANE EXCLUSION"}
+        </text>
+      </g>
+
+      {/* HEAVY TRUCK ARTERIAL CORRIDOR (ROADWAY) */}
+      <g opacity="0.95" className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
+        e.stopPropagation();
+        onSelectEntity?.({
+          type: 'infrastructure',
+          data: {
+            id: 'road-access',
+            name: 'Heavy Truck Access Route',
+            type: 'IoT Edge Gateway',
+            location: 'Main Logistics Gate',
+            status: 'Online',
+            occupancy: 'Unrestricted',
+            x: 10,
+            y: 52
+          }
+        });
+      }}>
+        <path d="M 55 520 L 1145 520" fill="none" stroke="#f1f5f9" strokeWidth={38} strokeLinecap="square" />
+        <path d="M 175 520 L 175 765" fill="none" stroke="#f1f5f9" strokeWidth={38} strokeLinecap="square" />
+        
+        <path d="M 55 501 L 156 501 L 156 765" fill="none" stroke="#94a3b8" strokeWidth={1.5} />
+        <path d="M 55 539 L 194 539 L 194 765" fill="none" stroke="#94a3b8" strokeWidth={1.5} />
+        <path d="M 194 501 L 1145 501" fill="none" stroke="#94a3b8" strokeWidth={1.5} />
+        <path d="M 194 539 L 1145 539" fill="none" stroke="#94a3b8" strokeWidth={1.5} />
+
+        <path d="M 55 520 L 175 520 L 175 765" fill="none" stroke="#f59e0b" strokeWidth={2.2} strokeDasharray="12,8" opacity="0.9" />
+        <path d="M 175 520 L 1145 520" fill="none" stroke="#f59e0b" strokeWidth={2.2} strokeDasharray="12,8" opacity="0.9" />
+
+        <text x="420" y="512" fontFamily="'JetBrains Mono', monospace" fontSize="8" fontWeight="900" fill="#94a3b8" letterSpacing="1.2">HEAVY TRUCK ARTERIAL CORRIDOR</text>
+      </g>
+
+      {/* SITE COMMAND HQ (Lower Left) */}
       <g className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
         e.stopPropagation();
         onSelectEntity?.({
           type: 'infrastructure',
           data: {
             id: 'site-office',
-            name: 'Site Admin Offices & Headquarters',
+            name: 'Site Command HQ & BIM Trailer',
             type: 'IoT Edge Gateway',
             location: 'South West Corner',
             status: 'Online',
@@ -567,73 +582,20 @@ export function InteractiveSiteMap({
           }
         });
       }}>
-        <rect x="140" y="640" width="130" height="90" rx="6" fill="#eff6ff" stroke="#3b82f6" strokeWidth="2" />
-        <line x1="180" y1="640" x2="180" y2="730" stroke="#3b82f6" strokeWidth="1" strokeDasharray="3,3" />
-        <line x1="225" y1="640" x2="225" y2="730" stroke="#3b82f6" strokeWidth="1" strokeDasharray="3,3" />
-        <text x="205" y="688" textAnchor="middle" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#1d4ed8">SITE OFFICE</text>
-        <text x="205" y="704" textAnchor="middle" fontFamily="sans-serif" fontSize="7" fontWeight="bold" fill="#3b82f6">HQ & VISITOR CENTRE</text>
-      </g>
-      
-      {/* Vehicle Parking Bay Area */}
-      <g className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'parking-bay',
-            name: 'Vehicle Parking & Fleet Bay',
-            type: 'IoT Edge Gateway',
-            location: 'South West Perimeter',
-            status: 'Online',
-            occupancy: '9 / 14 Lots Occupied',
-            x: 5,
-            y: 68
-          }
-        });
-      }}>
-        <rect x="24" y="640" width="96" height="96" rx="6" fill="#f8fafc" stroke="#94a3b8" strokeWidth="1.5" />
-        <line x1="24" y1="664" x2="120" y2="664" stroke="#94a3b8" strokeWidth="1" strokeDasharray="4,2" />
-        <line x1="24" y1="688" x2="120" y2="688" stroke="#94a3b8" strokeWidth="1" strokeDasharray="4,2" />
-        <line x1="24" y1="712" x2="120" y2="712" stroke="#94a3b8" strokeWidth="1" strokeDasharray="4,2" />
-        <text x="72" y="654" textAnchor="middle" fontFamily="sans-serif" fontSize="8" fontWeight="900" fill="#475569">PARKING</text>
-        <text x="72" y="726" textAnchor="middle" fontFamily="sans-serif" fontSize="6.5" fontWeight="bold" fill="#64748b">14 VEHICLES MAX</text>
-      </g>
-      
-      {/* Material Staging Area Yard B */}
-      <g className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'material-staging-yard',
-            name: 'Material Staging Yard B',
-            type: 'IoT Edge Gateway',
-            location: 'South Center Sector',
-            status: 'Online',
-            occupancy: '4 Container Stacks',
-            x: 45,
-            y: 80
-          }
-        });
-      }}>
-        <rect x="480" y="640" width="180" height="90" rx="8" fill="#faf5ff" stroke="#8b5cf6" strokeWidth="1.5" />
-        <rect x="492" y="652" width="48" height="20" rx="2" fill="#c084fc" opacity="0.4" stroke="#8b5cf6" strokeWidth="1" />
-        <rect x="492" y="682" width="48" height="20" rx="2" fill="#60a5fa" opacity="0.4" stroke="#3b82f6" strokeWidth="1" />
-        <rect x="552" y="652" width="48" height="20" rx="2" fill="#34d399" opacity="0.4" stroke="#10b981" strokeWidth="1" />
-        <rect x="552" y="682" width="48" height="20" rx="2" fill="#fbbf24" opacity="0.4" stroke="#f59e0b" strokeWidth="1" />
-        <text x="618" y="700" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#6b21a8">MATERIAL</text>
-        <text x="618" y="712" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#6b21a8">STAGING</text>
-        <text x="570" y="648" textAnchor="middle" fontFamily="sans-serif" fontSize="7" fontWeight="bold" fill="#7c3aed">YARD B</text>
+        <rect x="180" y="605" width="140" height="80" rx="6" fill="#eff6ff" stroke="#3b82f6" strokeWidth={2} />
+        <line x1="225" y1="605" x2="225" y2="685" stroke="#93c5fd" strokeWidth={1} strokeDasharray="3,3" />
+        <line x1="270" y1="605" x2="270" y2="685" stroke="#93c5fd" strokeWidth={1} strokeDasharray="3,3" />
+        <text x="250" y="650" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill="#1d4ed8">SITE COMMAND HQ</text>
       </g>
 
-      {/* Steel Storage Yard Zone S3 */}
+      {/* REBAR / LAYDOWN YARD (Lower Right) */}
       <g className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
         e.stopPropagation();
         onSelectEntity?.({
           type: 'infrastructure',
           data: {
             id: 'steel-yard-s3',
-            name: 'Steel Storage Yard Zone S3',
+            name: 'Rebar Assembly Yard S3',
             type: 'IoT Edge Gateway',
             location: 'South East Sector',
             status: 'Online',
@@ -643,32 +605,41 @@ export function InteractiveSiteMap({
           }
         });
       }}>
-        <rect x="820" y="620" width="180" height="90" rx="8" fill="#fffbeb" stroke="#f59e0b" strokeWidth="1.5" />
-        <line x1="840" y1="645" x2="900" y2="645" stroke="#d97706" strokeWidth="4" strokeLinecap="round" opacity="0.9" />
-        <line x1="840" y1="655" x2="900" y2="655" stroke="#d97706" strokeWidth="4" strokeLinecap="round" opacity="0.9" />
-        <line x1="840" y1="665" x2="900" y2="665" stroke="#d97706" strokeWidth="4" strokeLinecap="round" opacity="0.9" />
-        <line x1="840" y1="675" x2="900" y2="675" stroke="#d97706" strokeWidth="4" strokeLinecap="round" opacity="0.9" />
-        <rect x="912" y="640" width="76" height="40" rx="4" fill="#ffffff" stroke="#f59e0b" strokeWidth="1" />
-        <text x="950" y="656" textAnchor="middle" fontFamily="sans-serif" fontSize="8" fontWeight="900" fill="#b45309">STEEL</text>
-        <text x="950" y="670" textAnchor="middle" fontFamily="sans-serif" fontSize="8" fontWeight="900" fill="#b45309">YARD</text>
-        <text x="910" y="632" textAnchor="middle" fontFamily="sans-serif" fontSize="7" fontWeight="bold" fill="#d97706">ZONE S3</text>
+        <rect x="685" y="585" width="180" height="85" rx="8" fill="#fffbeb" stroke="#f59e0b" strokeWidth={2} />
+        {[605, 618, 631, 644, 657].map(y => (
+          <line key={`rebar-line-${y}`} x1={700} y1={y} x2={785} y2={y} stroke="#d97706" strokeWidth={3} strokeLinecap="round" />
+        ))}
+        <text x="825" y="632" textAnchor="middle" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#b45309">REBAR YARD</text>
       </g>
 
-      {/* Grid boundary markers & compass */}
-      <g stroke="#64748b" strokeWidth="0.8" opacity="0.5" fontFamily="sans-serif" fontSize="8" fill="#475569">
-        <line x1="16" y1="20" x2="16" y2="780" strokeDasharray="2,4" />
-        <line x1="1184" y1="20" x2="1184" y2="780" strokeDasharray="2,4" />
-        <line x1="16" y1="40" x2="1184" y2="40" />
-        <text x="600" y="34" textAnchor="middle" fontWeight="bold" letterSpacing="1">SITE HORIZONTAL MATRIX: 250 METERS</text>
-        <line x1="20" y1="760" x2="1180" y2="760" strokeDasharray="8,2" />
-        <text x="600" y="754" textAnchor="middle" fontWeight="bold">{currentFloorTitle}</text>
+      {/* ENTERPRISE TITLE BLOCK (Bottom Right) */}
+      <g transform="translate(800, 690)">
+        <rect x="0" y="0" width="320" height="75" fill="#ffffff" stroke="#007BC4" strokeWidth="1.6" rx="4"/>
+        <line x1="0" y1="24" x2="320" y2="24" stroke="#e2e8f0" strokeWidth="1"/>
+        <line x1="0" y1="50" x2="320" y2="50" stroke="#e2e8f0" strokeWidth="1"/>
+        <line x1="160" y1="24" x2="160" y2="75" stroke="#e2e8f0" strokeWidth="1"/>
+
+        <text x="12" y="16" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#0f172a" letterSpacing="0.5">APERTURE RTLS DIGITAL TWIN</text>
+        <rect x="245" y="6" width="65" height="14" rx="3" fill="#007BC4"/>
+        <text x="277" y="16" textAnchor="middle" fontFamily="'JetBrains Mono', monospace" fontSize="7.5" fontWeight="bold" fill="#ffffff">LIVE RTLS</text>
+
+        <text x="12" y="36" fontFamily="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">SITE: METRO TOWER SITE</text>
+        <text x="12" y="44" fontFamily="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">LEVEL: {activeFloor.toUpperCase()}</text>
+        <text x="170" y="36" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">SCALE: 1:250 @ A1</text>
+        <text x="170" y="44" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">DATUM: WGS 84 / UTM</text>
+
+        <text x="12" y="62" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">SPAN: 250m x 180m</text>
+        <text x="12" y="70" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#059669" fontWeight="bold">STATUS: CALIBRATED</text>
+        <text x="170" y="62" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">DWG NO: GAO-RTLS-001</text>
+        <text x="170" y="70" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#007BC4" fontWeight="bold">MODE: {mode.toUpperCase()}</text>
       </g>
 
-      {/* Compass North Indicator */}
-      <g transform="translate(1140, 720) scale(0.75)">
-        <circle cx="0" cy="0" r="24" fill="#ffffff" stroke="#0284c7" strokeWidth="1.5" />
-        <path d="M 0 -20 L 6 0 L 0 4 L -6 0 Z" fill="#0284c7" />
-        <text x="0" y="-26" textAnchor="middle" fontFamily="sans-serif" fontSize="14" fontWeight="900" fill="#0284c7">N</text>
+      {/* Azimuth North Arrow */}
+      <g transform="translate(1055, 645) scale(0.8)">
+        <circle cx="0" cy="0" r="18" fill="#ffffff" stroke="#007BC4" strokeWidth="1.5"/>
+        <path d="M 0 -14 L 5 0 L 0 2 L -5 0 Z" fill="#007BC4"/>
+        <path d="M 0 14 L 5 0 L 0 -2 L -5 0 Z" fill="#cbd5e1"/>
+        <text x="0" y="-19" textAnchor="middle" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#007BC4">N</text>
       </g>
     </svg>
   );
@@ -781,15 +752,27 @@ export default function LiveFloorMap({
   const dispersedPeople = useMemo(() => {
     if (!people || people.length === 0) return [];
     
+    // Strict deduplication of incoming people array
+    const uniquePeople: Person[] = [];
+    const seen = new Set<string>();
+    people.forEach(p => {
+      if (!p) return;
+      const key = (p.hardhatTagId || p.name || p.id || '').trim().toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        uniquePeople.push(p);
+      }
+    });
+
     const visited = new Set<string>();
     const clusters: Person[][] = [];
 
-    people.forEach((p, idx) => {
+    uniquePeople.forEach((p, idx) => {
       if (!p || visited.has(p.id)) return;
       const cluster: Person[] = [p];
       visited.add(p.id);
 
-      people.forEach((otherP, otherIdx) => {
+      uniquePeople.forEach((otherP, otherIdx) => {
         if (otherP && idx !== otherIdx && !visited.has(otherP.id)) {
           const dist = Math.hypot(p.x - otherP.x, p.y - otherP.y);
           if (dist < 3.8) {
@@ -845,7 +828,28 @@ export default function LiveFloorMap({
     return result;
   }, [people]);
 
-  const activeZones = customZones || zones;
+  const activeZones = useMemo(() => {
+    const raw = customZones || zones || {};
+    const clean: Record<string, any> = {};
+    const seenNames = new Set<string>();
+
+    Object.entries(raw).forEach(([k, bounds]: [string, any]) => {
+      if (!k) return;
+      const name = k.trim();
+      // Filter out duplicate or synthetic names (e.g. ZONE_0, ZONE_1) when labeled zones are present
+      const isSyntheticNum = /^ZONE_\d+$/i.test(name);
+      const normalizedKey = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      if (seenNames.has(normalizedKey) || (isSyntheticNum && Object.keys(clean).length >= 5)) {
+        return;
+      }
+
+      seenNames.add(normalizedKey);
+      clean[name] = bounds;
+    });
+
+    return Object.keys(clean).length > 0 ? clean : raw;
+  }, [customZones, zones]);
   const totalZoneCount = Object.keys(activeZones).length;
   const visibleZoneCount = totalZoneCount - Object.keys(hiddenZones).filter(k => hiddenZones[k]).length;
 
@@ -869,10 +873,15 @@ export default function LiveFloorMap({
     setHiddenZones(hidden);
   };
 
-  const isCustomFloorplan = Boolean(floorplanUrl && !floorplanUrl.includes('unsplash.com') && floorplanUrl.length > 5);
-  const currentBlueprintUrl = isCustomFloorplan
-    ? (floorplanUrl as string)
-    : getBlueprintSvg(projectId, projectName, contractor, dimensions, mode);
+  const isCustomFloorplan = Boolean(
+    floorplanUrl && 
+    typeof floorplanUrl === 'string' && 
+    floorplanUrl.trim().length > 5 && 
+    !floorplanUrl.startsWith('data:image/svg') &&
+    !floorplanUrl.includes('unsplash') &&
+    (floorplanUrl.startsWith('blob:') || floorplanUrl.startsWith('data:image/png') || floorplanUrl.startsWith('data:image/jpeg') || floorplanUrl.startsWith('data:image/webp'))
+  );
+  const currentBlueprintUrl = isCustomFloorplan ? (floorplanUrl as string) : '';
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (isDrawingGeofence) return;
@@ -943,7 +952,7 @@ export default function LiveFloorMap({
         emergencySosState?.active ? 'ring-8 ring-rose-600 animate-pulse bg-rose-950/20' : ''
       } ${
         isDrawingGeofence ? 'cursor-crosshair' : 'cursor-grab active:cursor-grabbing'
-      } bg-[#020617]`}
+      } bg-slate-100`}
       ref={mapRef}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
@@ -954,7 +963,7 @@ export default function LiveFloorMap({
       <div 
         ref={containerRef}
         onClick={handleBlueprintClick}
-        className="relative w-full h-full rounded-xl shadow-2xl transition-transform duration-75 ease-out border-4 border-slate-900 overflow-hidden bg-[#090d16]"
+        className="relative w-full h-full rounded-xl shadow-2xl transition-transform duration-75 ease-out border-4 border-slate-300 overflow-hidden bg-white"
         style={{ transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)` }}
       >
         {svgSource ? (
@@ -1042,15 +1051,31 @@ export default function LiveFloorMap({
            const isWarning = bounds.hazardLevel === 'warning';
            const isMusterPoint = bounds.category === 'MUSTER POINT';
            const isEvacMode = mode === 'evacuation';
+           const nameLower = (name || "").toLowerCase();
+           const zoneWorkerCount = (people || []).filter(p => {
+             if (!p) return false;
+             const pZone = (p.currentZone || "").toLowerCase();
 
-           const zoneWorkerCount = (people || []).filter(p => p && p.currentZone && (p.currentZone || "").toLowerCase() === (name || "").toLowerCase()).length;
-           
-           // Check if any worker position overlaps with this zone's coordinates
-           const hasWorkerOverlap = (people || []).some(p => 
-             p && p.x >= bounds.x && p.x <= bounds.x + bounds.width &&
-             p.y >= bounds.y && p.y <= bounds.y + bounds.height
-           );
+             if (pZone === nameLower || pZone.includes(nameLower) || nameLower.includes(pZone)) {
+               return true;
+             }
+             if (nameLower.includes('tower') && pZone.includes('tower')) return true;
+             if (nameLower.includes('excavation') && (pZone.includes('excavation') || pZone.includes('pit') || pZone.includes('shaft'))) return true;
+             if (nameLower.includes('crane') && pZone.includes('crane')) return true;
+             if (nameLower.includes('command') && (pZone.includes('command') || pZone.includes('office') || pZone.includes('gate') || pZone.includes('hq'))) return true;
+             if (nameLower.includes('rebar') && (pZone.includes('rebar') || pZone.includes('steel') || pZone.includes('yard'))) return true;
+             if (nameLower.includes('substation') && (pZone.includes('substation') || pZone.includes('voltage') || pZone.includes('electrical') || pZone.includes('switchgear'))) return true;
+             if (nameLower.includes('muster') && (pZone.includes('muster') || pZone.includes('assembly'))) return true;
 
+             // Spatial point-in-bounding-box check
+             if (typeof p.x === 'number' && typeof p.y === 'number') {
+               return p.x >= bounds.x && p.x <= (bounds.x + bounds.width) &&
+                      p.y >= bounds.y && p.y <= (bounds.y + bounds.height);
+             }
+             return false;
+           }).length;
+
+           const hasWorkerOverlap = zoneWorkerCount > 0;
            const maxCapacity = zoneCapacities[name] || bounds.maxCapacity || (isHazard ? 4 : 10);
            const isOverCapacity = zoneWorkerCount > maxCapacity;
            const isHazardActive = (isHazard || isWarning) && hasWorkerOverlap;
@@ -1075,12 +1100,12 @@ export default function LiveFloorMap({
                    } 
                  });
                }}
-               className={`absolute border-2 transition-all duration-300 group/zone cursor-pointer ${
-                 isHazardActive ? 'bg-rose-600/30 border-rose-600 ring-4 ring-rose-500/60 animate-pulse' :
-                 isOverCapacity ? 'bg-rose-600/15 border-rose-600 ring-4 ring-rose-500/30 animate-pulse' :
+               className={`absolute border-2 group/zone cursor-pointer ${
+                 isHazardActive ? 'bg-rose-600/30 border-rose-600 ring-4 ring-rose-500/60' :
+                 isOverCapacity ? 'bg-rose-600/15 border-rose-600 ring-4 ring-rose-500/30' :
                  isHazard ? 'bg-rose-500/5 border-rose-500/30' : 
                  isWarning ? 'bg-amber-500/5 border-amber-500/30' : 
-                 isMusterPoint && isEvacMode ? 'bg-emerald-500/20 border-emerald-500 ring-4 ring-emerald-500/20 animate-pulse' :
+                 isMusterPoint && isEvacMode ? 'bg-emerald-500/20 border-emerald-500 ring-4 ring-emerald-500/20' :
                  'bg-sky-500/5 border-sky-500/10'
                }`}
                style={{
@@ -1262,90 +1287,9 @@ export default function LiveFloorMap({
           </>
         )}
 
-        {/* Motion Trails with last 60 seconds fading-segment historical effect */}
-        {(visibleLayers?.workers ?? true) && (
+        {/* Motion Trails for vehicles only (worker movement lines removed) */}
+        {(visibleLayers?.vehicles ?? true) && (
           <svg className="absolute inset-0 w-full h-full pointer-events-none z-30 overflow-visible">
-            <defs>
-              <linearGradient id="workerTrailGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#007BC4" stopOpacity="0.1" />
-                <stop offset="100%" stopColor="#38bdf8" stopOpacity="0.9" />
-              </linearGradient>
-              <linearGradient id="alertTrailGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stopColor="#e11d48" stopOpacity="0.1" />
-                <stop offset="100%" stopColor="#f43f5e" stopOpacity="0.9" />
-              </linearGradient>
-            </defs>
-
-            {people.map(p => {
-              if (!p.trail || p.trail.length < 2) return null;
-              const isAlert = p.ppeStatus === 'NON_COMPLIANT';
-              const baseColor = isAlert ? '#f43f5e' : '#0284c7';
-              const glowColor = isAlert ? '#fb7185' : '#38bdf8';
-              const trailPoints = p.trail;
-
-              return (
-                <g key={`trail-worker-${p.id}`} className="transition-all duration-300">
-                  {/* Glowing background corridor path */}
-                  {trailPoints.slice(0, -1).map((pt, idx) => {
-                    const nextPt = trailPoints[idx + 1];
-                    const progress = (idx + 1) / trailPoints.length;
-                    const opacity = Math.max(0.15, progress * 0.85);
-                    const strokeWidth = 1.5 + progress * 2.2;
-
-                    return (
-                      <g key={`seg-worker-${p.id}-${idx}`}>
-                        {/* Glow halo */}
-                        <line
-                          x1={`${pt.x}%`}
-                          y1={`${pt.y}%`}
-                          x2={`${nextPt.x}%`}
-                          y2={`${nextPt.y}%`}
-                          stroke={glowColor}
-                          strokeWidth={strokeWidth + 2.5}
-                          strokeOpacity={opacity * 0.35}
-                          strokeLinecap="round"
-                        />
-                        {/* Core neon path line */}
-                        <line
-                          x1={`${pt.x}%`}
-                          y1={`${pt.y}%`}
-                          x2={`${nextPt.x}%`}
-                          y2={`${nextPt.y}%`}
-                          stroke={baseColor}
-                          strokeWidth={strokeWidth}
-                          strokeOpacity={opacity}
-                          strokeLinecap="round"
-                        />
-                        {/* Footstep waypoint nodes along walking path */}
-                        {idx % 2 === 0 && (
-                          <circle
-                            cx={`${pt.x}%`}
-                            cy={`${pt.y}%`}
-                            r={1.2 + progress * 1.6}
-                            fill={glowColor}
-                            fillOpacity={opacity * 0.9}
-                          />
-                        )}
-                      </g>
-                    );
-                  })}
-
-                  {/* Animated directional walking indicator when moving */}
-                  {p.presenceState === 'MOVING' && trailPoints.length >= 2 && (
-                    <circle
-                      cx={`${trailPoints[trailPoints.length - 1].x}%`}
-                      cy={`${trailPoints[trailPoints.length - 1].y}%`}
-                      r="4"
-                      fill="none"
-                      stroke={glowColor}
-                      strokeWidth="1.5"
-                      strokeDasharray="2,2"
-                      className="animate-spin"
-                    />
-                  )}
-                </g>
-              );
-            })}
 
             {vehicles.map(v => {
               if (!v.trail || v.trail.length < 2) return null;
@@ -1529,6 +1473,8 @@ export default function LiveFloorMap({
               );
 
               // Advanced Role & Status Detection for GAO Twin System
+              const isVisitor = (person.role || "").toLowerCase().includes('visitor') || (person.name || "").toLowerCase().includes('(visitor)');
+
               const isSupervisor = (person.role || "").toLowerCase().includes('supervisor') || 
                                    (person.role || "").toLowerCase().includes('inspector') || 
                                    (person.role || "").toLowerCase().includes('ehs') ||
@@ -1556,6 +1502,11 @@ export default function LiveFloorMap({
                 badgeBgColor = 'bg-rose-500/10 text-rose-400 border-rose-500/20';
                 statusText = 'No PPE';
                 avatarEmoji = '⚠️';
+              } else if (isVisitor) {
+                statusRingColor = 'border-purple-400 bg-purple-950/90 text-purple-200 ring-purple-500/30 animate-pulse';
+                badgeBgColor = 'bg-purple-500/20 text-purple-300 border-purple-500/30';
+                statusText = 'Visitor';
+                avatarEmoji = '🎫';
               } else if (isSupervisor) {
                 statusRingColor = 'border-indigo-400 bg-indigo-950/90 text-indigo-300 ring-indigo-500/20';
                 badgeBgColor = 'bg-indigo-500/10 text-indigo-300 border-indigo-500/20';
@@ -1590,7 +1541,10 @@ export default function LiveFloorMap({
               let roleBorderColor = 'border-slate-800';
               let roleGlowShadow = 'shadow-slate-500/10';
               const roleLowerVal = (person.role || "").toLowerCase();
-              if (roleLowerVal.includes('superintendent') || roleLowerVal.includes('manager') || roleLowerVal.includes('director')) {
+              if (isVisitor) {
+                roleBorderColor = 'border-purple-400/90 hover:border-purple-300';
+                roleGlowShadow = 'shadow-purple-500/30';
+              } else if (roleLowerVal.includes('superintendent') || roleLowerVal.includes('manager') || roleLowerVal.includes('director')) {
                 roleBorderColor = 'border-amber-500/80 hover:border-amber-400';
                 roleGlowShadow = 'shadow-amber-500/20';
               } else if (roleLowerVal.includes('safety') || roleLowerVal.includes('ehs') || roleLowerVal.includes('inspector') || roleLowerVal.includes('officer')) {
@@ -1625,7 +1579,7 @@ export default function LiveFloorMap({
                     left: `${person.displayX}%`, 
                     top: `${person.displayY}%`, 
                     transform: 'translate(-50%, -50%)',
-                    transition: 'left 1.0s linear, top 1.0s linear'
+                    transition: person.presenceState === 'MOVING' ? 'left 0.1s linear, top 0.1s linear' : 'left 0.3s ease-out, top 0.3s ease-out'
                   }}
                   onClick={(e) => {
                     e.stopPropagation();

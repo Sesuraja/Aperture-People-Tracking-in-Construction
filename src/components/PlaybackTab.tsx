@@ -34,13 +34,15 @@ const PLAYBACK_SITES: Record<string, {
       { id: 'fl-b1', name: 'Level B1 - Underground Utility & Storage Vault', level: -1 },
     ],
     zones: {
-      'Excavation Shaft': { x: 10, y: 15, width: 34, height: 62, category: 'EXCAVATION & SHORING', hazardLevel: 'warning' },
-      'Tower Core': { x: 51, y: 25, width: 32, height: 50, category: 'CONCRETE REINFORCEMENT', hazardLevel: 'normal' },
-      'Crane Swing Zone': { x: 80, y: 5, width: 16, height: 42, category: 'CRANE SWING RADIUS', hazardLevel: 'critical' },
-      'High Voltage Area': { x: 46, y: 5, width: 14, height: 16, category: 'SUBSTATION PERIMETER', hazardLevel: 'critical' },
-      'Muster Point A': { x: 2, y: 10, width: 8, height: 12, category: 'MUSTER POINT', hazardLevel: 'normal' },
-      'Site HQ Office': { x: 12, y: 80, width: 11, height: 11, category: 'ADMINISTRATIVE', hazardLevel: 'normal' },
-      'Material Staging Yard B': { x: 40, y: 80, width: 15, height: 11, category: 'LOGISTICS YARD', hazardLevel: 'normal' }
+      'Material Storage': { x: 6.5, y: 8.0, width: 23.5, height: 21.5, category: 'MATERIAL STORAGE', hazardLevel: 'warning' },
+      'Structure Work Area': { x: 36.5, y: 8.0, width: 26.0, height: 21.5, category: 'STRUCTURAL WORK', hazardLevel: 'normal' },
+      'Crane Operating Zone': { x: 69.0, y: 8.0, width: 24.5, height: 21.5, category: 'CRANE SWING RADIUS', hazardLevel: 'critical' },
+      'Site Office': { x: 6.5, y: 38.0, width: 23.5, height: 21.5, category: 'SITE OPERATIONS', hazardLevel: 'normal' },
+      'Open Work Area': { x: 36.5, y: 38.0, width: 26.0, height: 21.5, category: 'GENERAL CONTRACTING', hazardLevel: 'normal' },
+      'Equipment Parking': { x: 69.0, y: 38.0, width: 24.5, height: 21.5, category: 'HEAVY MACHINERY', hazardLevel: 'warning' },
+      'Excavation Area': { x: 6.5, y: 68.0, width: 23.5, height: 21.5, category: 'EXCAVATION & SHORING', hazardLevel: 'critical' },
+      'Assembly Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5, category: 'MUSTER POINT', hazardLevel: 'normal' },
+      'High Voltage Area': { x: 69.0, y: 68.0, width: 24.5, height: 21.5, category: 'HIGH VOLTAGE', hazardLevel: 'critical' }
     }
   },
   'logistics-hub': {
@@ -834,11 +836,12 @@ function PlaybackMap({
 
   // RFID Gateway Anchors
   const rfidGateways = useMemo(() => [
-    { id: 'gate-1', name: 'Main Gate Portal G-01', x: 8, y: 88 },
-    { id: 'gate-2', name: 'Excavation Access G-02', x: 28, y: 18 },
-    { id: 'gate-3', name: 'Tower Core Portal G-03', x: 68, y: 30 },
-    { id: 'gate-4', name: 'Crane Swing Zone G-04', x: 88, y: 12 },
-    { id: 'gate-5', name: 'Material Yard G-05', x: 48, y: 82 }
+    { id: 'gate-1', name: 'Reader Portal R1', x: 25, y: 3.5 },
+    { id: 'gate-2', name: 'Reader Portal R2', x: 96.5, y: 34 },
+    { id: 'gate-3', name: 'Reader Portal R3', x: 96.5, y: 80 },
+    { id: 'gate-4', name: 'Reader Portal R4', x: 37, y: 96.5 },
+    { id: 'gate-5', name: 'Reader Portal R5', x: 9, y: 96.5 },
+    { id: 'gate-6', name: 'Reader Portal R6', x: 3.5, y: 34 }
   ], []);
 
   // Filtered current frame entities
