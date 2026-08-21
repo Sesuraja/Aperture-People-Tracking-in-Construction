@@ -10,8 +10,8 @@ interface LoginProps {
 export default function Login({ onLoginSuccess }: LoginProps) {
   const [isSignUp, setIsSignUp] = useState(false);
   const [fullName, setFullName] = useState('');
-  const [email, setEmail] = useState('sigmund.t.d@gaostaff.com');
-  const [password, setPassword] = useState('password123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState<'admin' | 'manager' | 'operator'>('admin');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
