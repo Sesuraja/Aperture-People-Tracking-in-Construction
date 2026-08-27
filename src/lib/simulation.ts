@@ -129,7 +129,7 @@ const ZONES: Record<string, { x: number; y: number; width: number; height: numbe
   ...DEFAULT_ROOM_BOUNDS
 };
 
-export function useSimulation(mode: 'real' | 'demo' | null, activeProjectId: string = 'metro-tower') {
+export function useSimulation(mode: 'real' | null, activeProjectId: string = 'metro-tower') {
   const [people, setPeople] = useState<Person[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -144,21 +144,7 @@ export function useSimulation(mode: 'real' | 'demo' | null, activeProjectId: str
   
   const registeredPeopleRef = useRef<Record<string, {name: string, role: string}>>({});
 
-  // Helper to add fake alerts in demo mode
-  const addDemoAlert = (type: 'security' | 'warning' | 'info', message: string) => {
-     const newAlert: AIAlert = { id: Math.random().toString(), type, message, timestamp: new Date() };
-     setAlerts(prev => [newAlert, ...prev].slice(0, 15));
-     
-     // In real mode, persist to db
-     addDoc(collection(db, 'alerts'), {
-        type,
-        message,
-        timestamp: serverTimestamp(),
-        resolved: false
-     }).catch(() => {});
-  };
-
-const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: number; width: number; height: number }>>(ZONES);
+  const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: number; width: number; height: number }>>(ZONES);
 
   useEffect(() => {
     if (!mode) return;
@@ -214,127 +200,25 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
     const registeredQuery = query(collection(db, 'registered_people'));
     const unsubscribeRegistered = onSnapshot(registeredQuery, (snapshot) => {
        const mapped: Record<string, {name: string, role: string}> = {};
-       const list: any[] = [];
        snapshot.forEach(doc => {
           const data = doc.data();
           mapped[doc.id] = { name: data.name, role: data.role || data.department || 'Employee' };
-          list.push({ id: doc.id, ...data });
        });
        registeredPeopleRef.current = mapped;
-
-       if (mode === 'demo') {
-         setPeople(prevPeople => {
-           const existingMap = new Map(prevPeople.map(p => [p.id, p]));
-           const zonesList = getZonesForProject(activeProjectId);
-
-           return list.map(item => {
-             const existing = existingMap.get(item.id);
-             if (existing) {
-               return {
-                 ...existing,
-                 name: item.name,
-                 role: item.role || item.department || 'Employee',
-               };
-             } else {
-               const targetZone = item.currentZone && zonesList.includes(item.currentZone)
-                 ? item.currentZone
-                 : zonesList[Math.floor(Math.random() * zonesList.length)];
-               const rect = getZoneRect(targetZone, activeProjectId, dynamicZones);
-               return {
-                 id: item.id,
-                 name: item.name,
-                 role: item.role || item.department || 'Employee',
-                 currentZone: targetZone,
-                 presenceState: 'MOVING' as const,
-                 dwellTime: 0,
-                 x: rect.x + Math.random() * rect.width,
-                 y: rect.y + Math.random() * rect.height,
-                 lastSeen: new Date(),
-                 trail: []
-               };
-             }
-           });
-         });
-       }
     }, (err) => handleDbError(err, OperationType.LIST, 'registered_people'));
     
-    // Listen to Assets from Firebase
+    // Listen to Assets from database
     const assetsQuery = collection(db, 'assets');
     const unsubscribeAssets = onSnapshot(assetsQuery, (snap) => {
       const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      if (mode === 'real') {
-        setAssets(items);
-      } else if (mode === 'demo') {
-        setAssets(prevAssets => {
-          const existingMap = new Map(prevAssets.map(a => [a.id, a]));
-          const zonesList = getZonesForProject(activeProjectId);
-          return items.map(item => {
-            const existing = existingMap.get(item.id);
-            if (existing) {
-              return {
-                ...existing,
-                name: item.name,
-                type: item.category || item.type || 'Equipment',
-                status: item.status
-              };
-            } else {
-              const targetZone = item.zoneId && zonesList.includes(item.zoneId)
-                ? item.zoneId
-                : zonesList[Math.floor(Math.random() * zonesList.length)];
-              const rect = getZoneRect(targetZone, activeProjectId, dynamicZones);
-              return {
-                id: item.id,
-                name: item.name,
-                type: item.category || item.type || 'Equipment',
-                x: rect.x + Math.random() * rect.width,
-                y: rect.y + Math.random() * rect.height,
-                status: item.status || 'Active',
-                battery: item.batteryLevel !== undefined ? item.batteryLevel : 100
-              };
-            }
-          });
-        });
-      }
+      setAssets(items);
     }, (err) => handleDbError(err, OperationType.LIST, 'assets'));
 
-    // Listen to Vehicles from Firebase
+    // Listen to Vehicles from database
     const vehiclesQuery = collection(db, 'vehicles');
     const unsubscribeVehicles = onSnapshot(vehiclesQuery, (snap) => {
       const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      if (mode === 'real') {
-        setVehicles(items);
-      } else if (mode === 'demo') {
-        setVehicles(prevVehicles => {
-          const existingMap = new Map(prevVehicles.map(v => [v.id, v]));
-          const zonesList = getZonesForProject(activeProjectId);
-          return items.map(item => {
-            const existing = existingMap.get(item.id);
-            if (existing) {
-              return {
-                ...existing,
-                name: item.name,
-                type: item.type || 'Vehicle',
-                status: item.status,
-                speed: item.speedKmh !== undefined ? item.speedKmh : existing.speed
-              };
-            } else {
-              const targetZone = item.zoneId && zonesList.includes(item.zoneId)
-                ? item.zoneId
-                : zonesList[Math.floor(Math.random() * zonesList.length)];
-              const rect = getZoneRect(targetZone, activeProjectId, dynamicZones);
-              return {
-                id: item.id,
-                name: item.name,
-                type: item.type || 'Vehicle',
-                x: rect.x + Math.random() * rect.width,
-                y: rect.y + Math.random() * rect.height,
-                speed: item.speedKmh !== undefined ? item.speedKmh : 0,
-                status: item.status || 'Active'
-              };
-            }
-          });
-        });
-      }
+      setVehicles(items);
     }, (err) => handleDbError(err, OperationType.LIST, 'vehicles'));
 
     return () => {
@@ -443,140 +327,7 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
        };
 
        interval = setInterval(syncRealtime, 5000);
-    } else if (mode === 'demo') {
-       setIsLoading(false);
-
-       // Load data from MongoDB via REST API — no hardcoded fallback data
-       const loadFromMongo = async () => {
-         if (!isMounted) return;
-         try {
-           const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
-           const authHeaders = {
-             'Accept': 'application/json',
-             'Authorization': `Bearer ${token}`
-           };
-
-           const [peopleRes, visitorsRes, assetsRes, vehiclesRes] = await Promise.all([
-             fetch('/api/data/registered_people', { headers: authHeaders }).catch(() => null),
-             fetch('/api/data/visitors', { headers: authHeaders }).catch(() => null),
-             fetch('/api/data/assets', { headers: authHeaders }).catch(() => null),
-             fetch('/api/data/vehicles', { headers: authHeaders }).catch(() => null)
-           ]);
-
-            if (peopleRes && peopleRes.ok) {
-              const data = await peopleRes.json();
-              let visitorsData: any[] = [];
-              if (visitorsRes && visitorsRes.ok) {
-                try {
-                  const rawVis = await visitorsRes.json();
-                  if (Array.isArray(rawVis)) visitorsData = rawVis;
-                } catch {}
-              }
-
-              if (Array.isArray(data) && isMounted) {
-                setPeople(prev => {
-                  const existingMap = new Map((prev || []).map(p => [p.id, p]));
-                  
-                  // Map registered workforce
-                  const workersList = data.map((p: any, idx: number) => {
-                    const id = p.id || p.hardhatTagId || `W-${idx + 1}`;
-                    const existing = existingMap.get(id);
-                    const defaultWaypoint = SITE_ZONE_WAYPOINTS[idx % SITE_ZONE_WAYPOINTS.length];
-                    const zone = p.currentZone || (existing?.currentZone) || defaultWaypoint.name;
-                    const x = typeof p.x === 'number' && p.x >= 5 && p.x <= 95 ? p.x : (existing ? existing.x : defaultWaypoint.x);
-                    const y = typeof p.y === 'number' && p.y >= 5 && p.y <= 95 ? p.y : (existing ? existing.y : defaultWaypoint.y);
-                    return {
-                      id,
-                      name: p.name || `Worker ${idx + 1}`,
-                      role: p.role || 'Field Personnel',
-                      tradeCompany: p.tradeCompany,
-                      ppeStatus: p.ppeStatus,
-                      shiftStatus: p.shiftStatus,
-                      trainingStatus: p.trainingStatus,
-                      hardhatTagId: p.hardhatTagId || p.id,
-                      currentZone: zone,
-                      presenceState: (existing?.presenceState || 'IDLE') as any,
-                      dwellTime: p.dwellTime || (existing?.dwellTime) || 0,
-                      x,
-                      y,
-                      lastSeen: p.lastSeen ? new Date(p.lastSeen) : (existing?.lastSeen || new Date()),
-                      trail: existing?.trail || []
-                    };
-                  });
-
-                  // Map allowed and verified site visitors only
-                  const activeVisitorsList = visitorsData
-                    .filter((v: any) => {
-                      if (!v) return false;
-                      const status = (v.status || '').trim();
-                      const idStatus = (v.idVerificationStatus || '').toUpperCase();
-
-                      if (status === 'Pending Approval' || status === 'Denied' || status === 'Rejected' || status === 'Completed' || status === 'Blacklisted' || status === 'Departed') {
-                        return false;
-                      }
-                      if (idStatus === 'FAILED' || idStatus === 'REJECTED') {
-                        return false;
-                      }
-                      if (status === 'Active' || status === 'Checked-in' || status === 'Overstayed') {
-                        return idStatus !== 'FAILED';
-                      }
-                      if (status === 'Approved' && (idStatus === 'VERIFIED' || v.tag)) {
-                        return true;
-                      }
-                      return false;
-                    })
-                    .map((v: any, vIdx: number) => {
-                      const id = v.id || `VIS-${vIdx + 880}`;
-                      const existing = existingMap.get(id);
-                      const zone = v.location || 'Site Command HQ';
-                      const defaultPoint = SITE_ZONE_WAYPOINTS[3];
-                      const x = typeof v.x === 'number' ? v.x : (existing ? existing.x : defaultPoint.x);
-                      const y = typeof v.y === 'number' ? v.y : (existing ? existing.y : defaultPoint.y);
-                      return {
-                        id,
-                        name: `${v.name} (Visitor)`,
-                        role: 'Visitor',
-                        tradeCompany: v.company || 'Auditor / Guest',
-                        ppeStatus: 'COMPLIANT' as const,
-                        shiftStatus: 'ON_SITE' as const,
-                        trainingStatus: 'COMPLIANT' as const,
-                        hardhatTagId: v.tag || `VIS-TAG-${v.id || vIdx}`,
-                        currentZone: zone,
-                        presenceState: (existing?.presenceState || 'IDLE') as any,
-                        dwellTime: v.duration ? parseInt(v.duration) || 20 : 20,
-                        x,
-                        y,
-                        lastSeen: v.arrivalTime ? new Date(v.arrivalTime) : (existing?.lastSeen || new Date()),
-                        trail: existing?.trail || []
-                      };
-                    });
-
-                  return [...workersList, ...activeVisitorsList];
-                });
-              }
-            }
-
-           if (assetsRes && assetsRes.ok) {
-             const data = await assetsRes.json();
-             if (Array.isArray(data) && isMounted) {
-               setAssets(data);
-             }
-           }
-
-           if (vehiclesRes && vehiclesRes.ok) {
-             const data = await vehiclesRes.json();
-             if (Array.isArray(data) && isMounted) {
-               setVehicles(data);
-             }
-           }
-         } catch (e) {
-           console.warn('MongoDB data load warning:', e);
-         }
-       };
-
-        loadFromMongo();
-        interval = setInterval(loadFromMongo, 6000);
-     }
+    }
 
      return () => {
        isMounted = false;

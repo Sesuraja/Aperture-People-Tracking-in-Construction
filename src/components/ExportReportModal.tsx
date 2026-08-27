@@ -190,19 +190,7 @@ export default function ExportReportModal({ isOpen, onClose, defaultCategory = '
             };
           });
 
-          let combined = [...pplRows, ...incRows, ...visRows, ...devRows, ...tagRows];
-
-          if (combined.length === 0) {
-            combined = [
-              ...getFallbackData('attendance').map(r => ({ category: 'Attendance & Personnel', id: r.id, name: r.name, detail: `${r.role} (${r.department})`, status: r.status, timestamp: r.totalHours })),
-              ...getFallbackData('incidents').map(r => ({ category: 'Security Incidents', id: r.id, name: r.type, detail: r.location, status: `${r.severity} - ${r.status}`, timestamp: r.time })),
-              ...getFallbackData('visitors').map(r => ({ category: 'Visitor Records', id: r.id, name: r.name, detail: `${r.company} (Host: ${r.host})`, status: r.status, timestamp: r.duration })),
-              { category: 'RFID Readers', id: 'DEV-101', name: 'Main Gate Portal #1', detail: 'Zone A Entrance', status: 'Online', timestamp: 'IP 10.0.4.12' },
-              { category: 'RFID Readers', id: 'DEV-102', name: 'Crane Sector Sensor #3', detail: 'Heavy Laydown Area', status: 'Online', timestamp: 'IP 10.0.4.15' },
-              { category: 'System Audit', id: 'SYS-808', name: 'EHS Automated Compliance Log', detail: 'Daily Attendance Audit Passed', status: 'Verified', timestamp: new Date().toLocaleTimeString() }
-            ];
-          }
-
+          const combined = [...pplRows, ...incRows, ...visRows, ...devRows, ...tagRows];
           setPreviewRows(combined);
           setIsLoading(false);
           return;
@@ -232,11 +220,11 @@ export default function ExportReportModal({ isOpen, onClose, defaultCategory = '
           }));
           setPreviewRows(transformed);
         } else {
-          setPreviewRows(list.length > 0 ? list : getFallbackData(selectedCategory));
+          setPreviewRows(list || []);
         }
       } catch (e) {
         console.warn('Failed to load snapshot for export:', e);
-        setPreviewRows(getFallbackData(selectedCategory));
+        setPreviewRows([]);
       } finally {
         setIsLoading(false);
       }
@@ -247,27 +235,6 @@ export default function ExportReportModal({ isOpen, onClose, defaultCategory = '
 
   if (!isOpen) return null;
 
-  const getFallbackData = (cat: string) => {
-    if (cat === 'incidents') {
-      return [
-        { id: 'INC-2026-089', type: 'Tailgating Detection', location: 'Heavy Crane Exclusion Zone', severity: 'High', status: 'Open', assignedTo: 'mark.s@aperturestaff.com', time: '10 mins ago' },
-        { id: 'INC-2026-088', type: 'Perimeter Breach', location: 'Gate 4 - Logistics & Concrete Laydown', severity: 'Critical', status: 'Investigating', assignedTo: 'sarah.j@aperturestaff.com', time: '45 mins ago' },
-        { id: 'INC-2026-087', type: 'Offline Reader', location: 'Scaffolding Tower Level 3', severity: 'Medium', status: 'Resolved', assignedTo: 'tech.support@aperturetech.com', time: '2 hours ago' }
-      ];
-    }
-    if (cat === 'visitors') {
-      return [
-        { id: 'VIS-449', name: 'Alice Walker', company: 'Apex Structural Inspections', host: 'sarah.j@aperturestaff.com', status: 'Pre-Registered', location: 'Gate 1 Access Turnstile', duration: '1h 30m' },
-        { id: 'VIS-450', name: 'Robert Fox', company: 'Geotechnical Soil Audits LLC', host: 'mike.t@aperturestaff.com', status: 'Active', location: 'Confined Shaft & Tunneling', duration: '2h 15m' },
-        { id: 'VIS-448', name: 'Elena Smith', company: 'Tower Crane Maintenance Partner', host: 'facilities@aperturestaff.com', status: 'Completed', location: 'Checked Out', duration: '45m' }
-      ];
-    }
-    return [
-      { id: '1', name: 'Alice Smith', department: 'Electrical Trade', role: 'Certified Electrician', firstIn: '08:15 AM', lastOut: '05:30 PM', totalHours: '9h 15m', status: 'Present' },
-      { id: '2', name: 'Bob Johnson', department: 'Concrete Trade', role: 'Subcontractor Worker', firstIn: '09:45 AM', lastOut: '04:00 PM', totalHours: '6h 15m', status: 'Late Arrival' },
-      { id: '3', name: 'Charlie Davis', department: 'Site Operations', role: 'Site Safety Inspector', firstIn: '07:00 AM', lastOut: '03:30 PM', totalHours: '8h 30m', status: 'Present' }
-    ];
-  };
 
   const toggleColumn = (key: string) => {
     if (selectedColumnKeys.includes(key)) {

@@ -17,7 +17,6 @@ import IncidentsTab from './components/IncidentsTab';
 import AIInsightsTab from './components/AIInsightsTab';
 import MaintenanceTab from './components/MaintenanceTab';
 import TopBar from './components/TopBar';
-import DemoControlBar from './components/DemoControlBar';
 import PeopleTab from './components/PeopleTab';
 import AlertsTab from './components/AlertsTab';
 import AnalyticsTab from './components/AnalyticsTab';
@@ -37,7 +36,7 @@ import { doc, getDoc, setDoc, db } from './lib/db';
 
 import { TrackingProvider } from './context/TrackingContext';
 
-export type AppMode = 'real' | 'demo' | null;
+export type AppMode = 'real' | null;
 
 export const AppModeContext = React.createContext<{ mode: AppMode }>({ mode: null });
 
@@ -93,8 +92,6 @@ export default function App() {
     const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
     const savedMode = typeof window !== 'undefined' ? localStorage.getItem('gao_app_mode') : null;
     if (token) return 'real';
-    if (savedMode === 'demo') return 'demo';
-    // Default to null so the user is presented with the Login page first
     return null;
   });
 
@@ -192,53 +189,6 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
   const [userPagePermissions, setUserPagePermissions] = useState<any>({});
 
   const loadClaimsAndPermissions = async () => {
-    if (mode === 'demo') {
-      setUserRole('admin');
-      setCurrentUser({ email: 'sigmund.t.d@gaostaff.com', name: 'Sigmund D.', role: 'admin' });
-      setPermissions({
-        admin: {
-          dashboard: true, live: true, customMap: true, playback: true, people: true, visitors: true,
-          attendance: true, alerts: true, incidents: true, analytics: true,
-          aiInsights: true, devices: true, realtime: true, maintenance: true, audit: true, settings: true
-        },
-        manager: {
-          dashboard: true, live: true, customMap: true, playback: true, people: true, visitors: true,
-          attendance: true, alerts: true, incidents: true, analytics: true,
-          aiInsights: true, devices: true, realtime: true, maintenance: true, audit: true, settings: false
-        },
-        operator: {
-          dashboard: true, live: true, customMap: true, playback: true, people: true, visitors: true,
-          attendance: true, alerts: true, incidents: true, analytics: false,
-          aiInsights: false, devices: false, realtime: true, maintenance: true, audit: false, settings: false
-        },
-        security: {
-          dashboard: true, live: true, customMap: true, playback: true, people: true, visitors: true,
-          attendance: false, alerts: true, incidents: true, analytics: false,
-          aiInsights: false, devices: false, maintenance: false, audit: false, settings: false
-        },
-        auditor: {
-          dashboard: true, live: false, customMap: false, playback: true, people: true, visitors: true,
-          attendance: true, alerts: true, incidents: true, analytics: true,
-          aiInsights: true, devices: false, maintenance: false, audit: true, settings: false
-        },
-        contractor: {
-          dashboard: false, live: true, customMap: false, playback: false, people: true, visitors: false,
-          attendance: true, alerts: true, incidents: false, analytics: false,
-          aiInsights: false, devices: false, maintenance: false, audit: false, settings: false
-        },
-        visitor_manager: {
-          dashboard: false, live: false, customMap: false, playback: false, people: false, visitors: true,
-          attendance: true, alerts: true, incidents: false, analytics: false,
-          aiInsights: false, devices: false, maintenance: false, audit: false, settings: false
-        },
-        viewer: {
-          dashboard: true, live: true, customMap: true, playback: false, people: false, visitors: false,
-          attendance: false, alerts: true, incidents: false, analytics: false,
-          aiInsights: false, devices: false, maintenance: false, audit: false, settings: false
-        }
-      });
-      return;
-    }
 
     let resolvedRole = 'admin';
     let currentUid = '';
@@ -501,7 +451,6 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
       {/* Main Content Workspace Area */}
       <main className="flex-1 flex flex-col min-w-0 bg-slate-50 dark:bg-slate-900 transition-colors">
         <TopBar onOpenCommandPalette={() => setIsCommandPaletteOpen(true)} />
-        {mode === 'demo' && <DemoControlBar />}
         
         <div className="flex-1 overflow-y-auto relative min-h-0 w-full flex flex-col">
           <div className="min-h-full flex flex-col w-full flex-1">

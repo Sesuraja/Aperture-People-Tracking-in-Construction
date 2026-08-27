@@ -682,17 +682,17 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         existing.presenceState = p.presenceState || existing.presenceState;
         existing.x = p.x;
         existing.y = p.y;
-        existing.lastSeen = p.lastSeen || existing.lastSeen;
-      } else if (dbWorkers.length === 0) {
-        // Fallback for initial demo state if database is completely empty
+      } else {
         map.set(tagKey, {
           ...p,
           hardhatTagId: p.hardhatTagId || p.id,
-          tradeCompany: p.tradeCompany || 'BuildCorp Partner',
+          name: p.name || `Tag ${tagKey}`,
+          role: p.role || 'Field Personnel',
+          tradeCompany: p.tradeCompany || 'Field Team',
           shiftStatus: 'ON_SITE',
           trainingStatus: p.trainingStatus || 'COMPLIANT',
-          lastTrainingDate: p.lastTrainingDate || '2026-06-01',
-          trainingCourse: 'Site EHS Induction & PPE Verification',
+          lastTrainingDate: p.lastTrainingDate || '',
+          trainingCourse: '',
           isDbRegistered: false
         });
       }

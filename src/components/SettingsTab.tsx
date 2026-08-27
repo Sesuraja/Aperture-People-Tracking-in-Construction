@@ -72,7 +72,6 @@ export default function SettingsTab() {
   const [isTesting, setIsTesting] = useState(false);
   const [testResult, setTestResult] = useState<"success" | "error" | null>(null);
   const [apiUrl, setApiUrl] = useState(DEFAULT_HOST);
-  const [apiDemoMode, setApiDemoMode] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessNotice, setSaveSuccessNotice] = useState<string | null>(null);
 
@@ -98,7 +97,6 @@ export default function SettingsTab() {
         if (data.maintenanceMode !== undefined) setMaintenanceMode(data.maintenanceMode);
         if (data.systemLanguage) setSystemLanguage(data.systemLanguage);
         if (data.apiUrl) setApiUrl(data.apiUrl);
-        if (data.demoMode !== undefined) setApiDemoMode(data.demoMode);
         if (data.loiteringThreshold !== undefined) setLoiteringThreshold(data.loiteringThreshold);
         if (data.idleAlertThreshold !== undefined) setIdleAlertThreshold(data.idleAlertThreshold);
         if (data.occupancyThresholds) setOccupancyThresholds(data.occupancyThresholds);
@@ -477,11 +475,6 @@ export default function SettingsTab() {
     const fetchCurrentUserClaim = async () => {
       let resolvedRole = "operator";
 
-      if (mode === "demo") {
-        setUserRole("admin");
-        return;
-      }
-
       const token = localStorage.getItem("gao_jwt_token");
       if (token) {
         try {
@@ -520,95 +513,66 @@ export default function SettingsTab() {
     setIsLoadingUsers(true);
     setActionErrorMessage(null);
     try {
-      // 1. Load users
-      if (mode === "demo") {
-        setUsers([
-          {
-            uid: "demo_user_1",
-            email: "operator@aperture-construction.com",
-            displayName: "Jane Doe (Site Operator)",
-            role: "operator",
-          },
-          {
-            uid: "demo_user_2",
-            email: "manager@aperture-construction.com",
-            displayName: "John Smith (Site Manager)",
-            role: "manager",
-          },
-          {
-            uid: "demo_user_3",
-            email: "admin@aperture-construction.com",
-            displayName: "Marcus Vance (System Admin)",
-            role: "admin",
-          },
-        ]);
-        setRolePermissions(DEFAULT_ROLE_PERMISSIONS);
-      } else {
-        try {
-          const token = localStorage.getItem("gao_jwt_token") || "";
-          const res = await fetch("/api/admin/users", {
-            headers: { Authorization: `Bearer ${token}` },
-          });
+      const token = localStorage.getItem("gao_jwt_token") || "";
+      const res = await fetch("/api/admin/users", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
 
-          if (res.ok) {
-            const data = await res.json();
-            const normalizedUsers = (data.users || [])
-              .filter(Boolean)
-              .map((u: any) => ({
-                ...u,
-                uid: u.uid || u.id,
-                id: u.id || u.uid
-              }));
-            setUsers(normalizedUsers);
-          }
-        } catch (fetchErr) {
-          console.warn("Could not fetch user list from backend admin endpoint:", fetchErr);
-        }
-
-        // 2. Load role_permissions document from MongoDB
-        try {
-          const roleDoc = await getDoc(doc(db, "settings", "role_permissions"));
-          if (roleDoc.exists()) {
-            setRolePermissions({
-              ...DEFAULT_ROLE_PERMISSIONS,
-              ...roleDoc.data()
-            });
-          } else {
-            setRolePermissions(DEFAULT_ROLE_PERMISSIONS);
-          }
-        } catch (roleErr) {
-          console.warn("Failed to read role_permissions doc:", roleErr);
-          setRolePermissions(DEFAULT_ROLE_PERMISSIONS);
-        }
-
-        // 3. Load custom_roles document from MongoDB
-        try {
-          const customRolesDoc = await getDoc(doc(db, "settings", "custom_roles"));
-          if (customRolesDoc.exists() && customRolesDoc.data().roles) {
-            const loadedCustomRoles = customRolesDoc.data().roles;
-            // merge with defaults
-            const baseIds = new Set([
-              "admin", "manager", "operator", "security", "auditor", "contractor", "visitor_manager", "viewer"
-            ]);
-            const filteredCustom = loadedCustomRoles.filter((r: any) => !baseIds.has(r.id));
-            setCustomRoles([
-              { id: "admin", label: "Administrator", desc: "Full administrative access & user management" },
-              { id: "manager", label: "Site Manager", desc: "Operational control and site analytics" },
-              { id: "operator", label: "Operator", desc: "Real-time monitoring and equipment care" },
-              { id: "security", label: "Security Officer", desc: "Live position tracking & threat response" },
-              { id: "auditor", label: "Compliance Auditor", desc: "Audit logs & regulatory safety view" },
-              { id: "contractor", label: "External Contractor", desc: "Personnel attendance & task view" },
-              { id: "visitor_manager", label: "Visitor Receptionist", desc: "Visitor registration & kiosk logs" },
-              { id: "viewer", label: "ReadOnly Viewer", desc: "View-only dashboards" },
-              ...filteredCustom
-            ]);
-          }
-        } catch (customErr) {
-          console.warn("Failed to load custom roles:", customErr);
-        }
+      if (res.ok) {
+        const data = await res.json();
+        const normalizedUsers = (data.users || [])
+          .filter(Boolean)
+          .map((u: any) => ({
+            ...u,
+            uid: u.uid || u.id,
+            id: u.id || u.uid
+          }));
+        setUsers(normalizedUsers);
       }
-    } catch (err) {
-      console.warn("Management data fetch error:", err);
+    } catch (fetchErr) {
+      console.warn("Could not fetch user list from backend admin endpoint:", fetchErr);
+    }
+
+    // 2. Load role_permissions document from MongoDB
+    try {
+      const roleDoc = await getDoc(doc(db, "settings", "role_permissions"));
+      if (roleDoc.exists()) {
+        setRolePermissions({
+          ...DEFAULT_ROLE_PERMISSIONS,
+          ...roleDoc.data()
+        });
+      } else {
+        setRolePermissions(DEFAULT_ROLE_PERMISSIONS);
+      }
+    } catch (roleErr) {
+      console.warn("Failed to read role_permissions doc:", roleErr);
+      setRolePermissions(DEFAULT_ROLE_PERMISSIONS);
+    }
+
+    // 3. Load custom_roles document from MongoDB
+    try {
+      const customRolesDoc = await getDoc(doc(db, "settings", "custom_roles"));
+      if (customRolesDoc.exists() && customRolesDoc.data().roles) {
+        const loadedCustomRoles = customRolesDoc.data().roles;
+        // merge with defaults
+        const baseIds = new Set([
+          "admin", "manager", "operator", "security", "auditor", "contractor", "visitor_manager", "viewer"
+        ]);
+        const filteredCustom = loadedCustomRoles.filter((r: any) => !baseIds.has(r.id));
+        setCustomRoles([
+          { id: "admin", label: "Administrator", desc: "Full administrative access & user management" },
+          { id: "manager", label: "Site Manager", desc: "Operational control and site analytics" },
+          { id: "operator", label: "Operator", desc: "Real-time monitoring and equipment care" },
+          { id: "security", label: "Security Officer", desc: "Live position tracking & threat response" },
+          { id: "auditor", label: "Compliance Auditor", desc: "Audit logs & regulatory safety view" },
+          { id: "contractor", label: "External Contractor", desc: "Personnel attendance & task view" },
+          { id: "visitor_manager", label: "Visitor Receptionist", desc: "Visitor registration & kiosk logs" },
+          { id: "viewer", label: "ReadOnly Viewer", desc: "View-only dashboards" },
+          ...filteredCustom
+        ]);
+      }
+    } catch (customErr) {
+      console.warn("Failed to load custom roles:", customErr);
     } finally {
       setIsLoadingUsers(false);
     }
@@ -645,41 +609,6 @@ export default function SettingsTab() {
   };
 
   const fetchUserActivityLogs = async () => {
-    if (mode === "demo") {
-      setUserActivityLogs([
-        {
-          id: "audit_demo_1",
-          timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
-          userId: "demo_user_3",
-          userEmail: "admin@aperture-construction.com",
-          action: "ADMIN_CHANGE_USER_ROLE",
-          resource: "users",
-          details: { targetUser: "operator@aperture-construction.com", prevRole: "viewer", newRole: "operator" },
-          ip: "192.168.1.100"
-        },
-        {
-          id: "audit_demo_2",
-          timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
-          userId: "demo_user_3",
-          userEmail: "admin@aperture-construction.com",
-          action: "ADMIN_CREATE_USER",
-          resource: "users",
-          details: { targetEmail: "manager@aperture-construction.com", role: "manager" },
-          ip: "192.168.1.100"
-        },
-        {
-          id: "audit_demo_3",
-          timestamp: new Date(Date.now() - 3600000 * 24).toISOString(),
-          userId: "demo_user_3",
-          userEmail: "admin@aperture-construction.com",
-          action: "ADMIN_UPDATE_PERMISSIONS",
-          resource: "role_permissions",
-          details: { updatedRoles: ["operator", "security"] },
-          ip: "192.168.1.100"
-        }
-      ]);
-      return;
-    }
 
     setIsLoadingActivityLogs(true);
     try {
@@ -704,13 +633,6 @@ export default function SettingsTab() {
     setActionErrorMessage(null);
     setIsApplyingBulkRole(true);
     try {
-      if (mode === "demo") {
-        setUsers(users.map(u => bulkSelectedUsers.includes(u.uid) ? { ...u, role: bulkRole } : u));
-        setActionSuccessMessage(`Successfully updated role to ${bulkRole} for ${bulkSelectedUsers.length} users (Demo Mode)`);
-        setBulkSelectedUsers([]);
-        setIsApplyingBulkRole(false);
-        return;
-      }
 
       const token = localStorage.getItem("gao_jwt_token") || "";
       const res = await fetch("/api/admin/bulk-set-role", {
@@ -747,11 +669,6 @@ export default function SettingsTab() {
     setActionErrorMessage(null);
     setResendingInviteUid(targetUid);
     try {
-      if (mode === "demo") {
-        setActionSuccessMessage(`Successfully resent invitation email to staff member (Demo Mode)`);
-        setResendingInviteUid(null);
-        return;
-      }
 
       const token = localStorage.getItem("gao_jwt_token") || "";
       const res = await fetch(`/api/admin/users/${targetUid}/resend-invite`, {
@@ -1199,7 +1116,6 @@ export default function SettingsTab() {
             setApiUrl(data.apiUrl);
             gaoApi.setHost(data.apiUrl);
           }
-          if (data.demoMode !== undefined) setApiDemoMode(data.demoMode);
           if (data.loiteringThreshold !== undefined) setLoiteringThreshold(data.loiteringThreshold);
           if (data.idleAlertThreshold !== undefined) setIdleAlertThreshold(data.idleAlertThreshold);
           if (data.occupancyThresholds !== undefined) setOccupancyThresholds(data.occupancyThresholds);
@@ -1430,7 +1346,6 @@ export default function SettingsTab() {
         systemLanguage,
 
         apiUrl,
-        demoMode: apiDemoMode,
         loiteringThreshold,
         idleAlertThreshold,
         occupancyThresholds,
@@ -1559,7 +1474,6 @@ export default function SettingsTab() {
       maintenanceMode,
       systemLanguage,
       apiUrl,
-      apiDemoMode,
       loiteringThreshold,
       idleAlertThreshold,
       occupancyThresholds,
@@ -2574,22 +2488,6 @@ export default function SettingsTab() {
                     onChange={(e) => setApiUrl(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-mono text-xs focus:border-[#007BC4] outline-none transition"
                   />
-                </div>
-
-                <div className="p-6 flex items-center justify-between">
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm">Simulation & Demo Mode</div>
-                    <div className="text-xs text-slate-500 mt-1">Generate dynamic synthetic tag telemetry.</div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={apiDemoMode}
-                      onChange={(e) => setApiDemoMode(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#007BC4]"></div>
-                  </label>
                 </div>
               </div>
 

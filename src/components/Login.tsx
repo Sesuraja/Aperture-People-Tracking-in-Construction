@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { db, doc, setDoc } from '../lib/db';
-import { ShieldAlert, PlayCircle, Loader2, Mail, Lock, User, Shield, LogIn, UserPlus, Building2 } from 'lucide-react';
+import { ShieldAlert, Loader2, Mail, Lock, User, Shield, LogIn, UserPlus, Building2 } from 'lucide-react';
 import ApertureLogo, { ApertureLogoMark } from './ApertureLogo';
 import { safeStorage } from '../lib/safeStorage';
 
 interface LoginProps {
-  onLoginSuccess: (mode: 'real' | 'demo') => void;
+  onLoginSuccess: (mode: 'real') => void;
 }
 
 export default function Login({ onLoginSuccess }: LoginProps) {
@@ -18,10 +18,6 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleDemoAccess = () => {
-    safeStorage.setItem('gao_app_mode', 'demo');
-    onLoginSuccess('demo');
-  };
 
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -297,16 +293,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               )}
             </button>
 
-            {!isSignUp && (
-              <button
-                type="button"
-                onClick={handleDemoAccess}
-                className="w-full mt-2 py-2 px-3 border border-slate-200 hover:bg-slate-50 text-slate-600 rounded-lg text-xs font-semibold flex items-center justify-center gap-2 transition cursor-pointer"
-              >
-                <PlayCircle className="w-4 h-4 text-emerald-600" />
-                <span>Quick Access via Demo Sandbox Mode</span>
-              </button>
-            )}
+
           </form>
 
           {/* MongoDB Authentication Footnote */}
