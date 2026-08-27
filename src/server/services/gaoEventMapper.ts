@@ -172,7 +172,9 @@ export function mapGaoNativeToDirect(
 function normalizeSingleGaoItem(item: any): GaoNativeEvent {
 
   if (!item || typeof item !== 'object') return item;
-  const epc = item.epc || item.EPC || item.tagId || item.TagID || item.tag || '';
+  const epc = item.epc || item.EPC || item.tagId || item.TagID || item.tag || item.Tag || item.EPCID || item.epcId || item.pc || item.PC || item.id || '';
+  // DEBUG: show what epc resolved to
+  console.log('[normalizeSingleGaoItem] raw keys:', Object.keys(item), '| resolved epc:', epc);
   const rawAnt = item.ant !== undefined ? item.ant : (item.Ant !== undefined ? item.Ant : (item.Antenna !== undefined ? item.Antenna : 1));
   const ant = typeof rawAnt === 'number' ? rawAnt : parseInt(String(rawAnt), 10) || 1;
   const timestamp = item.timestamp || item.DateTime || item.Timestamp || item.time || new Date().toISOString();

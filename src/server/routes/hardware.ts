@@ -53,8 +53,11 @@ hardwareRouter.post('/gao-native', async (req: Request, res: Response) => {
     const results: any[] = [];
 
     for (const rawEvent of events) {
+      // DEBUG: Log raw event to diagnose EPC field name from the reader
+      console.log('[GAO-Native] Received event fields:', JSON.stringify(rawEvent));
       const validation = validateGaoNativeEvent(rawEvent);
       if (!validation.valid) {
+        console.warn('[GAO-Native] Validation failed:', validation.errors, '| epc value:', (rawEvent as any).epc);
         results.push({ success: false, epc: (rawEvent as any).epc, errors: validation.errors });
         continue;
       }

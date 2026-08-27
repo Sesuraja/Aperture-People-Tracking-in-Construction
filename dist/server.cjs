@@ -4198,7 +4198,8 @@ function mapGaoNativeToDirect(event, apertureReaderId, source = "gao216031a") {
 }
 function normalizeSingleGaoItem(item) {
   if (!item || typeof item !== "object") return item;
-  const epc = item.epc || item.EPC || item.tagId || item.TagID || item.tag || "";
+  const epc = item.epc || item.EPC || item.tagId || item.TagID || item.tag || item.Tag || item.EPCID || item.epcId || item.pc || item.PC || item.id || "";
+  console.log("[normalizeSingleGaoItem] raw keys:", Object.keys(item), "| resolved epc:", epc);
   const rawAnt = item.ant !== void 0 ? item.ant : item.Ant !== void 0 ? item.Ant : item.Antenna !== void 0 ? item.Antenna : 1;
   const ant = typeof rawAnt === "number" ? rawAnt : parseInt(String(rawAnt), 10) || 1;
   const timestamp = item.timestamp || item.DateTime || item.Timestamp || item.time || (/* @__PURE__ */ new Date()).toISOString();
@@ -4254,8 +4255,10 @@ hardwareRouter.post("/gao-native", async (req, res) => {
     const readerIdOverride = req.query.readerId || void 0;
     const results = [];
     for (const rawEvent of events) {
+      console.log("[GAO-Native] Received event fields:", JSON.stringify(rawEvent));
       const validation = validateGaoNativeEvent(rawEvent);
       if (!validation.valid) {
+        console.warn("[GAO-Native] Validation failed:", validation.errors, "| epc value:", rawEvent.epc);
         results.push({ success: false, epc: rawEvent.epc, errors: validation.errors });
         continue;
       }
