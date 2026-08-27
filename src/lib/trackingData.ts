@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { gaoApi, RealtimeTag } from './gaoApi';
-import { collection, addDoc, query, orderBy, limit, onSnapshot, doc, getDoc, db } from './db';
+import { collection, query, orderBy, limit, onSnapshot, doc, getDoc, db } from './db';
 import { Person, Asset, Vehicle, AIAlert, PresenceState } from '../types';
 
 export type { Person, Asset, Vehicle, AIAlert, PresenceState };
@@ -316,22 +316,7 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
                  currentOccupancy[p.currentZone] = (currentOccupancy[p.currentZone] || 0) + 1;
               });
 
-              Object.entries(currentOccupancy).forEach(([zone, count]) => {
-                 const limit = occupancyLimitsRef.current[zone];
-                 if (limit && count > limit) {
-                    const now = Date.now();
-                    const lastAlerted = alertedZonesRef.current[zone] || 0;
-                    if (now - lastAlerted > 60000) {
-                       alertedZonesRef.current[zone] = now;
-                       addDoc(collection(db, 'alerts'), {
-                         type: 'warning',
-                         message: `OVERCAPACITY: ${zone} exceeded max occupancy of ${limit}. Currently ${count}.`,
-                         timestamp: new Date()
-                       }).catch(error => handleDbError(error, OperationType.WRITE, 'alerts'));
-                    }
-                 }
-              });
-
+              // Occupancy calculated in memory for UI presentation without creating synthetic alert records
               return nextPeople;
             });
           } catch (e: any) {

@@ -10,7 +10,6 @@ import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
 import { initDatabase, startRealTimeTagsCleanupJob } from './src/server/services/db.js';
 import { connectionsRouter } from './src/server/routes/connections.js';
-import { startPollingService } from './src/server/services/connectionPoller.js';
 import { initWebSocketServer } from './src/server/services/websocket.js';
 import { authRouter, bootstrapAdminUser } from './src/server/routes/auth.js';
 import { adminRouter } from './src/server/routes/admin.js';
@@ -106,7 +105,6 @@ async function startServer() {
   // Initialize DB asynchronously without blocking HTTP server startup
   initDatabase().then(async () => {
     startRealTimeTagsCleanupJob(15, 60);
-    startPollingService();
     await bootstrapAdminUser();
   }).catch((e) => {
     console.warn('[DB Service] Async DB initialization note:', e?.message);

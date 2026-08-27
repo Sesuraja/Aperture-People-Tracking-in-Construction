@@ -3,9 +3,7 @@ import {
   Cpu,
   Radio,
   Plus,
-  Play,
   RefreshCw,
-  CheckCircle2,
   AlertTriangle,
   Database,
   Bot,
@@ -68,7 +66,7 @@ import { useTerminology } from "../context/TrackingContext";
 
 export default function DirectHardwareIntegrationSection() {
   const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, zoneLabel } = useTerminology();
-  const [activeTab, setActiveTab] = useState<'readers' | 'tags' | 'simulator' | 'api_docs'>('readers');
+  const [activeTab, setActiveTab] = useState<'readers' | 'tags' | 'api_docs'>('readers');
   const [readers, setReaders] = useState<HardwareReader[]>([]);
 
   const [mappings, setMappings] = useState<TagEntityMapping[]>([]);
@@ -77,7 +75,7 @@ export default function DirectHardwareIntegrationSection() {
   // Modal / Add Reader State
   const [showAddReader, setShowAddReader] = useState(false);
   const [newReader, setNewReader] = useState<Partial<HardwareReader>>({
-    readerId: `GAO-UHF-${Math.floor(100 + Math.random() * 900)}`,
+    readerId: "GAO-UHF-818-A",
     name: "Zone 1 Fixed Gate Reader",
     model: "GAO 818001 UHF 4-Port Fixed Reader",
     ipAddress: "192.168.1.120",
@@ -95,23 +93,15 @@ export default function DirectHardwareIntegrationSection() {
   // Modal / Add Tag Mapping State
   const [showAddTag, setShowAddTag] = useState(false);
   const [newTag, setNewTag] = useState<Partial<TagEntityMapping>>({
-    tagId: `E28011606000020788842D${Math.floor(10 + Math.random() * 89)}`,
+    tagId: "",
     entityType: "PERSONNEL",
-    entityId: `EMP-${Math.floor(100 + Math.random() * 900)}`,
-    entityName: "Alex Rivera",
+    entityId: "",
+    entityName: "",
     roleOrTrade: "Structural Welder",
     department: "Construction Crew B",
     assignedZone: "Main Facility & Zone 1",
     status: "ACTIVE"
   });
-
-  // Hardware Scanner Simulator State
-  const [simReaderId, setSimReaderId] = useState<string>("GAO-UHF-818-A");
-  const [simAntennaId, setSimAntennaId] = useState<number>(1);
-  const [simTagId, setSimTagId] = useState<string>("E28011606000020788842D31");
-  const [simRssi, setSimRssi] = useState<number>(-55);
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [simResult, setSimResult] = useState<any | null>(null);
 
   const fetchHardwareData = async () => {
     try {
@@ -187,33 +177,6 @@ export default function DirectHardwareIntegrationSection() {
       await fetchHardwareData();
     } catch (err) {
       console.error("Delete tag failed:", err);
-    }
-  };
-
-  const handleTriggerSimScan = async () => {
-    try {
-      setIsSimulating(true);
-      setSimResult(null);
-      const res = await fetch("/api/hardware/test-scan", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          readerId: simReaderId,
-          antennaId: simAntennaId,
-          tagId: simTagId,
-          rssi: simRssi
-        })
-      });
-      const data = await res.json();
-      setSimResult(data);
-      await fetchHardwareData();
-    } catch (err: any) {
-      setSimResult({
-        success: false,
-        error: err.message || "Failed to trigger scan"
-      });
-    } finally {
-      setIsSimulating(false);
     }
   };
 
@@ -299,19 +262,6 @@ export default function DirectHardwareIntegrationSection() {
         >
           <Tag className="w-3.5 h-3.5" />
           RFID Tag-to-Entity Association ({mappings.length})
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('simulator')}
-          className={`px-4 py-2.5 text-xs font-semibold flex items-center gap-2 border-b-2 transition-all ${
-            activeTab === 'simulator'
-              ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400'
-              : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-          }`}
-        >
-          <Play className="w-3.5 h-3.5 text-emerald-500" />
-          Live Hardware Scan Simulator
         </button>
 
         <button
@@ -526,150 +476,6 @@ export default function DirectHardwareIntegrationSection() {
               </table>
             </div>
           </div>
-        </div>
-      )}
-
-      {/* TAB 3: SIMULATOR */}
-      {activeTab === 'simulator' && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-5">
-          <div>
-            <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-              <Play className="w-4 h-4 text-emerald-500" />
-              Direct Hardware Scanner Simulator & Verification Tool
-            </h4>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Simulate a physical RFID reader tag detection. Verify the complete flow: Hardware Reader → Zone Resolution → AI Engine Analysis → MongoDB Storage → Dashboard Broadcast.
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 p-4 bg-slate-50 dark:bg-slate-800/40 rounded-xl border border-slate-200 dark:border-slate-700">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Reader Gateway
-              </label>
-              <select
-                value={simReaderId}
-                onChange={(e) => setSimReaderId(e.target.value)}
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg"
-              >
-                {readers.map((r) => (
-                  <option key={r.id} value={r.readerId}>
-                    {r.name} ({r.readerId})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Antenna Port
-              </label>
-              <select
-                value={simAntennaId}
-                onChange={(e) => setSimAntennaId(Number(e.target.value))}
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg"
-              >
-                <option value={1}>Antenna 1 (Inbound Entry)</option>
-                <option value={2}>Antenna 2 (Outbound Exit)</option>
-                <option value={3}>Antenna 3</option>
-                <option value={4}>Antenna 4</option>
-              </select>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                RFID Tag ID / EPC Hex
-              </label>
-              <input
-                type="text"
-                value={simTagId}
-                onChange={(e) => setSimTagId(e.target.value)}
-                className="w-full px-3 py-2 text-xs font-mono bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg"
-              />
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Signal Strength (RSSI)
-              </label>
-              <select
-                value={simRssi}
-                onChange={(e) => setSimRssi(Number(e.target.value))}
-                className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-600 rounded-lg"
-              >
-                <option value={-45}>-45 dBm (Direct Proximity)</option>
-                <option value={-58}>-58 dBm (Strong Reading)</option>
-                <option value={-72}>-72 dBm (Medium Range)</option>
-                <option value={-85}>-85 dBm (Fringe Perimeter)</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-slate-500">
-              Quick Tag Preset:{" "}
-              <button
-                type="button"
-                onClick={() => setSimTagId("E28011606000020788842D31")}
-                className="text-indigo-600 dark:text-indigo-400 font-mono underline mr-2"
-              >
-                Marcus Vance (EMP-901)
-              </button>
-              <button
-                type="button"
-                onClick={() => setSimTagId("AST-CAT336-991")}
-                className="text-indigo-600 dark:text-indigo-400 font-mono underline"
-              >
-                CAT 336 Excavator
-              </button>
-            </span>
-
-            <button
-              type="button"
-              disabled={isSimulating}
-              onClick={handleTriggerSimScan}
-              className="inline-flex items-center gap-1.5 px-5 py-2.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-sm disabled:opacity-50 transition-colors"
-            >
-              {isSimulating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
-              Transmit Hardware Scan Ping
-            </button>
-          </div>
-
-          {/* Hardware Scan Response Card */}
-          {simResult && (
-            <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-white space-y-3 font-mono text-xs">
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
-                <span className="flex items-center gap-2 text-emerald-400 font-semibold">
-                  <CheckCircle2 className="w-4 h-4" />
-                  Hardware Telemetry Ingested & Analyzed
-                </span>
-                <span className="text-slate-400">{new Date().toLocaleTimeString()}</span>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
-                <div className="bg-slate-900 p-2.5 rounded border border-slate-800">
-                  <span className="text-slate-400 block text-[10px]">Resolved Entity:</span>
-                  <span className="text-indigo-400 font-bold">{simResult.resolvedEntity?.name}</span>
-                  <span className="text-[10px] text-slate-400 block">({simResult.resolvedEntity?.role || simResult.resolvedEntity?.type})</span>
-                </div>
-
-                <div className="bg-slate-900 p-2.5 rounded border border-slate-800">
-                  <span className="text-slate-400 block text-[10px]">Resolved Zone:</span>
-                  <span className="text-amber-400 font-bold">{simResult.resolvedZone}</span>
-                </div>
-
-                <div className="bg-slate-900 p-2.5 rounded border border-slate-800">
-                  <span className="text-slate-400 block text-[10px]">AI Risk Score & Level:</span>
-                  <span className="text-emerald-400 font-bold">{simResult.aiRiskScore}/100 ({simResult.aiRiskLevel})</span>
-                </div>
-              </div>
-
-              <div className="text-[11px] text-slate-300 bg-slate-900 p-2 rounded border border-slate-800">
-                <span className="text-purple-400 font-semibold">AI Safety Insight: </span>
-                {simResult.aiInsight}
-              </div>
-            </div>
-          )}
         </div>
       )}
 

@@ -259,33 +259,6 @@ hardwareRouter.post('/scan', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/hardware/test-scan (Interactive scanner tool for Settings tab)
-hardwareRouter.post('/test-scan', async (req: Request, res: Response) => {
-  const orgId = getReqOrgId(req);
-  try {
-    const { readerId, antennaId, tagId, rssi } = req.body || {};
-    const effectiveTag = tagId || 'E28011606000020788842D31';
-    const effectiveReader = readerId || 'GAO-UHF-818-A';
-
-    const result = await processDirectHardwareScan({
-      readerId: effectiveReader,
-      antennaId: Number(antennaId) || 1,
-      tagId: effectiveTag,
-      rssi: rssi !== undefined ? Number(rssi) : -55,
-      timestamp: new Date().toISOString(),
-      protocol: 'Direct Hardware Test Ping'
-    }, orgId);
-
-    return res.json({
-      success: true,
-      message: 'Direct hardware scan processed through AI Engine and saved to MongoDB',
-      ...result
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // GET /api/hardware/status (Health telemetry summary)
 hardwareRouter.get('/status', async (req: Request, res: Response) => {
   const orgId = getReqOrgId(req);

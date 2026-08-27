@@ -42,8 +42,6 @@ export interface ReaderZoneMapping {
 export interface TrackingContextType {
   activeProject: string;
   setActiveProject: (id: string) => void;
-  mode: 'real' | 'demo';
-  setMode: (m: 'real' | 'demo') => void;
   wsConnected: boolean;
   liveTags: RealtimeTag[];
   people: Person[];
@@ -118,10 +116,6 @@ export const SITE_ZONE_WAYPOINTS: { name: string; x: number; y: number; minX: nu
 export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const [activeProject, setActiveProjectState] = useState<string>(() => {
     return localStorage.getItem('gao_active_project') || 'metro-tower';
-  });
-
-  const [mode, setModeState] = useState<'real' | 'demo'>(() => {
-    return (localStorage.getItem('gao_app_mode') as 'real' | 'demo') || 'real';
   });
 
   const [industryConfig, setIndustryConfig] = useState<IndustryConfig>(() => {
@@ -407,17 +401,6 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const setActiveProject = useCallback((id: string) => {
     setActiveProjectState(id);
     safeStorage.setItem('gao_active_project', id);
-  }, []);
-
-  const setMode = useCallback((newMode: 'real' | 'demo') => {
-    setModeState(newMode);
-    safeStorage.setItem('gao_app_mode', newMode);
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({
-        type: newMode === 'demo' ? 'enable_demo_mode' : 'disable_demo_mode',
-        payload: { mode: newMode }
-      }));
-    }
   }, []);
 
   const setCustomFloorplan = useCallback((url: string | null) => {
@@ -1017,17 +1000,11 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
           y: targetY,
           rssi,
           lastReader: readerId,
-          photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=120',
           lastSeen: new Date(timestamp),
           trail: [{ x: targetX, y: targetY }]
         };
 
-        // Persist new RFID worker detection to MongoDB Atlas
-        setDoc(doc(db, 'people', newPerson.id), {
-          ...newPerson,
-          lastSeen: new Date(timestamp).toISOString()
-        }, { merge: true }).catch(() => {});
-
+        // Return UI in-memory representation without writing to people collection
         return [...prev, newPerson];
       }
     });
@@ -1087,10 +1064,6 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
         ws.onopen = () => {
           setWsConnected(true);
-          ws?.send(JSON.stringify({
-            type: mode === 'demo' ? 'enable_demo_mode' : 'disable_demo_mode',
-            payload: { mode }
-          }));
         };
 
         ws.onmessage = (event) => {
@@ -1100,10 +1073,6 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
             if (msgType === 'tag_update' || msgType === 'rfid_scan' || msgType === 'tag_location_update') {
               handleNormalizedTagUpdate(data.payload || data);
-            } else if (msgType === 'synthetic_rfid_scan' || msgType === 'demo_tag_update') {
-              if (mode === 'demo') {
-                handleNormalizedTagUpdate(data.payload || data);
-              }
             } else if (msgType === 'GetTagsInRealtime_response') {
               if (Array.isArray(data.payload)) {
                 for (const item of data.payload) {
@@ -1170,7 +1139,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       unsubCameras();
       unsubSensors();
     };
-  }, [loadDatabaseConfig, handleNormalizedTagUpdate, mode]);
+  }, [loadDatabaseConfig, handleNormalizedTagUpdate]);
 
   // Periodic fallback polling in real mode
   useEffect(() => {
@@ -1224,8 +1193,6 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       value={{
         activeProject,
         setActiveProject,
-        mode,
-        setMode,
         wsConnected,
         liveTags,
         people,

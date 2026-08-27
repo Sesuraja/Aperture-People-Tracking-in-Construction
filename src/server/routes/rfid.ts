@@ -48,80 +48,6 @@ const scanSchema = z.object({
   readerId: z.string().optional().default('GAO-UHF-READER-01')
 });
 
-// Helper for default history mock records formatted to GAO specification
-function getDefaultHistoryRecords() {
-  const now = new Date();
-  const h1Enter = new Date(now.getTime() - 3600000 * 2);
-  const h1Leave = new Date(now.getTime() - 3600000 * 1.5);
-  const h2Enter = new Date(now.getTime() - 3600000 * 5);
-  const h2Leave = new Date(now.getTime() - 3600000 * 3.5);
-  const h3Enter = new Date(now.getTime() - 3600000 * 24);
-  const h3Leave = new Date(now.getTime() - 3600000 * 22);
-
-  return [
-    {
-      TagID: 'E28011606000020788842D31',
-      FirstName: 'John',
-      LastName: 'Smith',
-      LocationName: 'd6',
-      EnterTime: formatUtcDateTime(h1Enter),
-      LeaveTime: formatUtcDateTime(h1Leave),
-      EnterTimeStr: formatUtcDateTime(h1Enter),
-      LeaveTimeStr: formatUtcDateTime(h1Leave),
-      Duration: 0.5
-    },
-    {
-      TagID: 'E28011606000020788842D31',
-      FirstName: 'Jack',
-      LastName: 'Wince',
-      LocationName: 'd8',
-      EnterTime: formatUtcDateTime(h2Enter),
-      LeaveTime: formatUtcDateTime(h2Leave),
-      EnterTimeStr: formatUtcDateTime(h2Enter),
-      LeaveTimeStr: formatUtcDateTime(h2Leave),
-      Duration: 1.5
-    },
-    {
-      TagID: 'E28011606000020788842D32',
-      FirstName: 'Marcus',
-      LastName: 'Vance',
-      LocationName: 'Zone1',
-      EnterTime: formatUtcDateTime(h3Enter),
-      LeaveTime: formatUtcDateTime(h3Leave),
-      EnterTimeStr: formatUtcDateTime(h3Enter),
-      LeaveTimeStr: formatUtcDateTime(h3Leave),
-      Duration: 2.0
-    }
-  ];
-}
-
-// Helper for default realtime tag raw data formatted to GAO specification
-function getDefaultRealtimeTags() {
-  const now = Date.now();
-  return [
-    {
-      TagID: 'E28011606000020788842D31',
-      Timestamp: formatUtcTimestampMs(now),
-      Location: 'Zone1'
-    },
-    {
-      TagID: 'E28011606000020788842D31',
-      Timestamp: formatUtcTimestampMs(now - 1125),
-      Location: 'Zone1'
-    },
-    {
-      TagID: 'E28011606000020788842D31',
-      Timestamp: formatUtcTimestampMs(now - 2297),
-      Location: 'Zone1'
-    },
-    {
-      TagID: 'E28011606000020788842D32',
-      Timestamp: formatUtcTimestampMs(now - 3450),
-      Location: 'Zone2'
-    }
-  ];
-}
-
 // 1. GET /api/GetHistoryTotalCount
 const handleGetTotalCount = async (req: Request, res: Response) => {
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
@@ -165,17 +91,17 @@ const handleGetHistory = async (req: Request, res: Response) => {
       const diffMs = Math.max(0, leaveDate.getTime() - enterDate.getTime());
       const durationHours = item.Duration !== undefined ? Number(item.Duration) : Math.round((diffMs / 3600000) * 10) / 10;
 
-      const firstName = item.FirstName || item.firstName || (item.name ? item.name.split(' ')[0] : 'Staff');
-      const lastName = item.LastName || item.lastName || (item.name ? item.name.split(' ').slice(1).join(' ') : 'User');
+      const firstName = item.FirstName || item.firstName || (item.name ? item.name.split(' ')[0] : '');
+      const lastName = item.LastName || item.lastName || (item.name ? item.name.split(' ').slice(1).join(' ') : '');
 
       const enterStr = formatUtcDateTime(enterDate);
       const leaveStr = formatUtcDateTime(leaveDate);
 
       return {
-        TagID: item.TagID || item.tagId || item.epc || 'E28011606000020788842D31',
+        TagID: item.TagID || item.tagId || item.epc || '',
         FirstName: firstName,
         LastName: lastName,
-        LocationName: item.LocationName || item.locationName || item.zone || item.Location || 'Zone1',
+        LocationName: item.LocationName || item.locationName || item.zone || item.Location || '',
         EnterTime: enterStr,
         LeaveTime: leaveStr,
         EnterTimeStr: enterStr,
@@ -213,14 +139,14 @@ const handleGetRealtime = async (req: Request, res: Response) => {
     const formattedTags = tagsToProcess.map((item: any) => {
       const ts = item.Timestamp || item.timestamp || item.lastSeen || new Date().toISOString();
       return {
-        TagID: item.TagID || item.tagId || item.epc || 'E28011606000020788842D31',
+        TagID: item.TagID || item.tagId || item.epc || '',
         Timestamp: formatUtcTimestampMs(ts),
-        Location: item.Location || item.location || item.LocationName || item.zone || 'Zone1',
-        LocationName: item.LocationName || item.Location || item.zone || 'Zone1',
+        Location: item.Location || item.location || item.LocationName || item.zone || '',
+        LocationName: item.LocationName || item.Location || item.zone || '',
         personName: item.personName || item.name || '',
         personId: item.personId || null,
         zoneId: item.zoneId || null,
-        zoneName: item.zoneName || item.Location || 'Zone1',
+        zoneName: item.zoneName || item.Location || '',
         x: item.x,
         y: item.y,
         rssi: item.rssi,
@@ -277,10 +203,10 @@ rfidRouter.post('/scan', requireDeviceApiKey, async (req: Request, res: Response
   }
 
   const data = parseResult.data;
-  const tagId = data.TagID || data.tagId || data.epc || `TAG_${Date.now()}`;
-  const location = data.Location || data.LocationName || data.zone || 'Zone1';
-  const firstName = data.FirstName || (data.name ? data.name.split(' ')[0] : 'Staff');
-  const lastName = data.LastName || (data.name ? data.name.split(' ').slice(1).join(' ') : 'Member');
+  const tagId = data.TagID || data.tagId || data.epc || '';
+  const location = data.Location || data.LocationName || data.zone || '';
+  const firstName = data.FirstName || (data.name ? data.name.split(' ')[0] : '');
+  const lastName = data.LastName || (data.name ? data.name.split(' ').slice(1).join(' ') : '');
   
   const now = new Date();
 

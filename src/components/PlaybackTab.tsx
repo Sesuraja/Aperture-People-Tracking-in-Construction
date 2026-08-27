@@ -414,7 +414,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
             <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Playback Timestamp</div>
             <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
             <div className="text-[10px] font-semibold text-slate-500 truncate">
-              Frame {timeIndex + 1} of {simulatedHistory.length}
+              Frame {timeIndex + 1} of {playbackHistoryFrames.length}
             </div>
           </div>
         </div>
@@ -581,7 +581,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
               <div className="relative pt-2 pb-1 px-1">
                 <Slider 
                    value={[timeIndex]} 
-                   max={simulatedHistory.length - 1} 
+                   max={playbackHistoryFrames.length - 1} 
                    step={1} 
                    onValueChange={(val) => setTimeIndex(val[0])}
                    className="w-full cursor-pointer accent-[#007BC4]"
@@ -589,7 +589,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
 
                 {/* Event Markers Overlay */}
                 {showEventMarkers && eventMarkers.map((evt, idx) => {
-                  const pct = (evt.frame / (simulatedHistory.length - 1)) * 100;
+                  const pct = (evt.frame / (playbackHistoryFrames.length - 1)) * 100;
                   return (
                     <button
                       key={idx}
@@ -617,7 +617,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                      <span>{currentTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
                    </div>
                    <span className="text-xs font-mono text-slate-500 dark:text-slate-400 font-bold">
-                     Frame {timeIndex + 1} / {simulatedHistory.length}
+                     Frame {timeIndex + 1} / {playbackHistoryFrames.length}
                    </span>
                  </div>
 
@@ -660,7 +660,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                <div className="flex-1 bg-slate-950 border border-slate-800 rounded-2xl relative shadow-xl overflow-hidden flex flex-col min-h-[550px]">
                   <PlaybackMap 
                     site={activeSite}
-                    historyFrames={simulatedHistory} 
+                    historyFrames={playbackHistoryFrames} 
                     currentFrameIndex={timeIndex} 
                     zones={activeZones} 
                     highlightedPersonId={highlightedPersonId} 

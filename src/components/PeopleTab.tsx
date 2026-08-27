@@ -1239,24 +1239,6 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     });
   };
 
-  // Seed sample workforce into MongoDB if empty
-  const handleSeedSampleWorkforce = async () => {
-    const samples: DBWorker[] = [
-      { id: 'HH-1092', hardhatTagId: 'HH-1092', name: 'Marcus Vance', role: availableRoles[0] || 'Lead Officer', tradeCompany: availableCompanies[0] || 'Primary Operations', phone: '+1 (555) 019-2831', certifications: 'Standard Induction, First Aid', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', lastTrainingDate: '2026-06-10', trainingCourse: 'Master Safety Refresher', department: 'Operations' },
-      { id: 'HH-2041', hardhatTagId: 'HH-2041', name: 'Elena Rostova', role: availableRoles[1] || 'Specialist Engineer', tradeCompany: availableCompanies[1] || availableCompanies[0] || 'Technical Services', phone: '+1 (555) 019-8822', certifications: 'Safety Level 3', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', lastTrainingDate: '2026-05-20', trainingCourse: 'Specialist Operations Safety', department: 'Engineering' },
-      { id: 'HH-3309', hardhatTagId: 'HH-3309', name: 'David Kim', role: availableRoles[2] || 'Operations Staff', tradeCompany: availableCompanies[0] || 'Field Services', phone: '+1 (555) 019-4411', certifications: 'Safety L1', ppeStatus: 'WARNING', shiftStatus: 'ON_SITE', trainingStatus: 'DUE_SOON', lastTrainingDate: '2025-08-12', trainingCourse: 'Standard Compliance Renewal', department: 'Field Work' }
-    ];
-
-    try {
-      for (const item of samples) {
-        await setDoc(doc(db, 'registered_people', item.hardhatTagId), item);
-      }
-      showToast('success', 'Seeded sample workforce roster into MongoDB!');
-    } catch (err) {
-      console.error("Failed to seed sample workforce:", err);
-    }
-  };
-
   // Generate real AI Worker Analysis via server endpoint
   const handleGenerateAiWorkerSummary = async (person: any) => {
     setIsGeneratingAi(true);
@@ -1320,8 +1302,9 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       ppe: p.ppeStatus || 'COMPLIANT'
     }));
 
-    exportRosterToPDF(
+    generatePDFReport(
       `${config?.appTitle || 'Enterprise'} - Active Workforce & Safety Compliance Report`,
+      `${new Date().toLocaleDateString()} - ${personnelPlural} Roster & PPE Compliance Snapshot`,
       [
         { key: 'tag', label: idBadgeLabel },
         { key: 'name', label: 'Name' },
@@ -1447,16 +1430,6 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
           >
             <Plus size={16} /> Register Worker
           </button>
-
-          {dbWorkers.length === 0 && !isDbLoading && (
-            <button 
-              onClick={handleSeedSampleWorkforce}
-              className="px-3.5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1.5 cursor-pointer"
-              title="Seed default worker roster to MongoDB"
-            >
-              <PlusCircle size={15} /> Seed Sample Roster
-            </button>
-          )}
 
           <button 
             onClick={handleExportCSV}

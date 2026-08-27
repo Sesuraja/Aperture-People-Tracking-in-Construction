@@ -856,7 +856,15 @@ export default function LiveTrackingTab({
 
               {filteredPeople.length === 0 && (
                 <div className="p-8 text-center text-slate-400 text-xs font-medium">
-                  No workers matching filter.
+                  {people.length === 0 ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <Radio className="w-6 h-6 text-slate-300 animate-pulse" />
+                      <span>No RFID data received yet.</span>
+                      <span className="text-[10px] text-slate-400">Awaiting hardware telemetry on /api/hardware/gao-native</span>
+                    </div>
+                  ) : (
+                    `No personnel matching "${searchQuery}".`
+                  )}
                 </div>
               )}
           </div>

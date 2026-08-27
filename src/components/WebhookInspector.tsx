@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Terminal, Play, Pause, Trash2, Copy, Check, Filter, Zap, Send, Globe, RefreshCw } from 'lucide-react';
+import { Terminal, Play, Pause, Trash2, Copy, Check, Filter, Zap, RefreshCw } from 'lucide-react';
 import { globalWsClient, RealtimeEventMessage } from '../lib/realtimeClients';
 
 export interface WebhookLogEntry {
@@ -20,13 +20,7 @@ export default function WebhookInspector() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [copiedAll, setCopiedAll] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
-  const [simulating, setSimulating] = useState(false);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
-
-  // Webhook target URL state (prefilled with user's provided Beeceptor URL)
-  const [webhookUrl, setWebhookUrl] = useState(() => {
-    return localStorage.getItem('beeceptor_webhook_url') || 'https://mpf7722fc2649235f056.free.beeceptor.com';
-  });
 
   // GET URL Inspector states
   const [getApiUrl, setGetApiUrl] = useState(() => {
@@ -138,53 +132,6 @@ export default function WebhookInspector() {
     }
   };
 
-  // Initialize with initial sample logs if empty
-  useEffect(() => {
-    const initialLogs: WebhookLogEntry[] = [
-      {
-        id: `wh_${Date.now()}_1`,
-        timestamp: new Date(Date.now() - 12000).toISOString(),
-        source: 'WebSocket',
-        event: 'handshake_ack',
-        statusCode: 101,
-        headers: {
-          'Upgrade': 'websocket',
-          'Connection': 'Upgrade',
-          'Sec-WebSocket-Accept': 's3pPLBwQ3BNy9q87d8P5542s='
-        },
-        payload: {
-          status: 'CONNECTED',
-          session: 'sess_gao_rfid_9921',
-          protocol: 'v2.4-UHF',
-          readerGateway: 'Gate-01-MainTurnstile',
-          activeAntennas: [1, 2, 3, 4]
-        }
-      },
-      {
-        id: `wh_${Date.now()}_2`,
-        timestamp: new Date(Date.now() - 5000).toISOString(),
-        source: 'REST API',
-        event: 'tag_scan_telemetry',
-        statusCode: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-RFID-Signature': 'sha256=a89f381c0029b'
-        },
-        payload: {
-          TagID: 'GAO-TAG-9081',
-          epc: 'E2801170000002019A8271B1',
-          Location: 'Heavy Crane Exclusion Zone',
-          FirstName: 'David',
-          LastName: 'Miller',
-          rssi: -68,
-          readCount: 14,
-          antennaPort: 2
-        }
-      }
-    ];
-    setLogs(initialLogs);
-  }, []);
-
   // Listen to WebSocket messages
   useEffect(() => {
     const unsubscribe = globalWsClient.onMessage((msg: RealtimeEventMessage) => {
@@ -232,78 +179,6 @@ export default function WebhookInspector() {
     setTimeout(() => setCopiedAll(false), 2000);
   };
 
-  const handleSendTestWebhook = async () => {
-    setSimulating(true);
-    setStatusNotice(`Dispatching payload directly to external endpoint [${webhookUrl}]...`);
-
-    const sampleTagId = `GAO-TAG-${Math.floor(1000 + Math.random() * 9000)}`;
-    const locations = ['Heavy Crane Exclusion Zone', 'Gate 1 Turnstile', 'Scaffolding Level 4', 'Confined Shaft A'];
-    const selectedLoc = locations[Math.floor(Math.random() * locations.length)];
-
-    const payload = {
-      TagID: sampleTagId,
-      epc: `E2801170${Math.floor(10000000 + Math.random() * 90000000)}`,
-      Location: selectedLoc,
-      FirstName: 'Field',
-      LastName: 'Operator',
-      rssi: -55 - Math.floor(Math.random() * 30),
-      readerId: 'RDR_GAO_UHF_01',
-      timestamp: new Date().toISOString()
-    };
-
-    try {
-      // 1. Direct fetch to external provided endpoint (e.g. Beeceptor)
-      const res = await fetch(webhookUrl, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Hardware-Source': 'UHF-Reader-Gateway'
-        },
-        body: JSON.stringify(payload)
-      }).catch(async () => {
-        // Fallback to local RFID endpoint if external fails or CORS blocks
-        return await fetch('/api/rfid/scan', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-      });
-
-      let responseData: any = {};
-      try {
-        responseData = await res.json();
-      } catch {
-        responseData = { status: 'OK', rawText: 'Response received from Beeceptor endpoint' };
-      }
-
-      const newLog: WebhookLogEntry = {
-        id: `wh_${Date.now()}_sim`,
-        timestamp: new Date().toISOString(),
-        source: 'Webhook',
-        event: 'external_webhook_post',
-        statusCode: res.status,
-        targetUrl: webhookUrl,
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Hardware-Source': 'UHF-Reader-Gateway'
-        },
-        payload: {
-          targetEndpoint: webhookUrl,
-          sentPayload: payload,
-          remoteResponse: responseData
-        }
-      };
-
-      setLogs((prev) => [newLog, ...prev]);
-      setStatusNotice(`Payload delivered to [${webhookUrl}]! Status: HTTP ${res.status}`);
-    } catch (err: any) {
-      setStatusNotice(`Webhook dispatch failed: ${err.message || 'Network error'}`);
-    } finally {
-      setSimulating(false);
-      setTimeout(() => setStatusNotice(null), 5000);
-    }
-  };
-
   const filteredLogs = logs.filter((log) => {
     if (!filterText.trim()) return true;
     const query = (filterText || "").toLowerCase();
@@ -349,15 +224,6 @@ export default function WebhookInspector() {
           </button>
 
           <button
-            onClick={handleSendTestWebhook}
-            disabled={simulating}
-            className="px-3 py-1.5 bg-[#007BC4] hover:bg-blue-600 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
-          >
-            <Send className="w-3.5 h-3.5" />
-            {simulating ? 'Sending...' : 'Test Webhook Payload'}
-          </button>
-
-          <button
             onClick={handleCopyAll}
             className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
           >
@@ -373,38 +239,6 @@ export default function WebhookInspector() {
             <Trash2 className="w-4 h-4" />
           </button>
         </div>
-      </div>
-
-      {/* Target Endpoint Input Bar */}
-      <div className="p-3 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2 flex-1 min-w-[280px]">
-          <Globe className="w-4 h-4 text-[#007BC4] shrink-0" />
-          <span className="font-bold text-slate-300 text-xs shrink-0">Target Webhook:</span>
-          <input
-            id="target-webhook-url-input"
-            type="text"
-            value={webhookUrl}
-            onChange={(e) => {
-              setWebhookUrl(e.target.value);
-              localStorage.setItem('beeceptor_webhook_url', e.target.value);
-            }}
-            placeholder="e.g. https://mpf7722fc2649235f056.free.beeceptor.com"
-            className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 font-mono text-xs text-sky-300 focus:outline-none focus:border-[#007BC4]"
-          />
-        </div>
-
-        <button
-          id="use-preset-beeceptor-btn"
-          type="button"
-          onClick={() => {
-            const preset = 'https://mpf7722fc2649235f056.free.beeceptor.com';
-            setWebhookUrl(preset);
-            localStorage.setItem('beeceptor_webhook_url', preset);
-          }}
-          className="px-2.5 py-1 bg-[#007BC4]/20 text-[#007BC4] border border-[#007BC4]/40 hover:bg-[#007BC4]/30 rounded-lg text-[11px] font-mono font-bold transition cursor-pointer shrink-0"
-        >
-          Use Provided Beeceptor Endpoint
-        </button>
       </div>
 
       {/* GET API URL Inspector Bar */}
@@ -535,7 +369,7 @@ export default function WebhookInspector() {
           <div className="py-12 text-center text-slate-500 font-sans">
             <Terminal className="w-8 h-8 mx-auto text-slate-700 mb-2" />
             <p className="font-bold text-slate-400">No raw webhook payloads matched filter</p>
-            <p className="text-xs mt-1 text-slate-600">Waiting for hardware triggers or click "Test Webhook Payload"</p>
+            <p className="text-xs mt-1 text-slate-600">Waiting for real-time hardware WebSocket triggers from RFID readers & gateways</p>
           </div>
         ) : (
           filteredLogs.map((log) => {

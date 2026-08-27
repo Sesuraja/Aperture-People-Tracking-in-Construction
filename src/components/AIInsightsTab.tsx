@@ -34,7 +34,6 @@ import {
   Save,
   Download,
   BrainCircuit,
-  Sliders,
   Microscope,
   History,
   Key,
@@ -143,21 +142,6 @@ interface RcaResult {
   contributingFactors: string[];
   capaRecommendations: string[];
   regulatoryImpact: string;
-  createdAt: string;
-}
-
-interface HazardSimResult {
-  id?: string;
-  craneIntensity: string;
-  windShear: number;
-  workerDensity: string;
-  nightShift: boolean;
-  zoneForecasts: {
-    zone: string;
-    riskScore: number;
-    trend: string;
-    mainFactor: string;
-  }[];
   createdAt: string;
 }
 
@@ -278,7 +262,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
 
   // 2. Active Tab Sub-view
   const [activeSection, setActiveSection] = useState<
-    'insights' | 'copilot' | 'briefing' | 'rca' | 'simulator' | 'bi_synthesis'
+    'insights' | 'copilot' | 'briefing' | 'rca' | 'bi_synthesis'
   >('insights');
 
   // 3. API & Analysis State
@@ -321,15 +305,6 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
   const [isAnalyzingRca, setIsAnalyzingRca] = useState(false);
   const [currentRcaResult, setCurrentRcaResult] = useState<RcaResult | null>(null);
   const [savedRcaReports, setSavedRcaReports] = useState<RcaResult[]>([]);
-
-  // 6. Hazard Simulator State
-  const [simCraneIntensity, setSimCraneIntensity] = useState<'Low' | 'Moderate' | 'High'>('High');
-  const [simWindShear, setSimWindShear] = useState<number>(28);
-  const [simWorkerDensity, setSimWorkerDensity] = useState<'Sparse' | 'Normal' | 'Overcrowded'>('Overcrowded');
-  const [simNightShift, setSimNightShift] = useState<boolean>(false);
-  const [isSimulating, setIsSimulating] = useState(false);
-  const [currentSimResult, setCurrentSimResult] = useState<HazardSimResult | null>(null);
-  const [savedPredictions, setSavedPredictions] = useState<HazardSimResult[]>([]);
 
   // 7. BI Synthesis State
   const [biPrompt, setBiPrompt] = useState('Synthesize workforce trade attendance, crane zone safety compliance, and portal gateway uptime for today\'s shift.');
@@ -411,11 +386,6 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
       setSavedRcaReports(items);
     }, () => {});
 
-    const unsubPreds = onSnapshot(collection(db, 'ai_hazard_predictions'), (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as HazardSimResult[];
-      setSavedPredictions(items);
-    }, () => {});
-
     const unsubBi = onSnapshot(collection(db, 'analytics_metrics'), (snapshot) => {
       const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as BiSynthesisResult[];
       setSavedBiSyntheses(items);
@@ -428,7 +398,6 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
       unsubIncidents();
       unsubCopilot();
       unsubRca();
-      unsubPreds();
       unsubBi();
     };
   }, []);
@@ -659,74 +628,6 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     }
   };
 
-  // Run Hazard Risk Analysis & Forecast
-  const handleRunHazardPrediction = async () => {
-    setIsSimulating(true);
-    try {
-      // Real API-grounded prediction based on construction telemetry parameters
-      const craneMult = simCraneIntensity === 'High' ? 1.4 : simCraneIntensity === 'Moderate' ? 1.1 : 0.8;
-      const windMult = simWindShear > 30 ? 1.5 : simWindShear > 20 ? 1.2 : 0.9;
-      const densityMult = simWorkerDensity === 'Overcrowded' ? 1.4 : simWorkerDensity === 'Normal' ? 1.0 : 0.7;
-      const nightMult = simNightShift ? 1.25 : 1.0;
-
-      const craneRisk = Math.min(96, Math.round(55 * craneMult * densityMult));
-      const scaffoldRisk = Math.min(94, Math.round(48 * windMult * densityMult));
-      const excavationRisk = Math.min(90, Math.round(38 * nightMult * (simWorkerDensity === 'Sparse' ? 1.3 : 1.0)));
-
-      const simOutput: HazardSimResult = {
-        craneIntensity: simCraneIntensity,
-        windShear: simWindShear,
-        workerDensity: simWorkerDensity,
-        nightShift: simNightShift,
-        zoneForecasts: [
-          {
-            zone: 'Crane Operating Zone',
-            riskScore: craneRisk,
-            trend: craneRisk > 70 ? 'Increasing' : 'Stable',
-            mainFactor: `Overhead lift activity (${simCraneIntensity}) + Scaffolding density (${simWorkerDensity})`
-          },
-          {
-            zone: 'Structure Work Area',
-            riskScore: scaffoldRisk,
-            trend: scaffoldRisk > 65 ? 'Increasing' : 'Stable',
-            mainFactor: `Perimeter wind shear (${simWindShear} km/h) approaching fall protection threshold`
-          },
-          {
-            zone: 'Excavation Area',
-            riskScore: excavationRisk,
-            trend: 'Stable',
-            mainFactor: simNightShift ? 'Reduced visibility during night shift operations' : 'Continuous gas and shoring telemetry verification'
-          },
-          {
-            zone: 'High Voltage Area',
-            riskScore: Math.min(95, Math.round(craneRisk * 0.85 + 10)),
-            trend: 'Stable',
-            mainFactor: 'Substation perimeter lock & lockout-tagout compliance'
-          }
-        ],
-        createdAt: new Date().toISOString()
-      };
-
-      setCurrentSimResult(simOutput);
-    } finally {
-      setIsSimulating(false);
-    }
-  };
-
-  // Save Simulation to MongoDB
-  const handleSavePredictionToMongo = async () => {
-    if (!currentSimResult) return;
-    try {
-      await addDoc(collection(db, 'ai_hazard_predictions'), {
-        ...currentSimResult,
-        createdAt: new Date().toISOString()
-      });
-      setActionSuccessMsg('Hazard forecast saved to MongoDB.');
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
   // Run BI Synthesis
   const handleRunBiSynthesis = async () => {
     setIsSynthesizing(true);
@@ -749,13 +650,8 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
         prompt: biPrompt,
         dateRange: biDateRange,
         selectedSite: biSelectedSite,
-        synthesis: data.synthesis || 'Enterprise construction telemetry synthesized.',
-        keyMetrics: data.keyMetrics || {
-          safetyCompliance: 98.2,
-          productivityIndex: 91.4,
-          trirRate: 0.11,
-          activeReadersUptime: 99.9
-        },
+        synthesis: data.synthesis || 'Enterprise construction telemetry synthesized from real data only.',
+        keyMetrics: data.keyMetrics || null,
         createdAt: new Date().toISOString()
       });
     } catch (e) {
@@ -920,7 +816,6 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
           { id: 'copilot', label: 'EHS AI Safety Copilot', icon: Bot },
           { id: 'briefing', label: 'Daily Shift Briefing & PDF', icon: FileText },
           { id: 'rca', label: 'Incident RCA Generator', icon: Microscope },
-          { id: 'simulator', label: 'Zone Hazard Simulator', icon: Sliders },
           { id: 'bi_synthesis', label: 'Enterprise BI Synthesizer', icon: BrainCircuit }
         ].map((tab) => {
           const Icon = tab.icon;
@@ -1737,179 +1632,6 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
                 {savedRcaReports.length === 0 && (
                   <div className="text-center py-6 text-slate-400 text-xs font-semibold border border-dashed border-slate-200 dark:border-slate-700 rounded-2xl">
                     No saved RCA reports in MongoDB yet.
-                  </div>
-                )}
-              </div>
-            </div>
-
-          </div>
-
-        </div>
-      )}
-
-      {/* 7. SECTION 5: PREDICTIVE HAZARD & ZONE SIMULATOR */}
-      {activeSection === 'simulator' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          
-          {/* Simulator Controls */}
-          <div className="lg:col-span-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
-            <div className="border-b border-slate-100 dark:border-slate-800 pb-3">
-              <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                <Sliders className="w-5 h-5 text-amber-500" />
-                <span>Predictive Zone Hazard Simulator</span>
-              </h3>
-              <p className="text-xs text-slate-500">Adjust construction site parameters to simulate AI zone risk probability.</p>
-            </div>
-
-            <div className="space-y-4 text-xs">
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 flex justify-between mb-1.5">
-                  <span>Crane Overhead Lift Activity</span>
-                  <span className="text-amber-600 font-black">{simCraneIntensity}</span>
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['Low', 'Moderate', 'High'] as const).map((lvl) => (
-                    <button
-                      key={lvl}
-                      onClick={() => setSimCraneIntensity(lvl)}
-                      className={`py-2 rounded-xl text-xs font-bold transition border cursor-pointer ${
-                        simCraneIntensity === lvl 
-                          ? 'bg-amber-600 text-white border-amber-700 shadow-sm' 
-                          : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                      }`}
-                    >
-                      {lvl}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 flex justify-between mb-1.5">
-                  <span>Perimeter Wind Shear Speed</span>
-                  <span className="text-indigo-600 font-black">{simWindShear} km/h</span>
-                </label>
-                <input
-                  type="range"
-                  min={5}
-                  max={50}
-                  value={simWindShear}
-                  onChange={(e) => setSimWindShear(parseInt(e.target.value))}
-                  className="w-full accent-indigo-600 cursor-pointer"
-                />
-              </div>
-
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 flex justify-between mb-1.5">
-                  <span>Scaffolding Worker Density</span>
-                  <span className="text-purple-600 font-black">{simWorkerDensity}</span>
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {(['Sparse', 'Normal', 'Overcrowded'] as const).map((d) => (
-                    <button
-                      key={d}
-                      onClick={() => setSimWorkerDensity(d)}
-                      className={`py-2 rounded-xl text-xs font-bold transition border cursor-pointer ${
-                        simWorkerDensity === d 
-                          ? 'bg-purple-600 text-white border-purple-700 shadow-sm' 
-                          : 'bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700'
-                      }`}
-                    >
-                      {d}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700">
-                <span className="font-bold text-slate-700 dark:text-slate-300">Night Shift Operations Mode</span>
-                <input
-                  type="checkbox"
-                  checked={simNightShift}
-                  onChange={(e) => setSimNightShift(e.target.checked)}
-                  className="w-4 h-4 accent-amber-500 rounded cursor-pointer"
-                />
-              </div>
-
-              <button
-                onClick={handleRunHazardPrediction}
-                disabled={isSimulating}
-                className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-2xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Zap className="w-4 h-4 fill-white" />
-                <span>Run AI Hazard Forecast</span>
-              </button>
-            </div>
-          </div>
-
-          {/* Hazard Forecast Output & Mongo Persistence */}
-          <div className="lg:col-span-7 space-y-6">
-            
-            {currentSimResult ? (
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
-                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-                  <div>
-                    <span className="text-[10px] font-black uppercase text-amber-500 tracking-wider">AI Predictive Risk Model</span>
-                    <h4 className="text-base font-black text-slate-900 dark:text-white">Active Site Zone Hazard Probabilities</h4>
-                  </div>
-                  <button
-                    onClick={handleSavePredictionToMongo}
-                    className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow transition cursor-pointer"
-                  >
-                    <Save size={14} /> Save to MongoDB
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                  {currentSimResult.zoneForecasts.map((zf, idx) => (
-                    <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/50 border border-slate-150 dark:border-slate-700 rounded-2xl space-y-2 flex flex-col justify-between">
-                      <div className="flex justify-between items-start gap-1">
-                        <span className="font-bold text-xs text-slate-900 dark:text-white">{zf.zone}</span>
-                        <Badge className={`text-[9px] font-black shrink-0 ${
-                          zf.riskScore > 75 ? 'bg-rose-600 text-white' : zf.riskScore > 50 ? 'bg-amber-500 text-white' : 'bg-emerald-600 text-white'
-                        }`}>
-                          Risk {zf.riskScore}%
-                        </Badge>
-                      </div>
-                      <p className="text-[11px] text-slate-600 dark:text-slate-400 leading-relaxed font-medium">
-                        {zf.mainFactor}
-                      </p>
-                      <div className="text-[10px] text-slate-400 font-bold pt-1 border-t border-slate-200/60 dark:border-slate-700">
-                        Trend: <span className={zf.trend === 'Increasing' ? 'text-rose-500' : 'text-emerald-500'}>{zf.trend}</span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 text-center text-slate-400 text-xs font-semibold">
-                Click "Run AI Hazard Forecast" to view calculated zone risks.
-              </div>
-            )}
-
-            {/* Saved Predictions in MongoDB */}
-            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
-              <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
-                <Database className="w-4 h-4 text-indigo-500" />
-                <span>Saved Hazard Forecasts in MongoDB (<code className="text-indigo-500 font-mono">ai_hazard_predictions</code>)</span>
-              </h4>
-
-              <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
-                {savedPredictions.map(pred => (
-                  <div key={pred.id} className="p-3.5 bg-slate-50 dark:bg-slate-800/40 border border-slate-150 dark:border-slate-700 rounded-2xl text-xs space-y-1">
-                    <div className="flex justify-between items-center font-bold text-slate-800 dark:text-white">
-                      <span>Crane: {pred.craneIntensity} | Wind: {pred.windShear}km/h</span>
-                      <span className="text-[10px] text-slate-400 font-mono">{new Date(pred.createdAt).toLocaleDateString()}</span>
-                    </div>
-                    <div className="text-[11px] text-slate-500">
-                      Zones evaluated: {pred.zoneForecasts?.map(z => `${z.zone} (${z.riskScore}%)`).join(', ')}
-                    </div>
-                  </div>
-                ))}
-
-                {savedPredictions.length === 0 && (
-                  <div className="text-center py-6 text-slate-400 text-xs font-semibold border border-dashed border-slate-200 dark:border-slate-700 rounded-2xl">
-                    No saved hazard forecasts in MongoDB yet.
                   </div>
                 )}
               </div>

@@ -56,45 +56,14 @@ globalWsClient.onStatus((status, _msg) => {
 export function startGaoSync() {
   if (isSyncing) return;
   isSyncing = true;
-  console.log('Started GAO to MongoDB Sync Service');
+  console.log('GAO Realtime Sync Service active (push-only)');
 
-  // Ensure WebSocket connection is active
+  // Ensure WebSocket connection is active for real incoming reader events
   globalWsClient.connect();
-
-  syncInterval = setInterval(async () => {
-    try {
-      const tags = await gaoApi.getTagsInRealtime();
-      if (!tags || !Array.isArray(tags) || tags.length === 0) {
-        if (tags && !Array.isArray(tags)) {
-          console.warn('Realtime tags synchronization returned non-array:', tags);
-        }
-        return;
-      }
-      
-      const batchPromises = tags.map(async (tag: RealtimeTag) => {
-        const tagRef = doc(db, 'live_tags', tag.TagID);
-        // Use setDoc with merge: true to avoid duplicates and update latest state
-        await setDoc(tagRef, {
-          TagID: tag.TagID,
-          Location: tag.Location,
-          Timestamp: tag.Timestamp,
-          lastSeen: serverTimestamp()
-        }, { merge: true });
-      });
-
-      await Promise.allSettled(batchPromises);
-    } catch (e) {
-      console.error('Error syncing GAO data to MongoDB:', e);
-    }
-  }, 3000); // Poll every 3 seconds
 }
 
 export function stopGaoSync() {
-  if (syncInterval) {
-    clearInterval(syncInterval);
-    syncInterval = null;
-  }
   isSyncing = false;
-  console.log('Stopped GAO to MongoDB Sync Service');
+  console.log('GAO Realtime Sync Service stopped');
 }
 

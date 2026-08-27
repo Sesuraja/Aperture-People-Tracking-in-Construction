@@ -130,9 +130,9 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
           zone: d.location || d.zone || 'Gate 1 Portal',
           status: String(d.status || 'ONLINE').toUpperCase().trim(),
           type: 'GAO UHF Fixed Portal',
-          rssi: d.rssi ? `${d.rssi} dBm` : `${-38 - Math.floor(Math.random() * 15)} dBm`,
+          rssi: d.rssi ? `${d.rssi} dBm` : 'N/A',
           rate: d.rate || '250 Hz',
-          scans: d.scans || d.totalScans || Math.floor(Math.random() * 80) + 110
+          scans: d.scans || d.totalScans || 0
         })),
         ...stdDevs.map(d => ({
           id: d.id || d.name,
@@ -140,9 +140,9 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
           zone: d.zone || d.location || 'Site Perimeter Gate',
           status: String(d.status || 'ONLINE').toUpperCase().trim(),
           type: 'Portal Gateway Anchor',
-          rssi: d.rssi ? `${d.rssi} dBm` : `${-42 - Math.floor(Math.random() * 20)} dBm`,
+          rssi: d.rssi ? `${d.rssi} dBm` : 'N/A',
           rate: d.rate || '200 Hz',
-          scans: d.scans || Math.floor(Math.random() * 60) + 90
+          scans: d.scans || 0
         }))
       ];
 
@@ -216,20 +216,8 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         }));
 
         setDbAttendanceData(chartArr);
-      } else if (regPeople.length > 0) {
-        const activeCount = regPeople.filter(p => p.status === 'on-site' || p.status === 'ACTIVE' || p.present).length;
-        const exitedCount = Math.max(0, regPeople.length - activeCount);
-
-        setDbAttendanceData([
-          { time: '06:00', onTime: Math.max(1, Math.round(activeCount * 0.2)), late: 0, overtime: 0 },
-          { time: '07:00', onTime: Math.max(2, Math.round(activeCount * 0.6)), late: 1, overtime: 0 },
-          { time: '08:00', onTime: activeCount, late: Math.min(2, exitedCount), overtime: 0 },
-          { time: '09:00', onTime: activeCount, late: Math.min(3, exitedCount), overtime: 1 },
-          { time: '12:00', onTime: Math.max(1, activeCount - 1), late: 2, overtime: 2 },
-          { time: '15:00', onTime: Math.max(1, activeCount - 1), late: 2, overtime: 3 },
-          { time: '18:00', onTime: Math.max(1, Math.round(activeCount * 0.5)), late: 1, overtime: 4 },
-          { time: '21:00', onTime: Math.max(0, Math.round(activeCount * 0.2)), late: 0, overtime: 2 }
-        ]);
+      } else {
+        setDbAttendanceData([]);
       }
     };
 
@@ -508,9 +496,9 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
           dateRange,
           selectedSite,
           metricsContext: {
-            totalHeadcount: people.length || 48,
-            safetyScore: 98.4,
-            productivityIndex: 92.1,
+            totalHeadcount: people.length,
+            safetyScore: null,
+            productivityIndex: null,
             activeEquipmentCount: equipmentList.length
           }
         })
@@ -524,26 +512,8 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         throw new Error('API request failed');
       }
     } catch (err) {
-      // Fallback response with rich synthetic analysis
-      setAiResponse(
-        `🤖 Gemini Enterprise BI Synthesis (${(dateRange || "").toUpperCase()}):\n\n` +
-        `1. Workforce Dynamics & Shift Attendance:\n` +
-        `   • Morning shift turnstile entry peaked at 08:12 AM with 96.8% on-time arrival rate.\n` +
-        `   • Ironworking and Electrical trades recorded 84%+ active tool-time efficiency with minimal choke points.\n\n` +
-        `2. Safety Index & PPE Compliance:\n` +
-        `   • 0 lost-time incidents recorded across the site. Safety helmet & vest compliance is at 99.2%.\n` +
-        `   • Sub-Basement B1 Trench reached 93% zone capacity threshold at 11:30 AM — auto-alert successfully cleared staging perimeter.\n\n` +
-        `3. Personnel Tracking Telemetry & UHF Hardware:\n` +
-        `   • 42 registered personnel hardhat tags transmitting continuously with 99.4% packet delivery rate.\n` +
-        `   • Gateway GW-03 in Sub-Basement B1 exhibits low RSSI signal strength (-78 dBm) — scheduled for antenna re-alignment.\n\n` +
-        `4. Executive Recommendations:\n` +
-        `   • Maintain current 12-minute staggered crew shifts to prevent gate turnstile bottlenecks.\n` +
-        `   • Authorize scheduled preventative calibration for Shaft B2 UHF reader prior to upcoming pour phase.`
-      );
-      setAiAnomalies([
-        'Sub-Basement B1 Trench 93% capacity threshold reached',
-        'Reader GW-03 RSSI signal level degraded to -78 dBm'
-      ]);
+      setAiResponse('AI telemetry analysis is unavailable. The server did not return a synthesis.');
+      setAiAnomalies([]);
     } finally {
       setIsAiLoading(false);
     }
@@ -557,24 +527,13 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         ...prev,
         [readerId]: {
           status: 'Online',
-          rssi: Math.floor(Math.random() * 20) - 55,
-          packets: Math.floor(Math.random() * 80) + 100
+          rssi: null,
+          packets: null
         }
       }));
       setPingingReader(null);
     }, 600);
   };
-
-  // --- DYNAMIC MULTI-TIMEFRAME DATASETS ---
-  const multiplier = useMemo(() => {
-    switch (dateRange) {
-      case 'today': return 1.0;
-      case '7d': return 1.15;
-      case '30d': return 1.35;
-      case 'q3_2026': return 1.5;
-      default: return 1.0;
-    }
-  }, [dateRange]);
 
   // Active workers computed from MongoDB or props
   const activeWorkers = useMemo(() => {
@@ -582,56 +541,41 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   }, [dbRegisteredPeople, people]);
 
   const executiveKPIs = useMemo(() => {
-    const totalWorkers = activeWorkers.length || 48;
+    const totalWorkers = activeWorkers.length;
     const movingCount = activeWorkers.filter(p => p.presenceState === 'MOVING').length;
-    const movingPct = totalWorkers > 0 ? Math.round((movingCount / totalWorkers) * 100) : 78;
+    const movingPct = totalWorkers > 0 ? Math.round((movingCount / totalWorkers) * 100) : 0;
 
     return {
-      safetyScore: (98.4 * (multiplier > 1.2 ? 0.99 : 1)).toFixed(1),
-      productivityIndex: Math.min(99, Math.round(88 + movingPct * 0.1)),
-      costSavings: dateRange === 'today' ? '$4,800' : dateRange === '7d' ? '$34,200' : dateRange === '30d' ? '$142,500' : '$425,000',
-      activeSites: 4,
+      safetyScore: null,
+      productivityIndex: totalWorkers > 0 ? Math.round(movingPct) : 0,
+      costSavings: null,
+      activeSites: 1,
       totalHeadcount: totalWorkers,
-      shiftCompliance: 96.8,
-      trirScore: 0.12,
-      dartScore: 0.04
+      shiftCompliance: null,
+      trirScore: null,
+      dartScore: null
     };
-  }, [activeWorkers, dateRange, multiplier]);
+  }, [activeWorkers, dateRange]);
 
   const attendanceTrendData = useMemo(() => {
-    if (dbAttendanceData.length > 0) return dbAttendanceData;
-    return [
-      { time: '06:00', onTime: Math.round(12 * multiplier), late: 1, absent: 0, overtime: 0 },
-      { time: '07:00', onTime: Math.round(38 * multiplier), late: 3, absent: 1, overtime: 0 },
-      { time: '08:00', onTime: Math.round(45 * multiplier), late: 5, absent: 2, overtime: 1 },
-      { time: '09:00', onTime: Math.round(48 * multiplier), late: 6, absent: 2, overtime: 2 },
-      { time: '12:00', onTime: Math.round(46 * multiplier), late: 6, absent: 2, overtime: 4 },
-      { time: '15:00', onTime: Math.round(44 * multiplier), late: 6, absent: 2, overtime: 8 },
-      { time: '18:00', onTime: Math.round(22 * multiplier), late: 2, absent: 2, overtime: 12 },
-      { time: '21:00', onTime: Math.round(8 * multiplier), late: 0, absent: 0, overtime: 6 }
-    ];
-  }, [dbAttendanceData, multiplier]);
+    return dbAttendanceData.length > 0 ? dbAttendanceData : [];
+  }, [dbAttendanceData]);
 
-  const movementFlowData = useMemo(() => [
-    { zone: 'Material Storage', hourlyFlow: 45, avgDwellMin: 35, congestionRisk: 'Low' },
-    { zone: 'Structure Work Area', hourlyFlow: 78, avgDwellMin: 140, congestionRisk: 'Medium' },
-    { zone: 'Crane Operating Zone', hourlyFlow: 18, avgDwellMin: 25, congestionRisk: 'High' },
-    { zone: 'Site Office', hourlyFlow: 92, avgDwellMin: 40, congestionRisk: 'Low' },
-    { zone: 'Open Work Area', hourlyFlow: 65, avgDwellMin: 110, congestionRisk: 'Low' },
-    { zone: 'Equipment Parking', hourlyFlow: 30, avgDwellMin: 55, congestionRisk: 'Medium' },
-    { zone: 'Excavation Area', hourlyFlow: 24, avgDwellMin: 120, congestionRisk: 'High' },
-    { zone: 'Assembly Point', hourlyFlow: 15, avgDwellMin: 10, congestionRisk: 'Low' },
-    { zone: 'High Voltage Area', hourlyFlow: 12, avgDwellMin: 20, congestionRisk: 'High' }
-  ], []);
+  const movementFlowData = useMemo(() => {
+    const byZone: Record<string, number> = {};
+    activeWorkers.forEach(p => {
+      const zone = p.currentZone || p.zone || 'Unknown Zone';
+      byZone[zone] = (byZone[zone] || 0) + 1;
+    });
+    return Object.entries(byZone).map(([name, count]) => ({
+      zone: name,
+      hourlyFlow: count,
+      avgDwellMin: 0,
+      congestionRisk: 'N/A'
+    }));
+  }, [activeWorkers]);
 
-  const productivityData = [
-    { role: 'Rigging Crew', toolTimePct: 82, transitPct: 11, idlePct: 7 },
-    { role: 'Steel Fixers', toolTimePct: 79, transitPct: 14, idlePct: 7 },
-    { role: 'Electricians', toolTimePct: 86, transitPct: 9, idlePct: 5 },
-    { role: 'Concrete Finishers', toolTimePct: 88, transitPct: 8, idlePct: 4 },
-    { role: 'Safety Inspectors', toolTimePct: 91, transitPct: 7, idlePct: 2 },
-    { role: 'General Laborers', toolTimePct: 72, transitPct: 18, idlePct: 10 }
-  ];
+  const productivityData = [];
 
   const zoneOccupancyData = useMemo(() => {
     const defaultZonesConfig = [
@@ -666,32 +610,13 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       const ppeViolationCount = dbIncidents.filter(i => String(i.title || '').toLowerCase().includes('ppe') || String(i.title || '').toLowerCase().includes('helmet')).length;
 
       return [
-        { month: 'Mar 2026', nearMiss: 4, zoneBreach: 2, ppeViolation: 8, slipFall: 1 },
-        { month: 'Apr 2026', nearMiss: 3, zoneBreach: 1, ppeViolation: 6, slipFall: 0 },
-        { month: 'May 2026', nearMiss: 2, zoneBreach: 3, ppeViolation: 4, slipFall: 1 },
-        { month: 'Jun 2026', nearMiss: 1, zoneBreach: 0, ppeViolation: 3, slipFall: 0 },
-        { month: 'Jul 2026', nearMiss: 2, zoneBreach: 1, ppeViolation: 2, slipFall: 0 },
-        { month: 'Aug 2026', nearMiss: nearMissCount, zoneBreach: zoneBreachCount, ppeViolation: ppeViolationCount, slipFall: 0 }
+        { month: new Date().toLocaleString('default', { month: 'short' }) + ' ' + new Date().getFullYear(), nearMiss: nearMissCount, zoneBreach: zoneBreachCount, ppeViolation: ppeViolationCount, slipFall: 0 }
       ];
     }
-    return [
-      { month: 'Mar 2026', nearMiss: 4, zoneBreach: 2, ppeViolation: 8, slipFall: 1 },
-      { month: 'Apr 2026', nearMiss: 3, zoneBreach: 1, ppeViolation: 6, slipFall: 0 },
-      { month: 'May 2026', nearMiss: 2, zoneBreach: 3, ppeViolation: 4, slipFall: 1 },
-      { month: 'Jun 2026', nearMiss: 1, zoneBreach: 0, ppeViolation: 3, slipFall: 0 },
-      { month: 'Jul 2026', nearMiss: 2, zoneBreach: 1, ppeViolation: 2, slipFall: 0 },
-      { month: 'Aug 2026', nearMiss: 0, zoneBreach: 0, ppeViolation: 1, slipFall: 0 }
-    ];
+    return [];
   }, [dbIncidents]);
 
-  const ppeComplianceData = [
-    { subject: 'Safety Helmet', score: 99.2, target: 100 },
-    { subject: 'High-Vis Vest', score: 98.5, target: 100 },
-    { subject: 'Steel-Toe Boots', score: 99.8, target: 100 },
-    { subject: 'Safety Glasses', score: 94.2, target: 95 },
-    { subject: 'Fall Harness', score: 97.6, target: 100 },
-    { subject: 'Gas Mask', score: 92.0, target: 90 }
-  ];
+  const ppeComplianceData = [];
 
   // EXPORT HANDLERS
   const handleExportFullBI = () => {

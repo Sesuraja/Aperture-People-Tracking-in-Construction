@@ -60,249 +60,19 @@ async function generateContentWithFallback(ai: any, params: {
 
 // Keyword & Context-Matched intelligent fallback response for Copilot
 function getFallbackCopilotResponse(question: string, context?: any): { answer: string; suggestedActions: string[] } {
-  const qLower = question.toLowerCase();
-  
-  // Extract workers list from context if available
-  const workers = context?.workers || context?.people || context?.registeredPeople || [
-    { id: 'P-101', name: 'Marcus Vance', role: 'Crane Operator', currentZone: 'Crane Swing Zone', presenceState: 'MOVING', tagId: 'E200001A89', dwellTime: '28 mins', lastSeen: '10:14 AM' },
-    { id: 'P-102', name: 'Sarah Connor', role: 'Site Supervisor', currentZone: 'Tower Core Structure', presenceState: 'MOVING', tagId: 'E200001B92', dwellTime: '45 mins', lastSeen: '10:15 AM' },
-    { id: 'P-103', name: 'Carlos Mendez', role: 'Safety Engineer', currentZone: 'Excavation Pit Shaft', presenceState: 'IDLE', tagId: 'E200001C44', dwellTime: '18 mins', lastSeen: '10:12 AM' },
-    { id: 'P-104', name: 'Bob Johnson', role: 'Ironworker Lead', currentZone: 'Heavy Crane Exclusion Radius', presenceState: 'MOVING', tagId: 'E200001D55', dwellTime: '32 mins', lastSeen: '10:16 AM' },
-    { id: 'P-105', name: 'Alice Smith', role: 'EHS Officer', currentZone: 'Site Welfare Hub', presenceState: 'MOVING', tagId: 'E200001E66', dwellTime: '15 mins', lastSeen: '10:10 AM' }
-  ];
+  const workers = context?.workers || context?.people || context?.registeredPeople;
+  const totalWorkers = Array.isArray(workers) ? workers.length : 0;
 
-  const dbStatus = context?.databaseStatus || {
-    connected: true,
-    engine: 'MongoDB Atlas',
-    database: 'Lat-Aperture-People-Tracking',
-    totalRecords: 42,
-    collections: ['registered_people', 'hardware_readers', 'attendance_logs', 'incidents', 'ai_insights']
-  };
+  const answer = totalWorkers > 0
+    ? `Aperture Construction Safety AI Copilot is temporarily unavailable (no Gemini API key configured or the AI request failed). Only real data already present in the provided context is available: ${totalWorkers} worker record(s) in the current snapshot. No simulated or generated data is used.`
+    : 'Aperture Construction Safety AI Copilot is temporarily unavailable (no Gemini API key configured or the AI request failed). No data was fabricated. Please check the live dashboard and MongoDB telemetry for the actual state of the site, then retry once the AI service is connected.';
 
-  // Helper to infer activity based on trade and location
-  const getActivity = (role: string, zone: string, state: string) => {
-    const r = role.toLowerCase();
-    const z = zone.toLowerCase();
-    if (r.includes('crane')) return 'Operating Tower Crane TC-01 and hoisting heavy structural steel trusses.';
-    if (r.includes('supervisor')) return 'Conducting structural floor inspections and coordinating trade crew shift transitions.';
-    if (r.includes('safety') || r.includes('ehs')) return 'Performing confined space gas monitoring and shoring stability safety checks.';
-    if (r.includes('ironworker') || r.includes('steel')) return 'Securing structural ironwork tie-offs and rigging steel girders.';
-    if (r.includes('electrician')) return 'Installing high voltage electrical conduits and perimeter panel wiring.';
-    if (r.includes('scaffolder')) return 'Inspecting scaffold platform toe-boards and fall protection harness brackets.';
-    if (z.includes('crane')) return 'Rigging structural materials near crane perimeter under safety supervision.';
-    if (z.includes('excavation') || z.includes('pit')) return 'Executing underground trenching work and shoring stability checks.';
-    return `Executing active construction duty [Motion State: ${state}].`;
-  };
-
-  // 1. DATABASE QUERIES
-  if (
-    qLower.includes('database') || 
-    qLower.includes('mongodb') || 
-    qLower.includes('mongo') || 
-    qLower.includes('db status') || 
-    qLower.includes('collections') || 
-    qLower.includes('records')
-  ) {
-    return {
-      answer: `🗄️ **MongoDB Atlas Live Telemetry & Database Status:**\n\n- **Database Engine**: ${dbStatus.engine || 'MongoDB Atlas'}\n- **Connection Status**: \`CONNECTED\` (Real-Time Change Stream Active)\n- **Database Name**: \`${dbStatus.database || 'Lat-Aperture-People-Tracking'}\`\n- **Total Database Records**: **${dbStatus.totalRecords || 42} documents**\n- **Active MongoDB Collections**:\n  • \`registered_people\` (${workers.length} active worker tags)\n  • \`hardware_readers\` (GAO UHF portals & anchors)\n  • \`attendance_logs\` (Shift check-ins & gate scans)\n  • \`incidents\` (OSHA safety logs)\n  • \`ai_insights\` (Gemini telemetry synthesis)\n\n*All personnel tracking records are synced continuously with 0ms latency.*`,
-      suggestedActions: [
-        "Audit Registered People Collection",
-        "Check Hardware Readers Status",
-        "Export Database Backup CSV"
-      ]
-    };
-  }
-
-  // 2. TAG ID SPECIFIC QUERIES
-  if (qLower.includes('tag id') || qLower.includes('rfid tag') || qLower.includes('badge id') || qLower.includes('tag for') || qLower.includes('badge')) {
-    // Find matching worker
-    const matched = workers.find((w: any) => {
-      const name = String(w.name || w.personName || '').toLowerCase();
-      return (
-        (name && qLower.includes(name)) ||
-        (qLower.includes('marcus') && name.includes('marcus')) ||
-        (qLower.includes('sarah') && name.includes('sarah')) ||
-        (qLower.includes('carlos') && name.includes('carlos')) ||
-        (qLower.includes('bob') && name.includes('bob')) ||
-        (qLower.includes('alice') && name.includes('alice')) ||
-        (qLower.includes('david') && name.includes('david'))
-      );
-    });
-
-    if (matched) {
-      const name = matched.name || matched.personName;
-      const tagId = matched.tagId || matched.id || matched.rfidTag || 'E200001A89';
-      const role = matched.role || matched.trade || 'Construction Specialist';
-      const zone = matched.currentZone || matched.zone || 'Tower Core';
-
-      return {
-        answer: `🏷️ **UHF RFID Tag ID Inquiry for ${name}:**\n\n- **Worker Name**: **${name}**\n- **UHF Hardhat Tag ID**: \`${tagId}\`\n- **Assigned Trade**: ${role}\n- **Current Zone Location**: ${zone}\n- **Tag Status**: Active & Transmitting at 250 Hz (RSSI: ${matched.rssi || '-48 dBm'})\n- **Database Key**: Synced in MongoDB \`registered_people\` collection`,
-        suggestedActions: [
-          `Ping ${name}'s Hardhat Tag`,
-          `Locate ${name} on Site Map`,
-          "View All Worker Tag IDs"
-        ]
-      };
-    } else {
-      // Return full Tag ID directory
-      const tagList = workers.slice(0, 6).map((w: any) => 
-        `• **${w.name || w.personName}** (${w.role || w.trade}) — Tag ID: \`${w.tagId || w.id || 'UHF-882'}\` [*${w.currentZone || w.zone}*]`
-      ).join('\n');
-
-      return {
-        answer: `🏷️ **Registered Construction Personnel UHF RFID Tag ID Directory:**\n\n${tagList}\n\n*Total ${workers.length} active UHF hardhat RFID tags synced with MongoDB Atlas.*`,
-        suggestedActions: [
-          "Ping All Hardware Portal Readers",
-          "Audit Crane Exclusion Zone Tags",
-          "Export Roster CSV"
-        ]
-      };
-    }
-  }
-
-  // 3. WORKER ACTIVITY QUERIES ("What is X doing?")
-  if (qLower.includes('doing') || qLower.includes('activity') || qLower.includes('working on') || qLower.includes('doing right now') || qLower.includes('task')) {
-    const matched = workers.find((w: any) => {
-      const name = String(w.name || w.personName || '').toLowerCase();
-      return (
-        (name && qLower.includes(name)) ||
-        (qLower.includes('marcus') && name.includes('marcus')) ||
-        (qLower.includes('sarah') && name.includes('sarah')) ||
-        (qLower.includes('carlos') && name.includes('carlos')) ||
-        (qLower.includes('bob') && name.includes('bob')) ||
-        (qLower.includes('alice') && name.includes('alice')) ||
-        (qLower.includes('david') && name.includes('david'))
-      );
-    });
-
-    if (matched) {
-      const name = matched.name || matched.personName;
-      const role = matched.role || matched.trade || 'Construction Worker';
-      const zone = matched.currentZone || matched.zone || 'Tower Core';
-      const state = matched.presenceState || matched.status || 'MOVING';
-      const dwell = matched.dwellTime || '25 mins';
-      const activity = getActivity(role, zone, state);
-
-      return {
-        answer: `🛠️ **Active Work & Operations Analysis for ${name}:**\n\n- **Worker Name**: **${name}**\n- **Assigned Trade / Craft**: ${role}\n- **Current Activity**: ${activity}\n- **Zone Location**: ${zone}\n- **Motion State**: \`${state}\` (Active On Shift)\n- **Zone Dwell Time**: ${dwell}\n- **Safety Compliance**: 100% PPE Verified & Hardhat Reader Tracked`,
-        suggestedActions: [
-          `Locate ${name} on Live Map`,
-          `Check ${name}'s Dwell History`,
-          "Inspect Exclusion Zone Alerts"
-        ]
-      };
-    }
-  }
-
-  // 4. GENERAL WORKER SEARCH BY NAME OR ROLE
-  const matchedWorkers = workers.filter((w: any) => {
-    const name = String(w.name || w.personName || '').toLowerCase();
-    const role = String(w.role || w.trade || w.craft || '').toLowerCase();
-    const zone = String(w.zone || w.currentZone || w.location || '').toLowerCase();
-    const tag = String(w.id || w.tagId || w.rfidTag || '').toLowerCase();
-    
-    return (
-      (name && qLower.includes(name)) ||
-      (qLower.includes('marcus') && name.includes('marcus')) ||
-      (qLower.includes('sarah') && name.includes('sarah')) ||
-      (qLower.includes('carlos') && name.includes('carlos')) ||
-      (qLower.includes('bob') && name.includes('bob')) ||
-      (qLower.includes('alice') && name.includes('alice')) ||
-      (qLower.includes('david') && name.includes('david')) ||
-      (tag && qLower.includes(tag))
-    );
-  });
-
-  if (matchedWorkers.length > 0) {
-    const workerDetails = matchedWorkers.map((w: any) => {
-      const name = w.name || w.personName || 'Construction Worker';
-      const role = w.role || w.trade || w.craft || 'Field Specialist';
-      const zone = w.currentZone || w.zone || w.location || 'Tower Core';
-      const state = w.presenceState || w.status || 'Active On Site';
-      const tagId = w.id || w.tagId || w.rfidTag || 'UHF-TAG-882';
-      const dwell = w.dwellTime || '20 mins';
-      const activity = getActivity(role, zone, state);
-      return `👷 **Worker Profile**: **${name}**\n- **UHF Hardhat Tag ID**: \`${tagId}\`\n- **Role / Trade**: ${role}\n- **Current Zone Location**: ${zone}\n- **Current Activity**: ${activity}\n- **Presence Status**: \`${state}\` (Dwell: ${dwell})\n- **Safety Status**: 100% PPE Verified & Hardhat Reader Tracked`;
-    }).join('\n\n');
-
-    return {
-      answer: `🔍 **Personnel Real-Time Telemetry Search Results:**\n\n${workerDetails}\n\n*Synced live with MongoDB Atlas \`registered_people\` collection.*`,
-      suggestedActions: [
-        `Locate ${matchedWorkers[0].name || 'Worker'} on Site Map`,
-        `Check ${matchedWorkers[0].name || 'Worker'} Dwell History`,
-        "Audit All Trade Counts"
-      ]
-    };
-  }
-
-  // 5. GENERAL WORKFORCE & ATTENDANCE QUERIES
-  if (
-    qLower.includes('worker') || 
-    qLower.includes('people') || 
-    qLower.includes('personnel') || 
-    qLower.includes('headcount') || 
-    qLower.includes('attendance') || 
-    qLower.includes('trade') ||
-    qLower.includes('who is') ||
-    qLower.includes('where is')
-  ) {
-    const totalWorkers = workers.length;
-    const workerSummary = workers.slice(0, 6).map((w: any) => 
-      `• **${w.name || w.personName || 'Worker'}** (${w.role || w.trade || 'Trade'}) — Tag ID: \`${w.tagId || w.id || 'UHF-882'}\` — Location: *${w.currentZone || w.zone || 'Site'}* [Status: ${w.presenceState || w.status || 'Active'}]`
-    ).join('\n');
-
-    return {
-      answer: `📊 **Active Construction Personnel & Trade Overview:**\n\nThere are currently **${totalWorkers} registered workers** actively tracked via UHF RFID hardhat tags on site:\n\n${workerSummary}\n\n- **Active On-Shift**: 100% hardhat RFID tag transmission verified.\n- **Zone Distribution**: Tower Core (45%), Crane Exclusion Perimeter (15%), Excavation Pit (20%), Scaffolding (20%).`,
-      suggestedActions: [
-        "View Full Personnel Roster",
-        "Audit Crane Exclusion Zone Workers",
-        "Check Scaffolding Overcrowding",
-        "Export Shift Attendance Report"
-      ]
-    };
-  }
-
-  if (qLower.includes('crane') || qLower.includes('exclusion') || qLower.includes('breach')) {
-    return {
-      answer: `🚨 **AI Site Safety Analysis - Crane Swing Exclusion Zone:**\n\nBased on current telemetry, **1 crane perimeter breach** was flagged recently:\n- **Incident Details**: Subcontractor badge **E200001A89** (Bob Johnson, Ironworker Lead) entered the 12m active Crane Swing Radius without active overhead lift permit sign-off.\n- **Current Status**: Visual strobe alert and warning horn engaged. Worker directed to exit perimeter.\n- **Action Plan**:\n  1. Restrict turnstile entry gates near Tower Core L2.\n  2. Conduct mandatory 5-minute pre-lift toolbox talk with ironworker trade crew.\n  3. Verify all active rigger hardhat tags have valid permits.`,
-      suggestedActions: [
-        "Audit Crane turnstiles",
-        "View active exclusion zone",
-        "Log Crane breach as formal incident"
-      ]
-    };
-  }
-  
-  if (qLower.includes('scaffold') || qLower.includes('density') || qLower.includes('overcrowd')) {
-    return {
-      answer: `🪜 **AI Site Safety Analysis - Scaffolding Tiers 3 & 4:**\n\nBased on current UHF RFID occupancy calculations:\n- **Density Alert**: Scaffolding Tier 3 occupancy reached **92% capacity** during the afternoon shift handover.\n- **Environmental Hazards**: Localized perimeter wind shear is recorded at **24 km/h** near fall protection brackets.\n- **Action Plan**:\n  1. Stagger trade shift access by 12 minutes to relieve scaffolding choke points.\n  2. Ensure 100% harness tie-off compliance for all scaffolders on Tier 4.\n  3. Conduct visual inspection of guardrails and platform toe-boards.`,
-      suggestedActions: [
-        "View scaffolding occupancy",
-        "Stagger subcontractor schedules",
-        "Check wind shear history"
-      ]
-    };
-  }
-  
-  if (qLower.includes('excavation') || qLower.includes('pit') || qLower.includes('lone') || qLower.includes('dwell')) {
-    return {
-      answer: `🕳️ **AI Site Safety Analysis - Excavation Pit & Lone Worker Safety:**\n\nBased on current real-time personnel positioning logs:\n- **Welfare Warning**: Badge **E200001B92** (Alice Smith, Safety Engineer) has been stationary in the Basement Excavation Shaft for over **25 minutes**.\n- **Site Actions**: Automated welfare check prompt dispatched to site supervisor. Continuous gas monitoring and shoring telemetry normal.\n- **Action Plan**:\n  1. Verify voice-comms contact with Alice Smith.\n  2. Standardize 20-minute maximum lone worker dwell limits in confined zones.\n  3. Schedule a backup responder sweep of the excavation perimeter.`,
-      suggestedActions: [
-        "Ping excavation lone worker",
-        "Check pit gas monitoring sensors",
-        "Verify emergency muster roll call"
-      ]
-    };
-  }
-
-  // Default general response
   return {
-    answer: `🤖 **Aperture Construction Safety AI Copilot Active:**\n\nBased on current site telemetry and MongoDB Atlas database connection:\n- **Total Active Personnel**: **${workers.length} workers** tracked across active construction zones.\n- **Database Status**: CONNECTED (\`Lat-Aperture-People-Tracking\`)\n- **Overall Safety Index**: **94.2%** compliance score with zero lost-time incidents today.\n- **Telemetry Feeds**: 4 active GAO UHF RFID readers streaming with 0ms WebSocket latency.\n\nAsk me specifically:\n- *"What is the tag ID of Marcus Vance?"*\n- *"What is Bob Johnson doing?"*\n- *"Show MongoDB database status"*\n- *"Where is Sarah Connor?"*`,
+    answer,
     suggestedActions: [
-      "Check Marcus Vance's Tag ID",
-      "Inspect Excavation Pit Lone Worker Dwell",
-      "Show MongoDB Database Status",
-      "Export Shift Safety Compliance PDF"
+      "Open Live Site Map",
+      "Audit Active Readers",
+      "Review Alert Center"
     ]
   };
 }
@@ -418,60 +188,37 @@ function getDynamicIndustryAnalysis(cfg: any, combinedScans: any[], zones: any[]
   const site = cfg?.primarySiteName || 'Main Facility';
 
   const scanCount = combinedScans.length;
-  const samplePerson = combinedScans[0]?.personName || combinedScans[0]?.name || `${pSingular} 101`;
-  const sampleTag = combinedScans[0]?.TagID || combinedScans[0]?.tagId || 'E200001A89';
-  const sampleZone = combinedScans[0]?.Location || combinedScans[0]?.zoneName || zones[0]?.name || `${zLabel} 1`;
 
   return {
     apiKeyMetadata: {
       telemetryFeed: "Active Aperture/GAO Telemetry Ingestion",
-      engine: "Gemini 3.7 Flash Industry Telemetry Intelligence",
+      engine: "Gemini Industry Telemetry Intelligence",
       ingestedTagsCount: scanCount,
-      analyzedZonesCount: zones?.length || 4,
+      analyzedZonesCount: zones?.length || 0,
       industry: indName,
       complianceStandard: std
     },
-    executiveSummary: `Real-time ${idLabel} telemetry shows high operational compliance (95.4%) across ${site}. Ingested scans verify steady ${pPlural.toLowerCase()} workflow across monitored ${zLabel.toLowerCase()}s in full alignment with ${std} protocols.`,
-    safetyComplianceScore: 95,
+    executiveSummary: `Real-time ${idLabel} telemetry is active across ${site}. ${scanCount} tag(s) ingested in the current window.`,
+    safetyComplianceScore: null,
     anomalies: scanCount > 0 ? [
       {
-        tagId: sampleTag,
-        name: samplePerson,
-        zone: sampleZone,
+        tagId: combinedScans[0].TagID || combinedScans[0].tagId || '',
+        name: combinedScans[0].personName || combinedScans[0].name || '',
+        zone: combinedScans[0].Location || combinedScans[0].zoneName || '',
         severity: "MEDIUM",
         title: `${zLabel} Dwell Duration Advisory`,
-        description: `${pSingular} ${samplePerson} (${sampleTag}) recorded extended continuous presence in ${sampleZone}. Automated ${safeLabel.toLowerCase()} welfare check recommended.`
+        description: `${pSingular} recorded extended continuous presence in the zone. Automated ${safeLabel.toLowerCase()} welfare check recommended.`
       }
     ] : [],
-    optimizations: [
-      {
-        category: `${zLabel} Access & Safety`,
-        title: `Calibrate ${zLabel} Entry Thresholds`,
-        impact: "HIGH",
-        description: `Optimize reader portal sensitivity at ${site} access gates to ensure 100% detection rate for all ${pPlural.toLowerCase()}.`,
-        actionableSteps: `1. Verify gateway reader antenna power settings.\n2. Cross-reference tag detection logs with ${std} muster logs.`
-      },
-      {
-        category: "Workforce Flow",
-        title: `Balance ${pPlural} Distribution Across Active Areas`,
-        impact: "MEDIUM",
-        description: `Stagger shift handovers to prevent high density choke-points near primary access corridors.`,
-        actionableSteps: `1. Monitor live heatmap distribution.\n2. Notify shift coordinators of peak congestion periods.`
-      }
-    ],
-    personnelEfficiency: combinedScans.slice(0, 4).map((s, idx) => ({
-      tagId: s.TagID || s.tagId || `TAG_${100 + idx}`,
-      name: s.personName || s.name || `${pSingular} ${idx + 1}`,
-      inferredActivity: `Active duty and area verification in ${s.Location || s.zoneName || sampleZone}`,
-      efficiencyScore: 92 + (idx % 6),
-      dwellTimeInfo: `${60 + (idx * 25)} min in ${s.Location || s.zoneName || sampleZone}`
+    optimizations: [],
+    personnelEfficiency: combinedScans.slice(0, 4).map((s: any) => ({
+      tagId: s.TagID || s.tagId || '',
+      name: s.personName || s.name || '',
+      inferredActivity: `Active duty and area verification in ${s.Location || s.zoneName || ''}`,
+      efficiencyScore: null,
+      dwellTimeInfo: `In ${s.Location || s.zoneName || ''}`
     })),
-    riskForecasts: (zones.length > 0 ? zones.slice(0, 4) : [{ name: sampleZone }]).map((z: any, idx) => ({
-      zone: z.name || z.id || `${zLabel} ${idx + 1}`,
-      riskScore: 25 + (idx * 12),
-      trend: idx === 0 ? "Decreasing" : "Stable",
-      mainFactor: `Active ${pPlural.toLowerCase()} density and standard ${std} protocol monitoring`
-    })),
+    riskForecasts: [],
     recommendations: [
       `Enforce continuous ${idLabel} badge verification at all ${zLabel.toLowerCase()} gateways.`,
       `Maintain real-time automated headcount records for ${std} regulatory audit readiness.`,
@@ -702,22 +449,13 @@ aiRouter.post(['/analyze-incident', '/ai/incident-rca'], aiRateLimiter, async (r
   const std = industryDoc?.complianceFramework || activeComplianceStandard;
 
   if (!apiKey || isGeminiAuthFailed()) {
-    const sevScore = severity === 'Critical' ? 92 : severity === 'High' ? 78 : severity === 'Medium' ? 52 : 30;
     return res.json({
-      severityScore: sevScore,
-      aiSummary: `Automated Root Cause Analysis completed for ${category || 'Incident'} in ${locationZone || 'Facility'} (${indName}). Evaluated against ${std} standards.`,
-      probableRootCause: `Operational procedure gap coupled with localized environmental hazard at ${locationZone || 'location'}.`,
-      contributingFactors: [
-        `Pre-operational equipment or ${locationZone || 'zone'} checklist inspection gap.`,
-        `Environmental or operational distraction during active duty shift.`,
-        `Inadequate secondary isolation barrier or clearance protocol.`
-      ],
-      capaRecommendations: [
-        `Mandate dual-verifier sign-off for high-risk operations in ${locationZone || 'active zone'}.`,
-        `Conduct mandatory safety toolbox session with on-duty personnel.`,
-        `Inspect and re-calibrate physical safety interlocks and access gates.`
-      ],
-      regulatoryImpact: `${std} Incident Recordable - Mandatory EHS documentation and internal CAPA review.`
+      severityScore: null,
+      aiSummary: `Automated Root Cause Analysis is unavailable because the AI service is not configured or unreachable. No analysis or cause was fabricated. Incident '${title || 'Unnamed Incident'}' (${category || 'Near Miss'}, ${severity || 'High'}) in ${locationZone || 'Facility'} remains open for manual review.`,
+      probableRootCause: null,
+      contributingFactors: [],
+      capaRecommendations: [],
+      regulatoryImpact: `${std} Incident - Manual EHS documentation and CAPA review required.`
     });
   }
 
@@ -765,14 +503,13 @@ Respond strictly with a JSON object with the following fields:
     if (err.status === 401 || err.message?.includes('UNAUTHENTICATED') || err.message?.includes('ACCESS_TOKEN_TYPE_UNSUPPORTED')) {
       markGeminiAuthFailed(err.message);
     }
-    const sevScore = severity === 'Critical' ? 92 : severity === 'High' ? 78 : severity === 'Medium' ? 52 : 30;
     return res.json({
-      severityScore: sevScore,
-      aiSummary: `AI RCA analysis completed for ${category || 'Incident'} under ${std}.`,
-      probableRootCause: `Operational procedure gap at ${locationZone || 'location'}.`,
-      contributingFactors: ['Environmental factor', 'Inspection checklist gap'],
-      capaRecommendations: ['Verify zone boundaries', 'Conduct briefing'],
-      regulatoryImpact: `${std} Internal Recordable.`
+      severityScore: null,
+      aiSummary: `AI RCA analysis could not be completed for '${title || 'Unnamed Incident'}' because the AI service failed. The incident remains open for manual review under ${std}.`,
+      probableRootCause: null,
+      contributingFactors: [],
+      capaRecommendations: [],
+      regulatoryImpact: `${std} Internal Recordable - Manual review required.`
     });
   }
 });

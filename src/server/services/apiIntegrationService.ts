@@ -242,6 +242,7 @@ export async function executeThirdPartyApiSync(apiIdOrConfig: string | ThirdPart
   latencyMs: number;
   aiAnalyzed: number;
   error?: string;
+  message?: string;
 }> {
   let config: ThirdPartyApiConfig | null = null;
   if (typeof apiIdOrConfig === 'string') {

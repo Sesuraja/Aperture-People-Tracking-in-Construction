@@ -178,7 +178,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     return () => clearInterval(interval);
   }, []);
 
-  // Seed default dataset if database is empty
+  // Real-time synchronization of attendance logs and leave records from MongoDB
   useEffect(() => {
     let unsubscribeAttendance = () => {};
     let unsubscribeLeave = () => {};
@@ -988,13 +988,6 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                   {/* Card Action */}
                   <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2">
                     <span className="text-[10px] font-mono text-slate-400">{item.gateLocation || 'Gatehouse 1'}</span>
-                    <button
-                      onClick={() => handleSimulateRfidTap(item)}
-                      className="px-3 py-1 bg-[#007BC4]/10 hover:bg-[#007BC4] text-[#007BC4] hover:text-white rounded-lg text-xs font-bold transition flex items-center gap-1"
-                      title="Simulate Hardhat RFID Turnstile Tap"
-                    >
-                      ⚡ Tap RFID
-                    </button>
                   </div>
                 </div>
               ))}

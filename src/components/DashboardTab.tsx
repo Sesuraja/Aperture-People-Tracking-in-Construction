@@ -773,14 +773,9 @@ export default function DashboardTab({
           setKpis(loadedKpis);
           setPanels(loadedPanels);
         } else {
-          // If the MongoDB document doesn't exist, initialize it in the database!
+          // If the MongoDB document doesn't exist, use default layouts locally without auto-inserting into DB
           const kpisInit = getDefaultKPIs();
           const panelsInit = getDefaultPanels();
-          try {
-            await setDoc(docRef, { kpis: kpisInit, panels: panelsInit });
-          } catch (e) {
-            console.warn("Failed to write initial dashboard layout to DB:", e);
-          }
           setKpis(kpisInit);
           setPanels(panelsInit);
         }
