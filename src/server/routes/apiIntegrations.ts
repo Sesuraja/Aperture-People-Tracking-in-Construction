@@ -23,9 +23,6 @@ function getReqOrgId(req: Request): string {
 apiIntegrationsRouter.get('/third-party', async (req: Request, res: Response) => {
   const orgId = getReqOrgId(req);
   try {
-    if (orgId === 'demo') {
-      await bootstrapDefaultThirdPartyApis();
-    }
     const apis = await getCollectionDocs('third_party_apis', undefined, orgId);
     return res.json({ success: true, count: apis.length, apis, organizationId: orgId });
   } catch (err: any) {

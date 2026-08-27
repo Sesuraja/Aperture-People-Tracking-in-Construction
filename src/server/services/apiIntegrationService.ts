@@ -324,56 +324,9 @@ export async function executeThirdPartyApiSync(apiIdOrConfig: string | ThirdPart
 }
 
 /**
- * 3. Pre-seed standard Default Third-Party API integrations (GAO UHF & Aperture) if none exist
+ * 3. Pre-seed standard Default Third-Party API integrations
+ * DISABLED: No mock third-party APIs are auto-seeded.
  */
 export async function bootstrapDefaultThirdPartyApis(): Promise<void> {
-  const existing = await getCollectionDocs('third_party_apis');
-  if (existing.length === 0) {
-    const defaults: ThirdPartyApiConfig[] = [
-      {
-        id: 'gao_uhf_realtime_api',
-        name: 'GAO RFID Realtime Telemetry Feed',
-        description: 'Standard GAO UHF-RFID GetTagsInRealtime polling stream',
-        endpointUrl: 'https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io/api/GetTagsInRealtime',
-        method: 'GET',
-        authType: 'none',
-        pollingEnabled: true,
-        pollingIntervalSeconds: 10,
-        lastStatus: 'SUCCESS',
-        lastLatencyMs: 42,
-        totalRecordsIngested: 128,
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'gao_uhf_history_api',
-        name: 'GAO RFID Historical Log Synchronizer',
-        description: 'Synchronizes historical badge dwell and movement events',
-        endpointUrl: 'https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io/api/GetHistoryRecords/0/50',
-        method: 'GET',
-        authType: 'none',
-        pollingEnabled: false,
-        pollingIntervalSeconds: 60,
-        lastStatus: 'IDLE',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'custom_erp_worker_sync',
-        name: 'Enterprise HRMS & Contractor Webhook API',
-        description: 'POST-based bi-directional contractor & badge synchronization',
-        endpointUrl: 'https://api.workforce-portal.internal/v2/telemetry/scans',
-        method: 'POST',
-        authType: 'bearer',
-        bearerToken: 'eyJhGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.sec9042',
-        requestBody: JSON.stringify({ facilityId: "FAC-HQ-01", status: "ACTIVE_ONLY" }, null, 2),
-        pollingEnabled: false,
-        pollingIntervalSeconds: 30,
-        lastStatus: 'IDLE',
-        createdAt: new Date().toISOString()
-      }
-    ];
-
-    for (const api of defaults) {
-      await upsertDoc('third_party_apis', api);
-    }
-  }
+  // Disabled: Live APIs only
 }

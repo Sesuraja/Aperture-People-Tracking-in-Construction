@@ -72,205 +72,11 @@ export interface ComplianceReport {
   findingsCount: number;
 }
 
-// Initial Standard Data (Seeded into MongoDB if empty)
-const SEED_FRAMEWORKS: ComplianceFramework[] = [
-  {
-    id: 'FW-OSHA-1926',
-    title: 'OSHA 1926 Safety & Health Regulations for Construction',
-    authority: 'Occupational Safety and Health Administration (OSHA)',
-    category: 'Workforce Safety & Site Health',
-    complianceScore: 98,
-    status: 'Compliant',
-    mandatoryRequirement: 'Real-time muster accounting & high-risk crane zone perimeter controls',
-    lastAuditDate: '2026-08-15',
-    nextAuditDue: '2026-09-15',
-    assignedAuditor: 'Sarah Jenkins, Senior EHS Lead',
-    evidenceCount: 142,
-    requirements: [
-      { id: 'REQ-101', code: '1926.34', description: 'Means of egress & real-time emergency muster headcount verification', status: 'Pass', lastChecked: '2026-08-24', notes: 'Automated GAO portal muster active' },
-      { id: 'REQ-102', code: '1926.95', description: 'Personal protective equipment (PPE) compliance & hardhat RFID verification', status: 'Pass', lastChecked: '2026-08-25', notes: '99.2% helmet tag detection' },
-      { id: 'REQ-103', code: '1926.550', description: 'Crane perimeter boundary automated warning & exclusion zone telemetry', status: 'Pass', lastChecked: '2026-08-23', notes: '3 RF beacons operational' },
-      { id: 'REQ-104', code: '1926.50', description: 'Medical services, first aid certifications & certified responder presence', status: 'In Progress', lastChecked: '2026-08-20', notes: '2 certified first-aiders on site' }
-    ]
-  },
-  {
-    id: 'FW-ISO-45001',
-    title: 'ISO 45001:2018 Occupational Health & Safety Management Systems',
-    authority: 'International Organization for Standardization (ISO)',
-    category: 'Enterprise Risk & Safety Governance',
-    complianceScore: 96,
-    status: 'Compliant',
-    mandatoryRequirement: 'Continuous hazard identification, contractor verification & worker participation telemetry',
-    lastAuditDate: '2026-08-10',
-    nextAuditDue: '2026-11-10',
-    assignedAuditor: 'Michael Chang, Lead ISO Auditor',
-    evidenceCount: 88,
-    requirements: [
-      { id: 'REQ-201', code: 'ISO-6.1.2', description: 'Hazard identification and assessment of risks & worker dwell exposure', status: 'Pass', lastChecked: '2026-08-22', notes: 'Heatmap dwell telemetry logged' },
-      { id: 'REQ-202', code: 'ISO-8.1.4', description: 'Procurement & contractor site induction RFID credential validation', status: 'Pass', lastChecked: '2026-08-24', notes: '100% badge scan at turnstile' },
-      { id: 'REQ-203', code: 'ISO-9.1.1', description: 'Performance monitoring, measurement, analysis and safety KPI reporting', status: 'Pass', lastChecked: '2026-08-25', notes: 'TRIR and DART dashboards live' },
-      { id: 'REQ-204', code: 'ISO-10.2', description: 'Incident, non-conformity and corrective action plan (CAPA) tracking', status: 'Pass', lastChecked: '2026-08-21', notes: 'Automated 5-Whys RCA engine active' }
-    ]
-  },
-  {
-    id: 'FW-NFPA-241',
-    title: 'NFPA 241 Standard for Safeguarding Construction & Demolition',
-    authority: 'National Fire Protection Association (NFPA)',
-    category: 'Fire Safety & Hot Work Operations',
-    complianceScore: 94,
-    status: 'Compliant',
-    mandatoryRequirement: 'Hot work permit spatial tracking & automated fire extinguisher station inspection logs',
-    lastAuditDate: '2026-08-12',
-    nextAuditDue: '2026-09-12',
-    assignedAuditor: 'Chief Robert Alvarez, Site Fire Marshal',
-    evidenceCount: 64,
-    requirements: [
-      { id: 'REQ-301', code: 'NFPA-5.1', description: 'Designated fire watch personnel tracking within 35ft of active hot work', status: 'Pass', lastChecked: '2026-08-25', notes: 'RFID watch proximity tracking active' },
-      { id: 'REQ-302', code: 'NFPA-7.2', description: 'Flammable & combustible material storage zone barrier compliance', status: 'Pass', lastChecked: '2026-08-24', notes: 'Zone occupancy limit enforced' },
-      { id: 'REQ-303', code: 'NFPA-8.4', description: 'Daily evacuation route clarity & exit corridor obstacle detection', status: 'In Progress', lastChecked: '2026-08-25', notes: 'East stairwell route audit pending' }
-    ]
-  }
-];
-
-const SEED_RETENTION_POLICIES: RetentionPolicy[] = [
-  {
-    id: 'POL-RFID-RAW',
-    dataType: 'Raw UHF RFID Tag Pings & RSSI Telemetry',
-    retentionPeriodDays: 90,
-    autoPurge: true,
-    encryptionType: 'AES-256-GCM',
-    lastPurgeDate: '2026-08-01',
-    storageLocation: 'MongoDB Atlas / Time-Series Collection'
-  },
-  {
-    id: 'POL-ACCESS-LOGS',
-    dataType: 'Turnstile & Portal Worker Badge Swipe Records',
-    retentionPeriodDays: 365,
-    autoPurge: true,
-    encryptionType: 'AES-256-CBC',
-    lastPurgeDate: '2026-07-15',
-    storageLocation: 'MongoDB Atlas / `attendance_logs`'
-  },
-  {
-    id: 'POL-EHS-INCIDENTS',
-    dataType: 'OSHA 1926 Incidents, Near-Misses & Root Cause Audits',
-    retentionPeriodDays: 1825, // 5 Years OSHA standard
-    autoPurge: false,
-    encryptionType: 'AES-256-GCM + SHA-256 Signatures',
-    lastPurgeDate: 'Never (5-Yr Mandatory Hold)',
-    storageLocation: 'MongoDB Atlas / `incidents` & Cold Archive'
-  },
-  {
-    id: 'POL-AUDIT-TRAILS',
-    dataType: 'System Configuration & User Privilege Audit Trail',
-    retentionPeriodDays: 1095, // 3 Years
-    autoPurge: true,
-    encryptionType: 'AES-256-GCM + Cryptographic Hash Ledger',
-    lastPurgeDate: '2026-08-10',
-    storageLocation: 'MongoDB Atlas / `audit_logs`'
-  }
-];
-
-const SEED_REPORTS: ComplianceReport[] = [
-  {
-    id: 'REP-2026-881',
-    title: 'Monthly Site Safety & OSHA 1926 Compliance Filing (August 2026)',
-    type: 'OSHA 1926 Formal Audit',
-    createdDate: '2026-08-25',
-    generatedBy: 'Sarah Jenkins, Senior EHS Lead',
-    summary: 'Full site audit of 48 active tradespersons across 4 tower zones. 0 lost-time incidents recorded. Emergency muster system verified under 3 minutes.',
-    status: 'Approved',
-    findingsCount: 0
-  },
-  {
-    id: 'REP-2026-843',
-    title: 'ISO 45001 Contractor Verification & Induction Telemetry Audit',
-    type: 'ISO 45001 Certification',
-    createdDate: '2026-08-18',
-    generatedBy: 'Michael Chang, Lead ISO Auditor',
-    summary: 'Audited 12 subcontractor trades and 142 digital induction credentials. Verified 100% badge assignment and crane zone exclusion compliance.',
-    status: 'Approved',
-    findingsCount: 1
-  },
-  {
-    id: 'REP-2026-792',
-    title: 'Quarterly Emergency Evacuation & RFID Muster Readiness Audit',
-    type: 'Quarterly Site Evacuation Muster Audit',
-    createdDate: '2026-07-30',
-    generatedBy: 'Marcus Vance, Project Director',
-    summary: 'Simulated tower evacuation test with 48 active badges. Assembly Point portal reader captured 100% headcount in 2 mins 48 secs.',
-    status: 'Approved',
-    findingsCount: 0
-  }
-];
-
-const SEED_AUDIT_LOGS: AuditLogItem[] = [
-  {
-    id: 'AUD-2026-901',
-    timestamp: '2026-08-25 18:24:12',
-    actor: 'admin@aperture-construction.com',
-    actorRole: 'System Administrator',
-    action: 'Hardware Node Firmware Verified',
-    category: 'Hardware Node',
-    severity: 'Info',
-    details: 'Verified SHA-256 checksum for GAO UHF Portal Reader Gateway #4 at Main Turnstile.',
-    ipAddress: '192.168.1.104',
-    hash: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
-    status: 'Verified'
-  },
-  {
-    id: 'AUD-2026-898',
-    timestamp: '2026-08-25 17:50:33',
-    actor: 'ehs.lead@aperture-construction.com',
-    actorRole: 'Safety Compliance Officer',
-    action: 'Crane Exclusion Zone Modified',
-    category: 'System Config',
-    severity: 'Warning',
-    details: 'Updated crane radius buffer threshold to 15m in Zone B for heavy modular rigging operation.',
-    ipAddress: '192.168.1.112',
-    hash: '8f434346648f6b96df89dda901c5176b10a6d83961dd3c1ac88b59b2dc327aa4',
-    status: 'Verified'
-  },
-  {
-    id: 'AUD-2026-892',
-    timestamp: '2026-08-25 16:15:08',
-    actor: 'site.super@aperture-construction.com',
-    actorRole: 'Site Operations Lead',
-    action: 'Emergency Muster Protocol Tested',
-    category: 'Emergency Muster',
-    severity: 'Info',
-    details: 'Conducted scheduled shift muster test at Assembly Point #1. 48/48 personnel accounted for in 168 seconds.',
-    ipAddress: '192.168.1.118',
-    hash: 'ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb',
-    status: 'Verified'
-  },
-  {
-    id: 'AUD-2026-884',
-    timestamp: '2026-08-25 14:02:44',
-    actor: 'admin@aperture-construction.com',
-    actorRole: 'System Administrator',
-    action: 'Subcontractor Access Scope Updated',
-    category: 'User Permission',
-    severity: 'Info',
-    details: 'Granted temporary electrical deck access credentials to Apex Rigging Crew (12 badges).',
-    ipAddress: '192.168.1.104',
-    hash: '4e07408562bedb8b60ce05c1decfe3ad16b72230967de01f640b7e4729b49fce',
-    status: 'Verified'
-  },
-  {
-    id: 'AUD-2026-871',
-    timestamp: '2026-08-25 11:30:19',
-    actor: 'system.watchdog@aperture-telemetry.internal',
-    actorRole: 'Automated Agent',
-    action: 'Off-Hours Perimeter Access Attempt',
-    category: 'Access Control',
-    severity: 'Security Alert',
-    details: 'Detected badge swipe attempt at High Voltage Switchyard outside authorized shift window (Badge #E200001A89). Denied by rule.',
-    ipAddress: '10.0.4.12',
-    hash: '2c624232cdd221771294dfbb310aca000a0df6ec9b5feb9ebb955029b9d88b4f',
-    status: 'Verified'
-  }
-];
+// Initial Standard Data (All data is real database data only)
+const SEED_FRAMEWORKS: ComplianceFramework[] = [];
+const SEED_RETENTION_POLICIES: RetentionPolicy[] = [];
+const SEED_REPORTS: ComplianceReport[] = [];
+const SEED_AUDIT_LOGS: AuditLogItem[] = [];
 
 export default function AuditTab() {
   const { config, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
@@ -381,21 +187,12 @@ export default function AuditTab() {
         });
       });
 
-      // If collection is completely empty in MongoDB, seed initial standard items
-      if (list.length === 0) {
-        SEED_AUDIT_LOGS.forEach(item => {
-          setDoc(doc(db, 'audit_logs', item.id), item).catch(() => {});
-        });
-        setAuditLogs(SEED_AUDIT_LOGS);
-      } else {
-        list.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
-        setAuditLogs(list);
-      }
-
+      list.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+      setAuditLogs(list);
       setLoading(false);
       setDbSynced(true);
     }, () => {
-      setAuditLogs(SEED_AUDIT_LOGS);
+      setAuditLogs([]);
       setLoading(false);
     });
 
@@ -403,47 +200,23 @@ export default function AuditTab() {
     const unsubFrameworks = onSnapshot(collection(db, 'compliance_frameworks'), async (snapshot) => {
       const list: ComplianceFramework[] = [];
       snapshot.forEach(d => list.push(d.data() as ComplianceFramework));
-      
-      if (list.length === 0) {
-        SEED_FRAMEWORKS.forEach(fw => {
-          setDoc(doc(db, 'compliance_frameworks', fw.id), fw).catch(() => {});
-        });
-        setFrameworks(SEED_FRAMEWORKS);
-      } else {
-        setFrameworks(list);
-      }
-    }, () => { setFrameworks(SEED_FRAMEWORKS); });
+      setFrameworks(list);
+    }, () => { setFrameworks([]); });
 
     // Sync Retention Policies
     const unsubRetention = onSnapshot(collection(db, 'retention_policies'), async (snapshot) => {
       const list: RetentionPolicy[] = [];
       snapshot.forEach(d => list.push(d.data() as RetentionPolicy));
-      
-      if (list.length === 0) {
-        SEED_RETENTION_POLICIES.forEach(pol => {
-          setDoc(doc(db, 'retention_policies', pol.id), pol).catch(() => {});
-        });
-        setRetentionPolicies(SEED_RETENTION_POLICIES);
-      } else {
-        setRetentionPolicies(list);
-      }
-    }, () => { setRetentionPolicies(SEED_RETENTION_POLICIES); });
+      setRetentionPolicies(list);
+    }, () => { setRetentionPolicies([]); });
 
     // Sync Reports
     const unsubReports = onSnapshot(collection(db, 'compliance_reports'), async (snapshot) => {
       const list: ComplianceReport[] = [];
       snapshot.forEach(d => list.push(d.data() as ComplianceReport));
-      
-      if (list.length === 0) {
-        SEED_REPORTS.forEach(rep => {
-          setDoc(doc(db, 'compliance_reports', rep.id), rep).catch(() => {});
-        });
-        setReports(SEED_REPORTS);
-      } else {
-        list.sort((a, b) => String(b.createdDate || '').localeCompare(String(a.createdDate || '')));
-        setReports(list);
-      }
-    }, () => { setReports(SEED_REPORTS); });
+      list.sort((a, b) => String(b.createdDate || '').localeCompare(String(a.createdDate || '')));
+      setReports(list);
+    }, () => { setReports([]); });
 
     return () => {
       unsubLogs();

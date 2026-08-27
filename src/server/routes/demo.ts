@@ -131,47 +131,8 @@ demoRouter.post('/wipe-all', async (req: Request, res: Response) => {
  */
 demoRouter.get('/realtime', async (req: Request, res: Response) => {
   try {
-    let tags = await getCollectionDocs('real_time_tags');
-
-    // If no tags seeded yet, auto-seed and try again
-    if (!tags || tags.length === 0) {
-      await seedAllDemoData(false);
-      tags = await getCollectionDocs('real_time_tags');
-    }
-
-    // Simulate live movement — update timestamps and slightly vary locations
-    const now = new Date().toISOString();
-    const zones = [
-      'Site Office & Welfare Container',
-      'Structure & Scaffolding (L1-L4)',
-      'Excavation & Foundation Pit',
-      'Heavy Crane & Exclusion Area',
-      'Gate 1 / Main Access Gate',
-      'Material Laydown & Loading',
-      'High Voltage Area',
-      'Confined Shaft & Tunneling'
-    ];
-
-    // Cycle active zone based on current time (every 15 seconds, rotate for realism)
-    const cycleIndex = Math.floor(Date.now() / 15000) % zones.length;
-
-    const liveTags = tags.map((tag: any, idx: number) => {
-      // Every 15s, one worker rotates to a new zone
-      const activeZone = (idx === cycleIndex % tags.length)
-        ? zones[(zones.indexOf(tag.Location || tag.LocationName || zones[0]) + 1) % zones.length]
-        : (tag.Location || tag.LocationName || zones[idx % zones.length]);
-
-      return {
-        ...tag,
-        Timestamp: now,
-        Location: activeZone,
-        LocationName: activeZone,
-        rssi: -55 - Math.floor(Math.random() * 25),
-        lastSyncAt: now
-      };
-    });
-
-    res.json(liveTags);
+    const tags = await getCollectionDocs('real_time_tags');
+    res.json(tags || []);
   } catch (err: any) {
     console.error('[Demo Router] Error fetching demo realtime tags:', err);
     res.status(500).json({ success: false, error: err.message });
@@ -181,18 +142,10 @@ demoRouter.get('/realtime', async (req: Request, res: Response) => {
 /**
  * GET /api/demo/history/count
  * Returns the total count of tag history records from MongoDB.
- * Used by gaoApi.getHistoryTotalCount() in demo mode.
  */
 demoRouter.get('/history/count', async (req: Request, res: Response) => {
   try {
-    let records = await getCollectionDocs('tag_history');
-
-    // Auto-seed if empty
-    if (!records || records.length === 0) {
-      await seedAllDemoData(false);
-      records = await getCollectionDocs('tag_history');
-    }
-
+    const records = await getCollectionDocs('tag_history');
     res.json({ totalCount: records.length, count: records.length });
   } catch (err: any) {
     console.error('[Demo Router] Error fetching history count:', err);
@@ -203,21 +156,13 @@ demoRouter.get('/history/count', async (req: Request, res: Response) => {
 /**
  * GET /api/demo/history/records
  * Returns paginated tag history records from MongoDB.
- * Used by gaoApi.getHistoryRecords(skip, take) in demo mode.
- * Query params: skip (default 0), take (default 10)
  */
 demoRouter.get('/history/records', async (req: Request, res: Response) => {
   try {
     const skip = parseInt(String(req.query.skip || '0'), 10);
     const take = parseInt(String(req.query.take || '10'), 10);
 
-    let records = await getCollectionDocs('tag_history');
-
-    // Auto-seed if empty
-    if (!records || records.length === 0) {
-      await seedAllDemoData(false);
-      records = await getCollectionDocs('tag_history');
-    }
+    const records = await getCollectionDocs('tag_history');
 
     // Sort by EnterTime descending and paginate
     const sorted = [...records].sort((a: any, b: any) => {
@@ -250,17 +195,11 @@ demoRouter.get('/history/records', async (req: Request, res: Response) => {
 
 /**
  * GET /api/demo/ai-insights
- * Returns AI insights from MongoDB for demo mode.
+ * Returns AI insights from MongoDB.
  */
 demoRouter.get('/ai-insights', async (req: Request, res: Response) => {
   try {
-    let insights = await getCollectionDocs('ai_insights');
-
-    // Auto-seed if empty
-    if (!insights || insights.length === 0) {
-      await seedAllDemoData(false);
-      insights = await getCollectionDocs('ai_insights');
-    }
+    const insights = await getCollectionDocs('ai_insights');
 
     const sorted = [...insights].sort((a: any, b: any) => {
       return new Date(b.createdAt || b.timestamp || 0).getTime() - new Date(a.createdAt || a.timestamp || 0).getTime();
