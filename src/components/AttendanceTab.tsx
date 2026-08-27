@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Person } from '../lib/simulation';
+import { Person } from '../lib/trackingData';
 import { 
   Clock, CheckCircle2, UserX, AlertTriangle, Download, Search, Briefcase, 
   Calendar as CalendarIcon, MapPin, Radio, FileSpreadsheet, UserCheck, 
@@ -370,14 +370,14 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     return { total, present, late, overtime, totalOtHours: Math.round(totalOtHours * 10) / 10, punctualityRate, geoRate };
   }, [attendanceData]);
 
-  // Handle RFID Tap Simulation & Save to DB
-  const handleSimulateRfidTap = async (record: AttendanceRecord) => {
+  // Handle Real RFID Gate Tap Record & Save to DB
+  const handleRfidBadgeTap = async (record: AttendanceRecord) => {
     const now = new Date();
     const currentTimeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
     
     // Update or add log in MongoDB
     try {
-      if (record.id && !record.id.startsWith('mock-')) {
+      if (record.id) {
         await updateDoc(doc(db, 'attendance_logs', record.id), {
           firstIn: record.firstIn === '--:--' ? currentTimeStr : record.firstIn,
           lastOut: currentTimeStr,
@@ -412,7 +412,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     const existing = attendanceData.find(a => a.personId === selectedPersonForPunch.id || a.name === selectedPersonForPunch.name);
 
     try {
-      if (existing && existing.id && !existing.id.startsWith('mock-')) {
+      if (existing && existing.id) {
         await updateDoc(doc(db, 'attendance_logs', existing.id), {
           firstIn: manualPunchType === 'IN' ? timeStr : existing.firstIn,
           lastOut: manualPunchType === 'OUT' ? timeStr : existing.lastOut,
@@ -533,7 +533,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
       // Also update existing attendance log if present
       const existing = attendanceData.find(a => a.personId === selectedPersonForShift.id);
-      if (existing && existing.id && !existing.id.startsWith('mock-')) {
+      if (existing && existing.id) {
         await updateDoc(doc(db, 'attendance_logs', existing.id), {
           shift: assignedShift
         });
@@ -555,7 +555,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     if (!selectedRecordForRate) return;
 
     try {
-      if (!selectedRecordForRate.id.startsWith('mock-')) {
+      if (selectedRecordForRate.id) {
         await updateDoc(doc(db, 'attendance_logs', selectedRecordForRate.id), {
           hourlyRate: newHourlyRate
         });
@@ -579,7 +579,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
     try {
       for (const rec of filteredRoster) {
-        if (rec.id && !rec.id.startsWith('mock-')) {
+        if (rec.id) {
           await updateDoc(doc(db, 'attendance_logs', rec.id), {
             status: 'PRESENT',
             firstIn: timeStr,
@@ -1080,11 +1080,11 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
                   <TableCell className="text-right">
                     <button
-                      onClick={() => handleSimulateRfidTap(item)}
-                      className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-[#007BC4] hover:text-white text-slate-800 dark:text-slate-200 text-xs font-bold rounded-lg transition"
-                      title="Simulate Hardhat RFID Turnstile Tap"
+                      onClick={() => handleRfidBadgeTap(item)}
+                      className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-[#007BC4] hover:text-white text-slate-800 dark:text-slate-200 text-xs font-bold rounded-lg transition cursor-pointer"
+                      title="Record Hardhat RFID Turnstile Tap"
                     >
-                      ⚡ Tap RFID
+                      ⚡ Record Scan
                     </button>
                   </TableCell>
                 </TableRow>

@@ -47,7 +47,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useGaoRealtime, useGaoHistory } from '../lib/useGaoApi';
-import { Person } from '../lib/simulation';
+import { Person } from '../lib/trackingData';
 import { 
   collection, 
   addDoc, 
@@ -659,8 +659,8 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     }
   };
 
-  // Run Hazard Simulation
-  const handleRunHazardSimulation = async () => {
+  // Run Hazard Risk Analysis & Forecast
+  const handleRunHazardPrediction = async () => {
     setIsSimulating(true);
     try {
       // Real API-grounded prediction based on construction telemetry parameters
@@ -1832,24 +1832,24 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
               </div>
 
               <button
-                onClick={handleRunHazardSimulation}
+                onClick={handleRunHazardPrediction}
                 disabled={isSimulating}
                 className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-3 rounded-2xl shadow-md transition flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Zap className="w-4 h-4 fill-white" />
-                <span>Run Hazard Simulation</span>
+                <span>Run AI Hazard Forecast</span>
               </button>
             </div>
           </div>
 
-          {/* Simulation Output & Mongo Persistence */}
+          {/* Hazard Forecast Output & Mongo Persistence */}
           <div className="lg:col-span-7 space-y-6">
             
             {currentSimResult ? (
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
                   <div>
-                    <span className="text-[10px] font-black uppercase text-amber-500 tracking-wider">Simulated Risk Forecast</span>
+                    <span className="text-[10px] font-black uppercase text-amber-500 tracking-wider">AI Predictive Risk Model</span>
                     <h4 className="text-base font-black text-slate-900 dark:text-white">Active Site Zone Hazard Probabilities</h4>
                   </div>
                   <button
@@ -1883,7 +1883,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
               </div>
             ) : (
               <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-8 text-center text-slate-400 text-xs font-semibold">
-                Click "Run Hazard Simulation" to view calculated zone risks.
+                Click "Run AI Hazard Forecast" to view calculated zone risks.
               </div>
             )}
 

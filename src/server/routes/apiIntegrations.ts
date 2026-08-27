@@ -16,7 +16,7 @@ import { processTelemetryWithAI } from '../services/aiPipeline.js';
 export const apiIntegrationsRouter = Router();
 
 function getReqOrgId(req: Request): string {
-  return (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
+  return (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
 }
 
 // GET /api/integrations/third-party

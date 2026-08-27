@@ -635,7 +635,7 @@ export default function DirectHardwareIntegrationSection() {
             </button>
           </div>
 
-          {/* Simulation Output Card */}
+          {/* Hardware Scan Response Card */}
           {simResult && (
             <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 text-white space-y-3 font-mono text-xs">
               <div className="flex items-center justify-between border-b border-slate-800 pb-2">

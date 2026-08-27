@@ -21,7 +21,7 @@ export default function WebhookInspector() {
   const [copiedAll, setCopiedAll] = useState(false);
   const [autoScroll, setAutoScroll] = useState(true);
   const [simulating, setSimulating] = useState(false);
-  const [simNotice, setSimNotice] = useState<string | null>(null);
+  const [statusNotice, setStatusNotice] = useState<string | null>(null);
 
   // Webhook target URL state (prefilled with user's provided Beeceptor URL)
   const [webhookUrl, setWebhookUrl] = useState(() => {
@@ -39,19 +39,19 @@ export default function WebhookInspector() {
 
   const handleFetchGetApi = async () => {
     if (!getApiUrl.trim()) {
-      setSimNotice('Error: Please provide a valid API URL to fetch.');
-      setTimeout(() => setSimNotice(null), 5000);
+      setStatusNotice('Error: Please provide a valid API URL to fetch.');
+      setTimeout(() => setStatusNotice(null), 5000);
       return;
     }
 
     if (!getApiUrl.startsWith('http://') && !getApiUrl.startsWith('https://')) {
-      setSimNotice('Error: API URL must start with http:// or https://');
-      setTimeout(() => setSimNotice(null), 5000);
+      setStatusNotice('Error: API URL must start with http:// or https://');
+      setTimeout(() => setStatusNotice(null), 5000);
       return;
     }
 
     setFetchingGet(true);
-    setSimNotice(`Fetching GET data from [${getApiUrl}]...`);
+    setStatusNotice(`Fetching GET data from [${getApiUrl}]...`);
 
     try {
       let statusCode = 200;
@@ -129,12 +129,12 @@ export default function WebhookInspector() {
       };
 
       setLogs((prev) => [newLog, ...prev]);
-      setSimNotice(`Successfully fetched and inspected API data from [${getApiUrl}]!`);
+      setStatusNotice(`Successfully fetched and inspected API data from [${getApiUrl}]!`);
     } catch (err: any) {
-      setSimNotice(`Fetch failed: ${err.message || 'CORS block or connection failure'}. Tip: Try enabling "Server Proxy (Bypass CORS)" to route it via backend.`);
+      setStatusNotice(`Fetch failed: ${err.message || 'CORS block or connection failure'}. Tip: Try enabling "Server Proxy (Bypass CORS)" to route it via backend.`);
     } finally {
       setFetchingGet(false);
-      setTimeout(() => setSimNotice(null), 7000);
+      setTimeout(() => setStatusNotice(null), 7000);
     }
   };
 
@@ -232,9 +232,9 @@ export default function WebhookInspector() {
     setTimeout(() => setCopiedAll(false), 2000);
   };
 
-  const handleSimulateWebhook = async () => {
+  const handleSendTestWebhook = async () => {
     setSimulating(true);
-    setSimNotice(`Dispatching payload directly to external endpoint [${webhookUrl}]...`);
+    setStatusNotice(`Dispatching payload directly to external endpoint [${webhookUrl}]...`);
 
     const sampleTagId = `GAO-TAG-${Math.floor(1000 + Math.random() * 9000)}`;
     const locations = ['Heavy Crane Exclusion Zone', 'Gate 1 Turnstile', 'Scaffolding Level 4', 'Confined Shaft A'];
@@ -244,8 +244,8 @@ export default function WebhookInspector() {
       TagID: sampleTagId,
       epc: `E2801170${Math.floor(10000000 + Math.random() * 90000000)}`,
       Location: selectedLoc,
-      FirstName: 'Simulated',
-      LastName: 'Worker',
+      FirstName: 'Field',
+      LastName: 'Operator',
       rssi: -55 - Math.floor(Math.random() * 30),
       readerId: 'RDR_GAO_UHF_01',
       timestamp: new Date().toISOString()
@@ -295,12 +295,12 @@ export default function WebhookInspector() {
       };
 
       setLogs((prev) => [newLog, ...prev]);
-      setSimNotice(`Payload delivered to [${webhookUrl}]! Status: HTTP ${res.status}`);
+      setStatusNotice(`Payload delivered to [${webhookUrl}]! Status: HTTP ${res.status}`);
     } catch (err: any) {
-      setSimNotice(`Webhook dispatch failed: ${err.message || 'Network error'}`);
+      setStatusNotice(`Webhook dispatch failed: ${err.message || 'Network error'}`);
     } finally {
       setSimulating(false);
-      setTimeout(() => setSimNotice(null), 5000);
+      setTimeout(() => setStatusNotice(null), 5000);
     }
   };
 
@@ -349,7 +349,7 @@ export default function WebhookInspector() {
           </button>
 
           <button
-            onClick={handleSimulateWebhook}
+            onClick={handleSendTestWebhook}
             disabled={simulating}
             className="px-3 py-1.5 bg-[#007BC4] hover:bg-blue-600 disabled:opacity-50 text-white rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer shadow-sm"
           >
@@ -518,11 +518,11 @@ export default function WebhookInspector() {
         </div>
       </div>
 
-      {/* Simulation Banner Notice */}
-      {simNotice && (
+      {/* Status Banner Notice */}
+      {statusNotice && (
         <div className="px-4 py-2 bg-blue-950/80 border-b border-blue-800/60 text-blue-200 text-xs font-mono flex items-center gap-2">
           <Zap className="w-3.5 h-3.5 text-blue-400 shrink-0" />
-          <span>{simNotice}</span>
+          <span>{statusNotice}</span>
         </div>
       )}
 

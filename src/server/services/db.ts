@@ -906,14 +906,6 @@ export const DEFAULT_MAP_CONFIG = {
   updatedAt: new Date().toISOString()
 };
 
-/**
- * seedAllDemoData — DISABLED. All data is real API data only.
- * Call POST /api/demo/seed if you explicitly want to re-enable demo data in future.
- */
-export async function seedAllDemoData(_force: boolean = false): Promise<{ success: boolean; seededCollections: Record<string, number> }> {
-  console.log('[DB Service] seedAllDemoData: Mock data seeding is disabled. Skipping.');
-  return { success: true, seededCollections: {} };
-}
 
 /**
  * Wipes all documents from all tracked collections in MongoDB.

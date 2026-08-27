@@ -369,7 +369,7 @@ export default function SettingsTab() {
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
   // Aperture RFID Integration States
-  const [apertureHost, setApertureHost] = useState("https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io");
+  const [apertureHost, setApertureHost] = useState("http://192.168.1.100:8080");
   const [apertureApiKeyInput, setApertureApiKeyInput] = useState("");
   const [apertureApiKeyMasked, setApertureApiKeyMasked] = useState("••••••••••••");
   const [apertureApiKeyConfigured, setApertureApiKeyConfigured] = useState(false);
@@ -2473,7 +2473,7 @@ export default function SettingsTab() {
               <div>
                 <h3 className="text-xl font-bold text-slate-900">Network & API Configuration</h3>
                 <p className="text-slate-500 text-xs font-medium mt-1">
-                  Configure external RFID reader hardware endpoints and simulation mode flags.
+                  Configure external RFID reader hardware endpoints, WebSockets, and real-time streams.
                 </p>
               </div>
 

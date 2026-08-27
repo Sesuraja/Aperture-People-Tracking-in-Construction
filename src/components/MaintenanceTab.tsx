@@ -96,7 +96,7 @@ export default function MaintenanceTab() {
   const [nodeForm, setNodeForm] = useState<Partial<MaintenanceNode>>({});
   const [schedForm, setSchedForm] = useState<Partial<ScheduleRule>>({});
 
-  // AI Scan Progress Simulation State
+  // AI Scan Progress State
   const [isAiScanning, setIsAiScanning] = useState(false);
   const [aiScanLogs, setAiScanLogs] = useState<string[]>([]);
   const [aiScanResults, setAiScanResults] = useState<{ scannedCount: number; faultsFound: number; autoTicketsCreated: number } | null>(null);

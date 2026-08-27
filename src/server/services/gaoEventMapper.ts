@@ -101,7 +101,7 @@ function generateEventId(epc: string, serialno: string, ant: number, ts: string)
  */
 export function mapGaoNativeToNormalized(
   event: GaoNativeEvent,
-  source: RfidEventSource = 'mock_gao216031a'
+  source: RfidEventSource = 'gao216031a'
 ): NormalizedRfidEvent {
   const timestamp = parseGaoTimestamp(event.timestamp);
 
@@ -135,7 +135,7 @@ export function mapGaoNativeToNormalized(
 export function mapGaoNativeToDirect(
   event: GaoNativeEvent,
   apertureReaderId: string,
-  source: RfidEventSource = 'mock_gao216031a'
+  source: RfidEventSource = 'gao216031a'
 ): DirectHardwareScanPayload & { rawGaoPayload: GaoNativeEvent } {
   const normalized = mapGaoNativeToNormalized(event, source);
 
@@ -145,9 +145,7 @@ export function mapGaoNativeToDirect(
     tagId: normalized.epc,
     rssi: normalized.rssi,
     timestamp: normalized.timestamp,
-    protocol: source === 'mock_gao216031a'
-      ? 'GAO216031A Mock Simulator'
-      : 'GAO216031A HTTP Push',
+    protocol: 'GAO216031A HTTP Push',
     rawHex: undefined,
     // Preserved for audit — stored as extra field on the scan payload
     rawGaoPayload: event,

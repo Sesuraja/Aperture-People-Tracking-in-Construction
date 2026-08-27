@@ -38,55 +38,11 @@ export function sanitizeUser(user: any) {
   return clean;
 }
 
-// Admin bootstrap helper
+// Admin bootstrap helper (only seeds admin user if ADMIN_INITIAL_EMAIL is explicitly set in .env)
 export async function bootstrapAdminUser() {
-  const isTest = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
-
-  // In test environments only: bootstrap demo organization and demo admin for automated test suites
-  if (isTest) {
-    const demoOrg = await getDocById('organizations', 'demo');
-    if (!demoOrg) {
-      await upsertDoc('organizations', {
-        id: 'demo',
-        name: 'Metro Commercial Tower (Demo)',
-        slug: 'demo',
-        status: 'active',
-        plan: 'enterprise',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }, 'demo');
-    }
-
-    const users = await getCollectionDocs('users');
-    const defaultAdmins = [
-      { email: 'admin@aperture.com', password: 'AdminPassword123!', name: 'Aperture Site Admin' }
-    ];
-
-    for (const adm of defaultAdmins) {
-      const existing = users.find((u: any) => u.email?.toLowerCase() === adm.email.toLowerCase());
-      if (!existing) {
-        const hashedPassword = await bcrypt.hash(adm.password, 10);
-        const adminUser = {
-          id: `usr_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          email: adm.email,
-          name: adm.name,
-          role: 'admin',
-          organizationId: 'demo',
-          isPlatformAdmin: true,
-          passwordHash: hashedPassword,
-          createdAt: new Date().toISOString()
-        };
-        await upsertDoc('users', adminUser, 'demo');
-      }
-    }
-    return;
-  }
-
-  // In production / live DB: Only bootstrap an initial admin if explicitly configured via environment variables
   const adminEmail = process.env.ADMIN_INITIAL_EMAIL?.toLowerCase()?.trim();
   const adminPassword = process.env.ADMIN_INITIAL_PASSWORD;
   if (!adminEmail || !adminPassword) {
-    // No demo org or mock users auto-created in MongoDB
     return;
   }
 

@@ -102,7 +102,7 @@ export default function WorkerQrScannerModal({
       console.error('Camera access error:', err);
       if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
         setCameraState('denied');
-        setErrorMessage('Camera access was denied by browser permissions. You can use manual code input or sample badge simulation below.');
+        setErrorMessage('Camera access was denied by browser permissions. You can use manual badge code input below.');
       } else {
         setCameraState('error');
         setErrorMessage(err.message || 'Unable to connect to camera device.');

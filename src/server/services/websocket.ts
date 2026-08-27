@@ -15,7 +15,6 @@ export interface ClientSession {
   organizationId: string;
   connectedAt: string;
   clientIp: string;
-  syntheticEnabled: boolean;
   lastPing: number;
   path: string;
 }
@@ -46,7 +45,6 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
       organizationId,
       connectedAt: new Date().toISOString(),
       clientIp,
-      syntheticEnabled: true,
       lastPing: Date.now(),
       path: req.url || '/ws'
     };

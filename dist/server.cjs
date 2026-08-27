@@ -996,7 +996,6 @@ function initWebSocketServer(server) {
       organizationId,
       connectedAt: (/* @__PURE__ */ new Date()).toISOString(),
       clientIp,
-      syntheticEnabled: true,
       lastPing: Date.now(),
       path: req.url || "/ws"
     };
@@ -1190,16 +1189,7 @@ async function getGooglePublicCerts(projectId = FIREBASE_PROJECT_ID) {
   return googleKeysCache?.keys || {};
 }
 function verifyToken(token) {
-  if (token === "demo" || token === "guest" || token.startsWith("demo_")) {
-    return {
-      id: "demo_user_01",
-      email: "demo@aperture.io",
-      name: "Interactive Demo User",
-      role: "admin",
-      organizationId: "demo",
-      tokenVersion: 1
-    };
-  }
+  if (!token) return null;
   try {
     const decoded = import_jsonwebtoken.default.verify(token, JWT_SECRET);
     return {
@@ -1263,48 +1253,14 @@ async function requireAuth(req, res, next) {
   } else if (req.headers["x-access-token"]) {
     token = req.headers["x-access-token"];
   }
-  const isDemoExplicit = req.headers["x-demo-mode"] === "true" || req.query.demo === "true" || token === "demo";
   if (!token || token === "null" || token === "undefined") {
-    if (isDemoExplicit) {
-      req.user = {
-        id: "demo_user_01",
-        email: "demo@aperture.io",
-        name: "Site Administrator",
-        role: "admin",
-        organizationId: "demo",
-        tokenVersion: 1
-      };
-      return next();
-    }
     return res.status(401).json({ error: "Authentication required. No authorization token provided." });
-  }
-  if (token === "demo" || token === "guest") {
-    req.user = {
-      id: "demo_user_01",
-      email: "demo@aperture.io",
-      name: "Site Administrator",
-      role: "admin",
-      organizationId: "demo",
-      tokenVersion: 1
-    };
-    return next();
   }
   let user = verifyToken(token);
   if (!user) {
     user = await verifyFirebaseTokenRS256(token);
   }
   if (!user) {
-    if (isDemoExplicit) {
-      req.user = {
-        id: "demo_user_01",
-        email: "demo@aperture.io",
-        name: "Site Administrator",
-        role: "admin",
-        organizationId: "demo",
-        tokenVersion: 1
-      };
-      return next();
-    }
     return res.status(401).json({ error: "Invalid or expired authorization token" });
   }
   if (user.id) {
@@ -1398,7 +1354,7 @@ function requirePermission(permission) {
 var activeIndustryPersona = "You are an intelligent Industrial IoT Safety & Personnel Telemetry AI Director.";
 var activeComplianceStandard = "Enterprise Safety & Compliance Standards (OSHA / ISO 45001 / JCAHO)";
 var activeIndustryTitle = "Aperture People Tracking";
-async function resolveIndustryContext(orgId = "demo") {
+async function resolveIndustryContext(orgId = "default") {
   try {
     const doc = await getDocById("settings", "industry_config", orgId) || await getDocById("settings", "industry_config", "ALL");
     if (doc) {
@@ -2855,43 +2811,6 @@ function sanitizeUser(user) {
   return clean;
 }
 async function bootstrapAdminUser() {
-  const isTest = process.env.NODE_ENV === "test" || Boolean(process.env.VITEST);
-  if (isTest) {
-    const demoOrg = await getDocById("organizations", "demo");
-    if (!demoOrg) {
-      await upsertDoc("organizations", {
-        id: "demo",
-        name: "Metro Commercial Tower (Demo)",
-        slug: "demo",
-        status: "active",
-        plan: "enterprise",
-        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      }, "demo");
-    }
-    const users2 = await getCollectionDocs("users");
-    const defaultAdmins = [
-      { email: "admin@aperture.com", password: "AdminPassword123!", name: "Aperture Site Admin" }
-    ];
-    for (const adm of defaultAdmins) {
-      const existing2 = users2.find((u) => u.email?.toLowerCase() === adm.email.toLowerCase());
-      if (!existing2) {
-        const hashedPassword = await import_bcryptjs.default.hash(adm.password, 10);
-        const adminUser = {
-          id: `usr_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-          email: adm.email,
-          name: adm.name,
-          role: "admin",
-          organizationId: "demo",
-          isPlatformAdmin: true,
-          passwordHash: hashedPassword,
-          createdAt: (/* @__PURE__ */ new Date()).toISOString()
-        };
-        await upsertDoc("users", adminUser, "demo");
-      }
-    }
-    return;
-  }
   const adminEmail = process.env.ADMIN_INITIAL_EMAIL?.toLowerCase()?.trim();
   const adminPassword = process.env.ADMIN_INITIAL_PASSWORD;
   if (!adminEmail || !adminPassword) {
@@ -4368,7 +4287,7 @@ function generateEventId(epc, serialno, ant, ts) {
   const tsClean = ts.replace(/\D/g, "").slice(0, 17);
   return `gao_${serialno}_ant${ant}_${epc.slice(-6)}_${tsClean}`;
 }
-function mapGaoNativeToNormalized(event, source = "mock_gao216031a") {
+function mapGaoNativeToNormalized(event, source = "gao216031a") {
   const timestamp = parseGaoTimestamp(event.timestamp);
   return {
     eventId: generateEventId(event.epc, event.serialno || "UNKNOWN", event.ant, event.timestamp),
@@ -4389,7 +4308,7 @@ function mapGaoNativeToNormalized(event, source = "mock_gao216031a") {
     rawPayload: event
   };
 }
-function mapGaoNativeToDirect(event, apertureReaderId, source = "mock_gao216031a") {
+function mapGaoNativeToDirect(event, apertureReaderId, source = "gao216031a") {
   const normalized = mapGaoNativeToNormalized(event, source);
   return {
     readerId: apertureReaderId,
@@ -4397,7 +4316,7 @@ function mapGaoNativeToDirect(event, apertureReaderId, source = "mock_gao216031a
     tagId: normalized.epc,
     rssi: normalized.rssi,
     timestamp: normalized.timestamp,
-    protocol: source === "mock_gao216031a" ? "GAO216031A Mock Simulator" : "GAO216031A HTTP Push",
+    protocol: "GAO216031A HTTP Push",
     rawHex: void 0,
     // Preserved for audit — stored as extra field on the scan payload
     rawGaoPayload: event

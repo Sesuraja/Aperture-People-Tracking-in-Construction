@@ -4,7 +4,7 @@ import {
   BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, RadarChart, PolarGrid, 
   PolarAngleAxis, PolarRadiusAxis, Radar, Legend, ComposedChart 
 } from 'recharts';
-import { Person } from '../lib/simulation';
+import { Person } from '../lib/trackingData';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { 
@@ -287,7 +287,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   const [eqLoadFactor, setEqLoadFactor] = useState('75');
   const [eqMaintDays, setEqMaintDays] = useState('10');
 
-  // Reader Hardware Ping Simulation State
+  // Reader Hardware Ping State
   const [pingingReader, setPingingReader] = useState<string | null>(null);
   const [readerStatuses, setReaderStatuses] = useState<Record<string, { status: string; rssi: number; packets: number }>>({});
 
@@ -549,7 +549,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     }
   };
 
-  // Ping Reader Simulation
+  // Ping Reader Hardware Check
   const handlePingReader = (readerId: string) => {
     setPingingReader(readerId);
     setTimeout(() => {

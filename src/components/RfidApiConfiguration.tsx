@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 export function RfidApiConfiguration() {
-  const [host, setHost] = useState('https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io');
+  const [host, setHost] = useState(typeof window !== 'undefined' ? (localStorage.getItem('gao_api_url') || 'http://192.168.1.100:8080') : 'http://192.168.1.100:8080');
   const [apiKeyInput, setApiKeyInput] = useState('');
   const [apiKeyMasked, setApiKeyMasked] = useState('••••••••••••');
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false);
@@ -450,7 +450,7 @@ export function RfidApiConfiguration() {
               <div className="flex items-center gap-1.5">
                 <button
                   type="button"
-                  onClick={() => setHost('https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io')}
+                  onClick={() => setHost('http://192.168.1.100:8080')}
                   className="text-[11px] font-semibold text-[#007BC4] hover:underline cursor-pointer"
                 >
                   Reset Default
@@ -464,7 +464,7 @@ export function RfidApiConfiguration() {
                 type="url"
                 value={host}
                 onChange={(e) => setHost(e.target.value)}
-                placeholder="https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io"
+                placeholder="http://192.168.1.100:8080"
                 className="w-full bg-slate-50 border border-slate-300 rounded-lg px-3.5 py-2.5 text-slate-900 font-mono text-xs focus:bg-white focus:border-[#007BC4] focus:ring-2 focus:ring-[#007BC4]/20 outline-none transition"
               />
             </div>

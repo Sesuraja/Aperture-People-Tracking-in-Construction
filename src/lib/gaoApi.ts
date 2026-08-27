@@ -35,8 +35,10 @@ function getAuthHeaders(): Record<string, string> {
     'Content-Type': 'application/json'
   };
   if (typeof window !== 'undefined') {
-    const token = localStorage.getItem('gao_jwt_token') || 'demo';
-    headers['Authorization'] = `Bearer ${token}`;
+    const token = localStorage.getItem('gao_jwt_token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const targetHost = localStorage.getItem('gao_api_url');
     if (targetHost) headers['x-gao-target-host'] = targetHost;
   }

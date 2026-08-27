@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Person } from '../lib/simulation';
+import { Person } from '../lib/trackingData';
 import { AssetItem, VehicleItem, InfrastructureItem, CCTVCameraItem, EnvironmentalSensorItem } from '../lib/trackingLayers';
 import { 
   X, User, ShieldCheck, ShieldAlert, Clock, MapPin, Battery, Phone, 

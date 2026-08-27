@@ -1,5 +1,5 @@
 import { motion, AnimatePresence } from 'motion/react';
-import { AIAlert } from '../lib/simulation';
+import { AIAlert } from '../lib/trackingData';
 import { AlertCircle, FileWarning, Info } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';

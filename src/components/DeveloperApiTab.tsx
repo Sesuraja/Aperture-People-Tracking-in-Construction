@@ -265,7 +265,7 @@ export default function DeveloperApiTab() {
     { label: 'GET Personnel Directory', method: 'GET', url: '/api/data/registered_people', body: '' },
     { label: 'GET Hardware Devices & Scanners', method: 'GET', url: '/api/data/devices', body: '' },
     { label: 'GET Aperture Integration Config', method: 'GET', url: '/api/integrations/aperture/config', body: '' },
-    { label: 'POST Test Aperture Connection', method: 'POST', url: '/api/integrations/aperture/test', body: JSON.stringify({ host: "https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io" }, null, 2) }
+    { label: 'POST Test Aperture Connection', method: 'POST', url: '/api/integrations/aperture/test', body: JSON.stringify({ host: "http://192.168.1.100:8080" }, null, 2) }
   ];
 
 
@@ -338,8 +338,8 @@ export default function DeveloperApiTab() {
         },
         "/api/ai/predictive-hazard-simulator": {
           post: {
-            summary: "Run AI Predictive Safety Hazard Simulation",
-            responses: { "200": { description: "Simulated hazard risk score & preventative actions" } }
+            summary: "Run AI Predictive Safety Hazard Risk Analysis",
+            responses: { "200": { description: "Hazard risk score & preventative actions forecast" } }
           }
         }
       }

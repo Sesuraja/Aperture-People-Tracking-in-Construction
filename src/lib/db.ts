@@ -91,11 +91,10 @@ function createQuerySnapshot(docsData: any[]) {
 
 function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  let token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
-  if (!token) {
-    token = 'demo';
+  const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
-  headers['Authorization'] = `Bearer ${token}`;
   return headers;
 }
 

@@ -6,7 +6,7 @@
 import { motion } from 'motion/react';
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useNavigate, useLocation, Navigate } from 'react-router-dom';
-import { useSimulation } from './lib/simulation';
+import { useTrackingData } from './lib/trackingData';
 import { Activity, Bell, Map, Map as MapIcon, Users, BarChart3, Settings, ShieldAlert, Cpu, LayoutDashboard, Radio, PlayCircle, Search, LogOut, Lock, Clock, Building2, ClipboardCheck, History, MessageSquare, Terminal, Wrench, Sparkles, Box, ShieldCheck, Zap, ChevronLeft, ChevronRight, Command } from 'lucide-react';
 import CommandPaletteModal from './components/CommandPaletteModal';
 import ErrorBoundary from './components/ErrorBoundary';
@@ -177,7 +177,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
     localStorage.setItem('gao_active_project', projectId);
   };
 
-  const { people = [], assets = [], vehicles = [], alerts = [], ZONES = {}, isLoading } = useSimulation(mode, activeProject);
+  const { people = [], assets = [], vehicles = [], alerts = [], ZONES = {}, isLoading } = useTrackingData(mode, activeProject);
   const [searchQuery, setSearchQuery] = useState('');
   const [highlightedPersonId, setHighlightedPersonId] = useState<string | null>(null);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);

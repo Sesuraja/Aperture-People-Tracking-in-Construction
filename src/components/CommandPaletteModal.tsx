@@ -5,7 +5,7 @@ import {
   Bell, ShieldAlert, BarChart3, Sparkles, Radio, Wrench, History, Settings, 
   Download, Sun, Moon, Zap, ArrowRight, CornerDownLeft, X, Building2, User
 } from 'lucide-react';
-import { Person } from '../lib/simulation';
+import { Person } from '../lib/trackingData';
 
 interface CommandPaletteModalProps {
   isOpen: boolean;

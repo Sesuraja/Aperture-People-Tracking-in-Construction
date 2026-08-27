@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Person } from '../lib/simulation';
+import { Person } from '../lib/trackingData';
 import { Users, Plus, Trash2, Edit3, X, Check, ShieldCheck, HardHat, Award, MapPin } from 'lucide-react';
 
 interface ManageWorkforceModalProps {

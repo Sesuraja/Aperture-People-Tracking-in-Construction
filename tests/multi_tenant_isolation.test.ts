@@ -1,11 +1,11 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import express from 'express';
-import { authRouter, bootstrapAdminUser } from '../src/server/routes/auth.js';
+import { authRouter } from '../src/server/routes/auth.js';
 import { dataRouter } from '../src/server/routes/data.js';
 import { adminRouter } from '../src/server/routes/admin.js';
 import { hardwareRouter } from '../src/server/routes/hardware.js';
 import { rfidRouter } from '../src/server/routes/rfid.js';
-import { seedAllDemoData, getDocById, getCollectionDocs, upsertDoc } from '../src/server/services/db.js';
+import { getDocById, getCollectionDocs, upsertDoc } from '../src/server/services/db.js';
 
 // Setup test express application
 const app = express();
@@ -18,9 +18,10 @@ app.use('/api/rfid', rfidRouter);
 
 let tokenCompanyA: string = '';
 let tokenCompanyB: string = '';
-let tokenDemo: string = '';
+let tokenCompanyC: string = '';
 let orgIdA: string = '';
 let orgIdB: string = '';
+let orgIdC: string = '';
 
 async function makeRequest(
   path: string,
@@ -92,32 +93,31 @@ async function makeRequest(
 }
 
 describe('Multi-Tenant B2B SaaS Architecture Verification', () => {
-  beforeAll(async () => {
-    // Bootstrap test demo admin and test workers
-    await bootstrapAdminUser();
-    await upsertDoc('registered_people', { id: 'demo_worker_1', name: 'Demo Worker 1', organizationId: 'demo' }, 'demo');
-    await upsertDoc('registered_people', { id: 'demo_worker_2', name: 'Demo Worker 2', organizationId: 'demo' }, 'demo');
-  });
-
-  it('1. Bootstraps and isolates demo tenant data', async () => {
-    // Login as default demo admin
-    const res = await makeRequest('/api/auth/login', {
+  it('1. Registers Company C with dedicated organizationId and scopes tenant', async () => {
+    const res = await makeRequest('/api/auth/register', {
       method: 'POST',
-      body: { email: 'admin@aperture.com', password: 'AdminPassword123!' }
+      body: {
+        email: 'admin@zenith-logistics.com',
+        password: 'password123',
+        name: 'Carlos Zenith Admin',
+        role: 'admin',
+        organizationName: 'Zenith Logistics Hub'
+      }
     });
 
     expect(res.status).toBe(200);
     expect(res.body.token).toBeDefined();
-    expect(res.body.user.organizationId).toBe('demo');
-    tokenDemo = res.body.token;
+    expect(res.body.user.organizationId).toBeDefined();
+    tokenCompanyC = res.body.token;
+    orgIdC = res.body.user.organizationId;
 
-    // Verify organization endpoint returns demo organization details
+    // Verify organization endpoint returns company C details
     const orgRes = await makeRequest('/api/auth/organization', {
-      token: tokenDemo
+      token: tokenCompanyC
     });
     expect(orgRes.status).toBe(200);
-    expect(orgRes.body.organization.id).toBe('demo');
-    expect(orgRes.body.organization.name).toContain('Demo');
+    expect(orgRes.body.organization.id).toBe(orgIdC);
+    expect(orgRes.body.organization.name).toContain('Zenith');
   });
 
   it('2. Registers Company A with dedicated organizationId', async () => {
@@ -258,15 +258,13 @@ describe('Multi-Tenant B2B SaaS Architecture Verification', () => {
     });
     expect(statsB.status).toBe(200);
     expect(statsB.body.organizationId).toBe(orgIdB);
-    expect(statsB.body.registeredPeopleCount).toBe(1);
-
-    // Demo stats still include full synthetic demo dataset
-    const statsDemo = await makeRequest('/api/data/stats', {
-      token: tokenDemo
+    // Stats for Company C
+    const statsC = await makeRequest('/api/data/stats', {
+      token: tokenCompanyC
     });
-    expect(statsDemo.status).toBe(200);
-    expect(statsDemo.body.organizationId).toBe('demo');
-    expect(statsDemo.body.registeredPeopleCount).toBeGreaterThan(1);
+    expect(statsC.status).toBe(200);
+    expect(statsC.body.organizationId).toBe(orgIdC);
+    expect(statsC.body.registeredPeopleCount).toBe(0);
   });
 
   it('7. Enforces tenant scoping on Admin User Management and Audit Logs', async () => {

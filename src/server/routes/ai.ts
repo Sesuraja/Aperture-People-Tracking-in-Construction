@@ -8,7 +8,7 @@ let activeIndustryPersona = 'You are an intelligent Industrial IoT Safety & Pers
 let activeComplianceStandard = 'Enterprise Safety & Compliance Standards (OSHA / ISO 45001 / JCAHO)';
 let activeIndustryTitle = 'Aperture People Tracking';
 
-export async function resolveIndustryContext(orgId: string = 'demo') {
+export async function resolveIndustryContext(orgId: string = 'default') {
   try {
     const doc = await getDocById('settings', 'industry_config', orgId) || await getDocById('settings', 'industry_config', 'ALL');
     if (doc) {

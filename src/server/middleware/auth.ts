@@ -91,28 +91,8 @@ export async function getGooglePublicCerts(projectId: string = FIREBASE_PROJECT_
  * Synchronous verification for local HMAC JWT tokens.
  * Unverified fallback via jwt.decode() is strictly disabled to prevent authentication bypass.
  */
-export function generateDemoToken(): string {
-  return generateToken({
-    id: 'demo_user_01',
-    email: 'demo@aperture.io',
-    name: 'Interactive Demo User',
-    role: 'admin',
-    organizationId: 'demo',
-    tokenVersion: 1
-  });
-}
-
 export function verifyToken(token: string): AuthenticatedUser | null {
-  if (token === 'demo' || token === 'guest' || token.startsWith('demo_')) {
-    return {
-      id: 'demo_user_01',
-      email: 'demo@aperture.io',
-      name: 'Interactive Demo User',
-      role: 'admin',
-      organizationId: 'demo',
-      tokenVersion: 1
-    };
-  }
+  if (!token) return null;
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as any;
@@ -208,33 +188,8 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
     token = req.headers['x-access-token'] as string;
   }
 
-  const isDemoExplicit = req.headers['x-demo-mode'] === 'true' || req.query.demo === 'true' || token === 'demo';
-
   if (!token || token === 'null' || token === 'undefined') {
-    if (isDemoExplicit) {
-      req.user = {
-        id: 'demo_user_01',
-        email: 'demo@aperture.io',
-        name: 'Site Administrator',
-        role: 'admin',
-        organizationId: 'demo',
-        tokenVersion: 1
-      };
-      return next();
-    }
     return res.status(401).json({ error: 'Authentication required. No authorization token provided.' });
-  }
-
-  if (token === 'demo' || token === 'guest') {
-    req.user = {
-      id: 'demo_user_01',
-      email: 'demo@aperture.io',
-      name: 'Site Administrator',
-      role: 'admin',
-      organizationId: 'demo',
-      tokenVersion: 1
-    };
-    return next();
   }
 
   let user = verifyToken(token);
@@ -243,17 +198,6 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   }
 
   if (!user) {
-    if (isDemoExplicit) {
-      req.user = {
-        id: 'demo_user_01',
-        email: 'demo@aperture.io',
-        name: 'Site Administrator',
-        role: 'admin',
-        organizationId: 'demo',
-        tokenVersion: 1
-      };
-      return next();
-    }
     return res.status(401).json({ error: 'Invalid or expired authorization token' });
   }
 

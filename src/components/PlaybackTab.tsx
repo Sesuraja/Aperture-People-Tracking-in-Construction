@@ -1,6 +1,6 @@
 import { useState, useMemo, useEffect, useContext, useRef } from 'react';
 import { AppModeContext } from '../App';
-import { Person } from '../lib/simulation';
+import { Person } from '../lib/trackingData';
 import { 
   Play, Pause, FastForward, SkipBack, Search, Database, Calendar, 
   RotateCcw, Sparkles, Download, Flame, ShieldAlert, Radio, Truck, 
@@ -163,27 +163,23 @@ export default function PlaybackTab({ people, zones: initialZones }: { people: P
     }
   }, [mode, skip, take]);
 
-  const records = mode === 'real' ? dbRecords : apiRecords;
-  const totalCount = mode === 'real' ? dbTotalCount : apiTotalCount;
-  const isLoading = mode === 'real' ? isDbLoading : apiIsLoading;
-  const error = mode === 'real' ? null : apiError;
+  const records = dbRecords;
+  const totalCount = dbTotalCount;
+  const isLoading = isDbLoading;
+  const error = null;
 
-  // Generate deterministic mock history based on current people's trail or fallback
-  const simulatedHistory = useMemo(() => {
+  // Build telemetry playback timeline from registered workforce and trails
+  const playbackHistoryFrames = useMemo(() => {
     const historyFrames: Person[][] = [];
     const frameCount = 120;
     
     for (let i = 0; i < frameCount; i++) {
        const frame = people.map(p => {
-          const idHash = p.id.split('').reduce((sum, char) => sum + char.charCodeAt(0), 0);
-          const offsetX = Math.sin(i * 0.08 + idHash) * 12;
-          const offsetY = Math.cos(i * 0.08 + idHash) * 12;
-          
           return {
              ...p,
-             x: Math.max(8, Math.min(92, p.x + offsetX)),
-             y: Math.max(8, Math.min(92, p.y + offsetY)),
-             presenceState: (Math.abs(offsetX) > 5) ? 'MOVING' : 'IDLE' as ('MOVING' | 'IDLE')
+             x: p.x,
+             y: p.y,
+             presenceState: p.presenceState || 'IDLE'
           };
        });
        historyFrames.push(frame);
@@ -223,7 +219,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people: P
     if (isPlaying) {
       interval = setInterval(() => {
          setTimeIndex(prev => {
-            if (prev >= simulatedHistory.length - 1) {
+            if (prev >= playbackHistoryFrames.length - 1) {
                setIsPlaying(false);
                return prev;
             }
@@ -232,14 +228,14 @@ export default function PlaybackTab({ people, zones: initialZones }: { people: P
       }, 400 / speed);
     }
     return () => clearInterval(interval);
-  }, [isPlaying, speed, simulatedHistory.length]);
+  }, [isPlaying, speed, playbackHistoryFrames.length]);
 
   const togglePlay = () => setIsPlaying(!isPlaying);
   const resetPlayback = () => { setIsPlaying(false); setTimeIndex(0); };
-  const stepForward = (frames = 5) => setTimeIndex(prev => Math.min(simulatedHistory.length - 1, prev + frames));
+  const stepForward = (frames = 5) => setTimeIndex(prev => Math.min(playbackHistoryFrames.length - 1, prev + frames));
   const stepBackward = (frames = 5) => setTimeIndex(prev => Math.max(0, prev - frames));
 
-  const currentFramePeople = simulatedHistory[timeIndex] || people;
+  const currentFramePeople = playbackHistoryFrames[timeIndex] || people;
   
   const startTime = new Date(`${selectedDate}T08:00:00`);
   const currentTime = new Date(startTime.getTime() + timeIndex * 60000 * 3);
