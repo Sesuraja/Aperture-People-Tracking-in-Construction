@@ -302,7 +302,17 @@ export async function getCollectionDocs(
 
       const query: any = {};
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-        query.organizationId = organizationId;
+        if (organizationId === 'default' || organizationId === 'demo') {
+          query.$or = [
+            { organizationId: 'default' },
+            { organizationId: 'demo' },
+            { organizationId: { $exists: false } },
+            { organizationId: null },
+            { organizationId: '' }
+          ];
+        } else {
+          query.organizationId = organizationId;
+        }
       }
 
       let cursor = mongoDb.collection(colName).find(query);
@@ -329,8 +339,8 @@ export async function getCollectionDocs(
   const items = inMemoryStore[colName] || [];
   if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
     return items.filter((item: any) => 
-      organizationId === 'demo'
-        ? (item.organizationId === 'demo' || !item.organizationId)
+      (organizationId === 'demo' || organizationId === 'default')
+        ? (!item.organizationId || item.organizationId === 'demo' || item.organizationId === 'default')
         : item.organizationId === organizationId
     );
   }
@@ -354,9 +364,26 @@ export async function getDocById(colName: string, id: string, organizationId?: s
         } catch {}
       }
 
-      const query: any = { $or: orClauses };
+      let query: any = { $or: orClauses };
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-        query.organizationId = organizationId;
+        if (organizationId === 'default' || organizationId === 'demo') {
+          query = {
+            $and: [
+              { $or: orClauses },
+              {
+                $or: [
+                  { organizationId: 'default' },
+                  { organizationId: 'demo' },
+                  { organizationId: { $exists: false } },
+                  { organizationId: null },
+                  { organizationId: '' }
+                ]
+              }
+            ]
+          };
+        } else {
+          query.organizationId = organizationId;
+        }
       }
 
       const doc = await mongoDb.collection(colName).findOne(query);
@@ -380,7 +407,9 @@ export async function getDocById(colName: string, id: string, organizationId?: s
   if (!doc) return null;
   if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
     const docOrg = doc.organizationId;
-    if (docOrg && docOrg !== organizationId) return null; // IDOR protected: do not return other tenant's document
+    if (docOrg && docOrg !== organizationId && !(docOrg === 'default' && organizationId === 'demo') && !(docOrg === 'demo' && organizationId === 'default')) {
+      return null; // IDOR protected: do not return other tenant's document
+    }
   }
   return doc;
 }
