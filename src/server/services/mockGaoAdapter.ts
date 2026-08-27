@@ -574,21 +574,7 @@ export async function injectUnknownTag(): Promise<void> {
  * Reads GAO_SIMULATOR_ENABLED env variable to decide whether to auto-start.
  */
 export async function initMockGaoAdapter(): Promise<void> {
-  const enabled = process.env.GAO_SIMULATOR_ENABLED === 'true';
-  const intervalMs = Number(process.env.GAO_SIMULATOR_INTERVAL_MS) || DEFAULT_SIMULATOR_CONFIG.intervalMs;
-
-  if (enabled) {
-    console.log('[MockGAO] Auto-starting GAO216031A Mock Simulator (GAO_SIMULATOR_ENABLED=true)');
-    await startMockGaoSimulator({ intervalMs });
-  } else {
-    // Bootstrap readers in MongoDB so Devices tab shows them even when stopped
-    try {
-      await bootstrapMockReaders();
-    } catch (e: any) {
-      console.warn('[MockGAO] Pre-flight bootstrap warning:', e?.message);
-    }
-    console.log('[MockGAO] GAO216031A Mock Simulator ready (not auto-started). Use /api/demo/gao-simulator/start to begin.');
-  }
+  // Live RFID hardware API only. No mock simulator auto-started.
 }
 
 // ---------------------------------------------------------------------------

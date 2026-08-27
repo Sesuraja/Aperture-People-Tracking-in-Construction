@@ -94,25 +94,23 @@ export async function processDirectHardwareScan(
   const matchedTag = tagMappings.find(t => t.tagId.toLowerCase() === rawTagId.toLowerCase());
   const matchedPerson = people.find((p: any) => (p.tagId || p.TagID || p.badgeId || p.id)?.toLowerCase() === rawTagId.toLowerCase());
 
-  let entityName = 'Staff Member';
-  let entityType = 'PERSONNEL';
-  let roleOrTrade = 'Field Specialist';
+  let entityName = rawTagId;
+  let entityType = 'UNASSIGNED';
+  let roleOrTrade = 'Unregistered Tag';
 
   if (matchedTag) {
     entityName = matchedTag.entityName;
     entityType = matchedTag.entityType;
     roleOrTrade = matchedTag.roleOrTrade || roleOrTrade;
   } else if (matchedPerson) {
-    entityName = matchedPerson.name || `${matchedPerson.firstName || ''} ${matchedPerson.lastName || ''}`.trim() || 'Staff Member';
+    entityName = matchedPerson.name || `${matchedPerson.firstName || ''} ${matchedPerson.lastName || ''}`.trim() || rawTagId;
     roleOrTrade = matchedPerson.trade || matchedPerson.role || roleOrTrade;
-  } else {
-    // If not matched, create auto-discovered personnel or asset
-    entityName = `Tag Holder (${rawTagId.substring(0, 8)})`;
+    entityType = 'PERSONNEL';
   }
 
   const nameParts = entityName.split(' ');
-  const firstName = nameParts[0] || 'Staff';
-  const lastName = nameParts.slice(1).join(' ') || 'Member';
+  const firstName = nameParts[0] || rawTagId;
+  const lastName = nameParts.slice(1).join(' ') || '';
 
   // STEP 3: PREPARE TELEMETRY FOR AI ENGINE
   const telemetry: TelemetryPayload = {
@@ -173,172 +171,9 @@ export async function processDirectHardwareScan(
 
 /**
  * 2. Bootstrap default Hardware Readers and Tag Mappings
+ * DISABLED: No synthetic readers or fake tag mappings are seeded. All data is real API only.
  */
 export async function bootstrapDefaultHardware(): Promise<void> {
-  const existingReaders = await getCollectionDocs('hardware_readers', undefined, 'demo');
-  if (existingReaders.length === 0) {
-    const defaultReaders: HardwareReader[] = [
-      {
-        id: 'reader_meeting_room_216031a',
-        readerId: '100EHH8325020026',
-        name: 'Meeting Room Portal (GAO 216031A)',
-        model: 'GAO 216031A UHF RFID Reader',
-        ipAddress: '192.168.1.120',
-        port: 8080,
-        protocol: 'HTTP Push',
-        powerDbm: 30,
-        sensitivityDbm: -75,
-        status: 'ONLINE',
-        antennas: [
-          { port: 1, name: 'Antenna 1 (Built-in Inside Meeting Room / Chair)', zoneId: 'zone_meeting_room_in', zoneName: 'Meeting Room (Inside)', direction: 'IN', powerDbm: 30 },
-          { port: 2, name: 'Antenna 2 (Top Ceiling / Facing Outside Corridor)', zoneId: 'zone_meeting_room_out', zoneName: 'Meeting Room (Outside / Corridor)', direction: 'OUT', powerDbm: 30 }
-        ],
-        totalScans: 0,
-        lastPingAt: new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'reader_gate_01',
-        readerId: 'GAO-UHF-818-A',
-        name: 'Main Security Turnstile Gateway',
-        model: 'GAO 818001 UHF 4-Port Fixed Reader',
-        ipAddress: '192.168.1.101',
-        port: 8080,
-        protocol: 'HTTP Push',
-        powerDbm: 30,
-        sensitivityDbm: -75,
-        status: 'ONLINE',
-        antennas: [
-          { port: 1, name: 'Antenna 1 (Inbound Entry)', zoneId: 'zone_entrance', zoneName: 'Main Entrance Turnstile', direction: 'IN', powerDbm: 30 },
-          { port: 2, name: 'Antenna 2 (Outbound Exit)', zoneId: 'zone_entrance', zoneName: 'Main Entrance Turnstile', direction: 'OUT', powerDbm: 30 }
-        ],
-        totalScans: 412,
-        lastPingAt: new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'reader_crane_02',
-        readerId: 'IMPINJ-R420-CRANE',
-        name: 'Heavy Crane Exclusion Perimeter Anchor',
-        model: 'Impinj Speedway R420 EPC Gen2',
-        ipAddress: '192.168.1.104',
-        port: 5084,
-        protocol: 'LLRP (EPC Gen2)',
-        powerDbm: 31.5,
-        sensitivityDbm: -80,
-        status: 'SCANNING',
-        antennas: [
-          { port: 1, name: 'Zone B Radius North', zoneId: 'zone_crane', zoneName: 'Tower Crane Zone B', direction: 'BIDIRECTIONAL', powerDbm: 31.5 },
-          { port: 2, name: 'Zone B Radius South', zoneId: 'zone_crane', zoneName: 'Tower Crane Zone B', direction: 'BIDIRECTIONAL', powerDbm: 31.5 }
-        ],
-        totalScans: 289,
-        lastPingAt: new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'reader_server_03',
-        readerId: 'ZEBRA-FX9600-SERVER',
-        name: 'Server Room Restricted Portal',
-        model: 'Zebra FX9600 Industrial RFID',
-        ipAddress: '192.168.1.112',
-        port: 8080,
-        protocol: 'HTTP Push',
-        powerDbm: 26,
-        sensitivityDbm: -68,
-        status: 'ONLINE',
-        antennas: [
-          { port: 1, name: 'Server Room Door Access', zoneId: 'zone_server', zoneName: 'Restricted Server Room', direction: 'IN', powerDbm: 26 }
-        ],
-        totalScans: 88,
-        lastPingAt: new Date().toISOString(),
-        createdAt: new Date().toISOString()
-      }
-    ];
-
-    for (const reader of defaultReaders) {
-      await upsertDoc('hardware_readers', reader, 'demo');
-    }
-  }
-
-  const existingMappings = await getCollectionDocs('hardware_tag_mappings', undefined, 'demo');
-  if (existingMappings.length === 0) {
-    const defaultMappings: TagEntityMapping[] = [
-      {
-        id: 'map_01',
-        tagId: 'E28011606000020788842D31',
-        entityType: 'PERSONNEL',
-        entityId: 'EMP-901',
-        entityName: 'Marcus Vance',
-        roleOrTrade: 'Chief Safety Director',
-        department: 'EHS Operations',
-        assignedZone: 'All Facilities',
-        status: 'ACTIVE',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'map_02',
-        tagId: 'E28011606000020788842D32',
-        entityType: 'PERSONNEL',
-        entityId: 'EMP-902',
-        entityName: 'David Miller',
-        roleOrTrade: 'Rigging Specialist',
-        department: 'Heavy Lifting Crew',
-        assignedZone: 'Tower Crane Zone B',
-        status: 'ACTIVE',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'map_03',
-        tagId: 'AST-CAT336-991',
-        entityType: 'ASSET',
-        entityId: 'EQ-4001',
-        entityName: 'CAT 336 Excavator #12',
-        roleOrTrade: 'Heavy Excavator',
-        department: 'Site Machinery',
-        assignedZone: 'Excavation Sector 4',
-        status: 'ACTIVE',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'map_04',
-        tagId: 'VIS-99412-GUEST',
-        entityType: 'VISITOR',
-        entityId: 'VIS-008',
-        entityName: 'Elena Rostova (OSHA Inspector)',
-        roleOrTrade: 'Regulatory Auditor',
-        department: 'Compliance Inspection',
-        assignedZone: 'HQ & Site A',
-        status: 'ACTIVE',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'map_05',
-        tagId: '000000010000000000051509',
-        entityType: 'PERSONNEL',
-        entityId: 'EMP-51509',
-        entityName: 'Johnathan Hayes',
-        roleOrTrade: 'Operations Lead',
-        department: 'Project Management',
-        assignedZone: 'Meeting Room (Inside)',
-        status: 'ACTIVE',
-        createdAt: new Date().toISOString()
-      },
-      {
-        id: 'map_06',
-        tagId: 'E2806894',
-        entityType: 'PERSONNEL',
-        entityId: 'EMP-6894',
-        entityName: 'Sarah Jenkins',
-        roleOrTrade: 'Site Engineer',
-        department: 'Engineering & EHS',
-        assignedZone: 'Meeting Room (Inside)',
-        status: 'ACTIVE',
-        createdAt: new Date().toISOString()
-      }
-    ];
-
-    for (const map of defaultMappings) {
-      await upsertDoc('hardware_tag_mappings', map, 'demo');
-    }
-  }
+  // Disabled - pure live API operation only
 }
+
