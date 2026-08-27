@@ -292,9 +292,6 @@ async function getCollectionDocs(colName, opts, organizationId) {
       return docs.map((doc) => {
         const { _id, ...rest } = doc;
         const out = { id: doc.id || (_id ? _id.toString() : void 0), ...rest };
-        if (!out.organizationId && colName !== "organizations") {
-          out.organizationId = "demo";
-        }
         if (colName === "live_tags" || colName === "real_time_tags" || colName === "rfid_realtime_events") {
           if (out.TagID !== void 0 && out.tagId !== void 0) {
             out.TagID = out.TagID || out.tagId;
@@ -340,9 +337,6 @@ async function getDocById(colName, id, organizationId) {
       if (doc2) {
         const { _id, ...rest } = doc2;
         const out = { id: doc2.id || (_id ? _id.toString() : idStr), ...rest };
-        if (!out.organizationId && colName !== "organizations") {
-          out.organizationId = "demo";
-        }
         return out;
       }
       return null;
@@ -357,8 +351,8 @@ async function getDocById(colName, id, organizationId) {
   );
   if (!doc) return null;
   if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-    const docOrg = doc.organizationId || "demo";
-    if (docOrg !== organizationId) return null;
+    const docOrg = doc.organizationId;
+    if (docOrg && docOrg !== organizationId) return null;
   }
   return doc;
 }
@@ -370,8 +364,8 @@ async function upsertDoc(colName, doc, organizationId) {
   delete cleanDoc._id;
   if (colName === "organizations") {
     cleanDoc.organizationId = cleanDoc.id;
-  } else {
-    cleanDoc.organizationId = organizationId || cleanDoc.organizationId || "demo";
+  } else if (organizationId) {
+    cleanDoc.organizationId = organizationId;
   }
   if (mongoDb) {
     try {
@@ -404,8 +398,8 @@ async function upsertDoc(colName, doc, organizationId) {
   const idLower = String(cleanDoc.id || "").toLowerCase().trim();
   const idx = inMemoryStore[colName].findIndex((item) => {
     const sameId = item.id === cleanDoc.id || String(item.id || "").toLowerCase().trim() === idLower;
-    if (colName !== "organizations") {
-      return sameId && (item.organizationId || "demo") === cleanDoc.organizationId;
+    if (colName !== "organizations" && cleanDoc.organizationId) {
+      return sameId && item.organizationId === cleanDoc.organizationId;
     }
     return sameId;
   });
@@ -451,8 +445,8 @@ async function deleteDocById(colName, id, organizationId) {
       const matchesId = item.id === id || String(item.id || "").toLowerCase().trim() === idLower || String(item.hardhatTagId || "").toLowerCase().trim() === idLower;
       if (!matchesId) return true;
       if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-        const itemOrg = item.organizationId || "demo";
-        if (itemOrg !== organizationId) return true;
+        const itemOrg = item.organizationId;
+        if (itemOrg && itemOrg !== organizationId) return true;
       }
       return false;
     });
@@ -471,7 +465,7 @@ async function deleteDocsByFilter(colName, predicate, organizationId) {
   return count;
 }
 async function logAuditEvent(event) {
-  const orgId = event.organizationId || "demo";
+  const orgId = event.organizationId || "default";
   const auditDoc = {
     id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
@@ -489,7 +483,7 @@ async function getAuditLogs(limitCount = 100, organizationId) {
   const logs = await getCollectionDocs("audit_logs", void 0, organizationId);
   return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, limitCount);
 }
-async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol", organizationId = "demo") {
+async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol", organizationId = "default") {
   if (!Array.isArray(rawEvents) || rawEvents.length === 0) {
     return { insertedCount: 0, modifiedCount: 0, totalProcessed: 0 };
   }
@@ -552,7 +546,7 @@ async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol
   }
   return { insertedCount, modifiedCount: 0, totalProcessed: rawEvents.length };
 }
-async function bulkWriteRealtimeTags(tags, organizationId = "demo") {
+async function bulkWriteRealtimeTags(tags, organizationId = "default") {
   if (!Array.isArray(tags) || tags.length === 0) {
     return { insertedCount: 0, updatedCount: 0, totalProcessed: 0 };
   }
@@ -811,6 +805,98 @@ var DEFAULT_MAP_CONFIG = {
   ],
   updatedAt: (/* @__PURE__ */ new Date()).toISOString()
 };
+async function wipeAllCollections(organizationId) {
+  const allCollections = [
+    "organizations",
+    "users",
+    "permissions",
+    "role_permissions",
+    "registered_people",
+    "people",
+    "devices",
+    "hardware_readers",
+    "hardware_tag_mappings",
+    "third_party_apis",
+    "visitors",
+    "visitor_security_list",
+    "visitor_access_tokens",
+    "visitor_access_logs",
+    "attendance_logs",
+    "leave_requests",
+    "shift_schedules",
+    "alerts",
+    "alerts_enterprise",
+    "alert_rules",
+    "alert_dispatch_logs",
+    "emergency_broadcasts",
+    "live_tags",
+    "real_time_tags",
+    "rfid_realtime_events",
+    "tag_history",
+    "audit_logs",
+    "settings",
+    "incidents_enterprise",
+    "incidents",
+    "zones",
+    "map_configurations",
+    "geofences",
+    "reader_zone_mappings",
+    "ai_insights",
+    "ai_rca_reports",
+    "ai_hazard_predictions",
+    "ai_copilot_chats",
+    "assets",
+    "vehicles",
+    "cameras",
+    "sensors",
+    "maintenance_nodes",
+    "work_orders",
+    "technicians",
+    "schedules",
+    "compliance_frameworks",
+    "retention_policies",
+    "compliance_reports",
+    "analytics_reports",
+    "analytics_metrics",
+    "quick_notes",
+    "notifications",
+    "system_events",
+    "daily_reports",
+    "site_configurations",
+    "shift_assignments",
+    "training_records",
+    "ppe_records"
+  ];
+  const wipedCollections = {};
+  let totalDeleted = 0;
+  if (mongoDb) {
+    for (const colName of allCollections) {
+      try {
+        const filter = organizationId ? { organizationId } : {};
+        const result = await mongoDb.collection(colName).deleteMany(filter);
+        const count = result.deletedCount || 0;
+        if (count > 0) {
+          wipedCollections[colName] = count;
+          totalDeleted += count;
+        }
+      } catch {
+      }
+    }
+  } else {
+    for (const colName of allCollections) {
+      if (inMemoryStore[colName]) {
+        const count = inMemoryStore[colName].length;
+        inMemoryStore[colName] = [];
+        if (count > 0) {
+          wipedCollections[colName] = count;
+          totalDeleted += count;
+        }
+      }
+    }
+  }
+  console.log(`[DB Service] wipeAllCollections: Deleted ${totalDeleted} documents across ${Object.keys(wipedCollections).length} collections.`);
+  return { wipedCollections, totalDeleted };
+}
 async function bootstrapMapAndZoneDefinitions() {
 }
 var cleanupTimer = null;
@@ -898,10 +984,10 @@ function initWebSocketServer(server) {
     clients.add(ws);
     const clientIp = req.socket.remoteAddress || "127.0.0.1";
     const sessionId = `ws_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-    let organizationId = "demo";
+    let organizationId = "default";
     try {
       const url = new URL(req.url || "", `http://${req.headers.host || "localhost"}`);
-      organizationId = url.searchParams.get("organizationId") || url.searchParams.get("orgId") || "demo";
+      organizationId = url.searchParams.get("organizationId") || url.searchParams.get("orgId") || "default";
     } catch {
     }
     const session = {
@@ -978,7 +1064,7 @@ function getWebSocketStats() {
 
 // src/server/services/sse.ts
 var subscribers = /* @__PURE__ */ new Map();
-function addSseSubscriber(res, organizationId = "demo") {
+function addSseSubscriber(res, organizationId = "default") {
   subscribers.set(res, organizationId);
   console.log(`[SSE Service] Client subscribed for org [${organizationId}]. Active connections: ${subscribers.size}`);
 }
@@ -1121,7 +1207,7 @@ function verifyToken(token) {
       email: decoded.email,
       name: decoded.name || "",
       role: decoded.role || "viewer",
-      organizationId: decoded.organizationId || "demo",
+      organizationId: decoded.organizationId || "default",
       isPlatformAdmin: Boolean(decoded.isPlatformAdmin),
       tokenVersion: decoded.tokenVersion || 1
     };
@@ -1160,7 +1246,7 @@ async function verifyFirebaseTokenRS256(token) {
       email: verifiedPayload.email || "",
       name: verifiedPayload.name || verifiedPayload.displayName || "",
       role: verifiedPayload.role || "viewer",
-      organizationId: verifiedPayload.organizationId || "demo",
+      organizationId: verifiedPayload.organizationId || "default",
       isPlatformAdmin: Boolean(verifiedPayload.isPlatformAdmin),
       tokenVersion: 1
     };
@@ -1237,14 +1323,14 @@ async function requireAuth(req, res, next) {
           return res.status(401).json({ error: "Session revoked. Please log in again." });
         }
         user.role = userDoc.role || user.role;
-        user.organizationId = userDoc.organizationId || user.organizationId || "demo";
+        user.organizationId = userDoc.organizationId || user.organizationId || "default";
         user.isPlatformAdmin = Boolean(userDoc.isPlatformAdmin || user.isPlatformAdmin);
         user.name = userDoc.name || userDoc.displayName || user.name;
         user.id = userDoc.id || user.id;
       } else {
         const isInitialAdmin = user.email?.toLowerCase() === "sigmund.t.d@gaostaff.com" || user.email?.endsWith("@gaostaff.com");
         const role = isInitialAdmin ? "admin" : "viewer";
-        const orgId = user.organizationId || "demo";
+        const orgId = user.organizationId || "default";
         user.role = role;
         user.organizationId = orgId;
         const newUserDoc = {
@@ -1264,7 +1350,7 @@ async function requireAuth(req, res, next) {
     }
   }
   if (!user.organizationId) {
-    user.organizationId = "demo";
+    user.organizationId = "default";
   }
   req.user = user;
   next();
@@ -2769,44 +2855,78 @@ function sanitizeUser(user) {
   return clean;
 }
 async function bootstrapAdminUser() {
-  const demoOrg = await getDocById("organizations", "demo");
-  if (!demoOrg) {
-    await upsertDoc("organizations", {
-      id: "demo",
-      name: "Metro Commercial Tower (Demo)",
-      slug: "demo",
-      status: "active",
-      plan: "enterprise",
-      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-    }, "demo");
-    console.log("[Auth Bootstrap] Default demo organization initialized.");
+  const isTest = process.env.NODE_ENV === "test" || Boolean(process.env.VITEST);
+  if (isTest) {
+    const demoOrg = await getDocById("organizations", "demo");
+    if (!demoOrg) {
+      await upsertDoc("organizations", {
+        id: "demo",
+        name: "Metro Commercial Tower (Demo)",
+        slug: "demo",
+        status: "active",
+        plan: "enterprise",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }, "demo");
+    }
+    const users2 = await getCollectionDocs("users");
+    const defaultAdmins = [
+      { email: "admin@aperture.com", password: "AdminPassword123!", name: "Aperture Site Admin" }
+    ];
+    for (const adm of defaultAdmins) {
+      const existing2 = users2.find((u) => u.email?.toLowerCase() === adm.email.toLowerCase());
+      if (!existing2) {
+        const hashedPassword = await import_bcryptjs.default.hash(adm.password, 10);
+        const adminUser = {
+          id: `usr_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          email: adm.email,
+          name: adm.name,
+          role: "admin",
+          organizationId: "demo",
+          isPlatformAdmin: true,
+          passwordHash: hashedPassword,
+          createdAt: (/* @__PURE__ */ new Date()).toISOString()
+        };
+        await upsertDoc("users", adminUser, "demo");
+      }
+    }
+    return;
+  }
+  const adminEmail = process.env.ADMIN_INITIAL_EMAIL?.toLowerCase()?.trim();
+  const adminPassword = process.env.ADMIN_INITIAL_PASSWORD;
+  if (!adminEmail || !adminPassword) {
+    return;
   }
   const users = await getCollectionDocs("users");
-  const defaultAdmins = [
-    { email: (process.env.ADMIN_INITIAL_EMAIL || "sigmund.t.d@gaostaff.com").toLowerCase(), password: process.env.ADMIN_INITIAL_PASSWORD || "password123", name: "GAO Systems Admin" },
-    { email: "admin@aperture.com", password: "AdminPassword123!", name: "Aperture Site Admin" }
-  ];
-  for (const adm of defaultAdmins) {
-    const existing = users.find((u) => u.email?.toLowerCase() === adm.email);
-    if (!existing) {
-      const hashedPassword = await import_bcryptjs.default.hash(adm.password, 10);
-      const adminUser = {
-        id: `usr_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        email: adm.email,
-        name: adm.name,
-        role: "admin",
-        organizationId: "demo",
-        isPlatformAdmin: true,
-        passwordHash: hashedPassword,
-        createdAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      await upsertDoc("users", adminUser, "demo");
-      console.log(`[Auth Bootstrap] Initial admin user '${adm.email}' verified/created under demo org.`);
-    } else if (!existing.organizationId) {
-      existing.organizationId = "demo";
-      await upsertDoc("users", existing, "demo");
+  const existing = users.find((u) => u.email?.toLowerCase() === adminEmail);
+  if (!existing) {
+    const orgId = process.env.ADMIN_INITIAL_ORG_ID || "org_main";
+    const orgName = process.env.ADMIN_INITIAL_ORG_NAME || "Primary Organization";
+    const existingOrg = await getDocById("organizations", orgId);
+    if (!existingOrg) {
+      await upsertDoc("organizations", {
+        id: orgId,
+        name: orgName,
+        slug: orgName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        status: "active",
+        plan: "enterprise",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }, orgId);
     }
+    const hashedPassword = await import_bcryptjs.default.hash(adminPassword, 10);
+    const adminUser = {
+      id: `usr_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      email: adminEmail,
+      name: process.env.ADMIN_INITIAL_NAME || "Systems Admin",
+      role: "admin",
+      organizationId: orgId,
+      isPlatformAdmin: true,
+      passwordHash: hashedPassword,
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    await upsertDoc("users", adminUser, orgId);
+    console.log(`[Auth Bootstrap] Initial admin user '${adminEmail}' initialized under organization '${orgId}'.`);
   }
 }
 authRouter.post("/register", authRateLimiter, async (req, res) => {
@@ -2825,8 +2945,8 @@ authRouter.post("/register", authRateLimiter, async (req, res) => {
     if (existing) {
       return res.status(400).json({ error: "User with this email already exists" });
     }
-    let resolvedOrgId = organizationId || "demo";
-    let resolvedOrgName = "Demo Organization";
+    let resolvedOrgId = organizationId;
+    let resolvedOrgName = organizationName || "My Organization";
     if (organizationName && organizationName.trim()) {
       resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       resolvedOrgName = organizationName.trim();
@@ -2845,6 +2965,19 @@ authRouter.post("/register", authRateLimiter, async (req, res) => {
       if (existingOrg) {
         resolvedOrgName = existingOrg.name;
       }
+    } else {
+      resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      resolvedOrgName = name ? `${name}'s Organization` : `${lowerEmail.split("@")[0]}'s Organization`;
+      const newOrg = {
+        id: resolvedOrgId,
+        name: resolvedOrgName,
+        slug: resolvedOrgName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        status: "active",
+        plan: "standard",
+        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      await upsertDoc("organizations", newOrg, resolvedOrgId);
     }
     const passwordHash = await import_bcryptjs.default.hash(password, 10);
     const assignedRole = organizationName ? "admin" : lowerEmail.endsWith("@gaostaff.com") ? "admin" : role;
@@ -2919,14 +3052,14 @@ authRouter.post("/login", authRateLimiter, async (req, res) => {
       if (isValid) {
         user.passwordHash = await import_bcryptjs.default.hash(password, 10);
         delete user.password;
-        await upsertDoc("users", user, user.organizationId || "demo");
+        await upsertDoc("users", user, user.organizationId || "default");
       }
     }
     if (!isValid) {
       await logAuditEvent({
         userId: user.id,
         userEmail: lowerEmail,
-        organizationId: user.organizationId || "demo",
+        organizationId: user.organizationId || "default",
         action: "USER_LOGIN_FAILED",
         resource: "auth",
         details: { reason: "Invalid password" },
@@ -2935,7 +3068,7 @@ authRouter.post("/login", authRateLimiter, async (req, res) => {
       return res.status(401).json({ error: "Invalid email or password" });
     }
     const tokenVersion = user.tokenVersion || 1;
-    const organizationId = user.organizationId || "demo";
+    const organizationId = user.organizationId || "default";
     user.organizationId = organizationId;
     user.hasLoggedIn = true;
     user.lastLogin = (/* @__PURE__ */ new Date()).toISOString();
@@ -2961,7 +3094,7 @@ authRouter.post("/login", authRateLimiter, async (req, res) => {
     return res.json({
       message: "Login successful",
       user: sanitizeUser(user),
-      organization: orgDoc || { id: organizationId, name: "Metro Commercial Tower (Demo)" },
+      organization: orgDoc || { id: organizationId, name: orgDoc?.name || organizationId, status: "active", plan: "standard" },
       token
     });
   } catch (err) {
@@ -2983,7 +3116,7 @@ authRouter.post("/firebase-login", authRateLimiter, async (req, res) => {
     const users = await getCollectionDocs("users");
     let user = users.find((u) => u.id === firebaseUser.id || u.email && u.email.toLowerCase() === lowerEmail);
     const assignedRole = role || (lowerEmail.endsWith("@gaostaff.com") ? "admin" : user?.role || "operator");
-    const resolvedOrgId = organizationId || user?.organizationId || "demo";
+    const resolvedOrgId = organizationId || user?.organizationId || "default";
     if (!user) {
       user = {
         id: firebaseUser.id || `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -3036,7 +3169,7 @@ authRouter.post("/firebase-login", authRateLimiter, async (req, res) => {
     return res.json({
       message: "Firebase authentication successful",
       user: sanitizeUser(user),
-      organization: orgDoc || { id: user.organizationId, name: "Metro Commercial Tower (Demo)" },
+      organization: orgDoc || { id: user.organizationId, name: orgDoc?.name || user.organizationId, status: "active", plan: "standard" },
       token
     });
   } catch (err) {
@@ -3045,15 +3178,15 @@ authRouter.post("/firebase-login", authRateLimiter, async (req, res) => {
   }
 });
 authRouter.get("/me", requireAuth, async (req, res) => {
-  const orgId = req.user?.organizationId || "demo";
+  const orgId = req.user?.organizationId || "default";
   const orgDoc = await getDocById("organizations", orgId);
   return res.json({
     user: req.user,
-    organization: orgDoc || { id: orgId, name: "Metro Commercial Tower (Demo)" }
+    organization: orgDoc || { id: orgId, name: orgDoc?.name || orgId, status: "active", plan: "standard" }
   });
 });
 authRouter.get("/organization", requireAuth, async (req, res) => {
-  const orgId = req.user?.organizationId || "demo";
+  const orgId = req.user?.organizationId || "default";
   const orgDoc = await getDocById("organizations", orgId, "ALL");
   const org = orgDoc || { id: orgId, name: orgId === "demo" ? "Metro Commercial Tower (Demo)" : orgId, status: "active", plan: "standard" };
   return res.json({ success: true, organization: org, ...org });
@@ -3584,6 +3717,29 @@ adminRouter.post("/data-retention/execute", requirePermission("settings"), async
     return res.status(500).json({ error: "Failed to execute data retention cleanup" });
   }
 });
+adminRouter.post("/purge-demo", requirePermission("settings"), async (req, res) => {
+  try {
+    const result = await wipeAllCollections("demo");
+    await deleteDocById("organizations", "demo", "ALL");
+    await logAuditEvent({
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      organizationId: req.user?.organizationId || "default",
+      action: "ADMIN_PURGE_DEMO_DATA",
+      resource: "database",
+      details: { ...result },
+      ip: req.ip
+    });
+    return res.json({
+      success: true,
+      message: `Purged demo organization and deleted ${result.totalDeleted} demo documents across collections.`,
+      result
+    });
+  } catch (err) {
+    console.error("[Admin Route] Purge demo error:", err);
+    return res.status(500).json({ success: false, error: err.message || "Failed to purge demo data" });
+  }
+});
 
 // src/server/routes/rfid.ts
 var import_express5 = require("express");
@@ -3626,7 +3782,7 @@ var scanSchema = import_zod4.z.object({
   readerId: import_zod4.z.string().optional().default("GAO-UHF-READER-01")
 });
 var handleGetTotalCount = async (req, res) => {
-  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
+  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   try {
     const history = await getCollectionDocs("tag_history", void 0, orgId);
     const total = history.length;
@@ -3646,7 +3802,7 @@ var handleGetHistory = async (req, res) => {
   const skipCount = parseInt(req.params.SkipCount || req.params.skip || req.query.skip || "0", 10);
   const rawTake = parseInt(req.params.TakeCount || req.params.take || req.query.take || "50", 10);
   const takeCount = Math.min(Math.max(1, rawTake), 200);
-  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
+  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   try {
     const dbHistory = await getCollectionDocs("tag_history", void 0, orgId);
     const records = dbHistory;
@@ -3686,7 +3842,7 @@ rfidRouter.get("/GetHistoryRecords/:skip/:take", handleGetHistory);
 rfidRouter.get("/GetHistoryRecords", handleGetHistory);
 rfidRouter.get("/history", handleGetHistory);
 var handleGetRealtime = async (req, res) => {
-  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
+  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   try {
     const liveTags = await getCollectionDocs("live_tags", void 0, orgId);
     const tagsToProcess = liveTags;
@@ -3731,7 +3887,7 @@ function requireDeviceApiKey(req, res, next) {
   });
 }
 rfidRouter.post("/scan", requireDeviceApiKey, async (req, res) => {
-  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
+  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   const parseResult = scanSchema.safeParse(req.body);
   if (!parseResult.success) {
     return res.status(400).json({
@@ -3776,7 +3932,7 @@ rfidRouter.post("/scan", requireDeviceApiKey, async (req, res) => {
   }
 });
 rfidRouter.post("/realtime-tags/bulk", requireDeviceApiKey, async (req, res) => {
-  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
+  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   try {
     const rawTags = req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
     if (!Array.isArray(rawTags) || rawTags.length === 0) {
@@ -3795,7 +3951,7 @@ rfidRouter.post("/realtime-tags/bulk", requireDeviceApiKey, async (req, res) => 
   }
 });
 rfidRouter.post("/bulk-ingest", requireDeviceApiKey, async (req, res) => {
-  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
+  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   try {
     const rawTags = req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
     const aiResult = await processTelemetryWithAI(rawTags, "Bulk Ingest Stream", orgId);
@@ -3824,7 +3980,7 @@ var import_express6 = require("express");
 var dataRouter = (0, import_express6.Router)();
 dataRouter.use(requireAuth);
 dataRouter.get("/stats", async (req, res) => {
-  const orgId = req.user?.organizationId || "demo";
+  const orgId = req.user?.organizationId || "default";
   try {
     const people = await getCollectionDocs("registered_people", void 0, orgId);
     const devices = await getCollectionDocs("devices", void 0, orgId);
@@ -3847,7 +4003,7 @@ dataRouter.get("/stats", async (req, res) => {
 });
 dataRouter.get("/:collection", async (req, res) => {
   const { collection } = req.params;
-  const orgId = req.user?.organizationId || "demo";
+  const orgId = req.user?.organizationId || "default";
   const allowed = [
     "organizations",
     "registered_people",
@@ -3929,7 +4085,7 @@ dataRouter.get("/:collection", async (req, res) => {
 });
 dataRouter.get("/:collection/:id", async (req, res) => {
   const { collection, id } = req.params;
-  const orgId = req.user?.organizationId || "demo";
+  const orgId = req.user?.organizationId || "default";
   try {
     const doc = await getDocById(collection, id, orgId);
     if (!doc) {
@@ -3944,7 +4100,7 @@ dataRouter.get("/:collection/:id", async (req, res) => {
 dataRouter.post("/:collection", async (req, res) => {
   const { collection } = req.params;
   const user = req.user;
-  const orgId = user?.organizationId || "demo";
+  const orgId = user?.organizationId || "default";
   const body = req.body;
   if (!body || typeof body !== "object") {
     return res.status(400).json({ error: "Request body must be a JSON object" });
@@ -3969,7 +4125,7 @@ dataRouter.post("/:collection", async (req, res) => {
 dataRouter.post("/:collection/:id", async (req, res) => {
   const { collection, id } = req.params;
   const user = req.user;
-  const orgId = user?.organizationId || "demo";
+  const orgId = user?.organizationId || "default";
   const existingDoc = await getDocById(collection, id, orgId);
   const allExisting = await getDocById(collection, id, "ALL");
   if (allExisting && (!existingDoc || allExisting.organizationId && allExisting.organizationId !== orgId)) {
@@ -3997,7 +4153,7 @@ dataRouter.post("/:collection/:id", async (req, res) => {
 dataRouter.delete("/:collection/:id", async (req, res) => {
   const { collection, id } = req.params;
   const user = req.user;
-  const orgId = user?.organizationId || "demo";
+  const orgId = user?.organizationId || "default";
   try {
     const deleted = await deleteDocById(collection, id, orgId);
     await logAuditEvent({
@@ -4174,8 +4330,6 @@ async function processDirectHardwareScan(scan, organizationId = "demo") {
     aiInsight: analyzed?.aiInsight || `Direct scan registered at ${resolvedZone}`
   };
 }
-async function bootstrapDefaultHardware() {
-}
 
 // src/server/services/gaoEventMapper.ts
 function parseGaoTimestamp(gaoTs) {
@@ -4292,7 +4446,7 @@ function getReqOrgId(req) {
     const decoded = verifyToken(token);
     if (decoded?.organizationId) return decoded.organizationId;
   }
-  return req.body?.organizationId || req.query.organizationId || "demo";
+  return req.body?.organizationId || req.query.organizationId || "default";
 }
 hardwareRouter.post("/gao-native", async (req, res) => {
   const orgId = getReqOrgId(req);
@@ -4364,9 +4518,6 @@ hardwareRouter.use(requireAuth);
 hardwareRouter.get("/readers", async (req, res) => {
   const orgId = getReqOrgId(req);
   try {
-    if (orgId === "demo") {
-      await bootstrapDefaultHardware();
-    }
     const readers = await getCollectionDocs("hardware_readers", void 0, orgId);
     return res.json({ success: true, count: readers.length, readers, organizationId: orgId });
   } catch (err) {
@@ -4420,9 +4571,6 @@ hardwareRouter.delete("/readers/:id", async (req, res) => {
 hardwareRouter.get("/mappings", async (req, res) => {
   const orgId = getReqOrgId(req);
   try {
-    if (orgId === "demo") {
-      await bootstrapDefaultHardware();
-    }
     const mappings = await getCollectionDocs("hardware_tag_mappings", void 0, orgId);
     return res.json({ success: true, count: mappings.length, mappings, organizationId: orgId });
   } catch (err) {
@@ -4512,9 +4660,6 @@ hardwareRouter.post("/test-scan", async (req, res) => {
 hardwareRouter.get("/status", async (req, res) => {
   const orgId = getReqOrgId(req);
   try {
-    if (orgId === "demo") {
-      await bootstrapDefaultHardware();
-    }
     const readers = await getCollectionDocs("hardware_readers", void 0, orgId);
     const mappings = await getCollectionDocs("hardware_tag_mappings", void 0, orgId);
     const totalScans = readers.reduce((acc, r) => acc + (r.totalScans || 0), 0);
@@ -4622,7 +4767,7 @@ realtimeRouter.get("/ws/info", (req, res) => {
 realtimeRouter.post("/ws/broadcast", (req, res) => {
   try {
     const { type, payload } = req.body || {};
-    const orgId = req.user?.organizationId || req.body?.organizationId || "demo";
+    const orgId = req.user?.organizationId || req.body?.organizationId || "default";
     const eventType = type || "custom_broadcast";
     const eventPayload = payload || req.body || {};
     broadcastWebSocketEvent(eventType, eventPayload, orgId);
@@ -4643,7 +4788,7 @@ realtimeRouter.get("/sse/subscribe", (req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-transform");
   res.setHeader("Connection", "keep-alive");
   res.setHeader("X-Accel-Buffering", "no");
-  const orgId = req.user?.organizationId || req.query.organizationId || "demo";
+  const orgId = req.user?.organizationId || req.query.organizationId || "default";
   res.write(`event: connected
 data: ${JSON.stringify({ status: "connected", method: "SSE", organizationId: orgId, timestamp: (/* @__PURE__ */ new Date()).toISOString() })}
 
@@ -4656,7 +4801,7 @@ data: ${JSON.stringify({ status: "connected", method: "SSE", organizationId: org
 realtimeRouter.post("/sse/broadcast", (req, res) => {
   try {
     const { event, payload } = req.body || {};
-    const orgId = req.user?.organizationId || req.body?.organizationId || "demo";
+    const orgId = req.user?.organizationId || req.body?.organizationId || "default";
     const eventName = event || "notification";
     const eventData = payload || req.body || {};
     broadcastSseEvent(eventName, eventData, orgId);
@@ -4882,7 +5027,7 @@ realtimeRouter.get("/poll", (req, res) => {
 });
 realtimeRouter.post("/ingest", async (req, res) => {
   try {
-    const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
+    const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
     const protocol = req.body?.protocol || "HTTP Ingestion";
     const rawEvents = req.body?.events || req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
     if (!Array.isArray(rawEvents) || rawEvents.length === 0) {

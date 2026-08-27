@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import express from 'express';
 import { hardwareRouter } from '../src/server/routes/hardware.js';
 import { bootstrapDefaultHardware } from '../src/server/services/hardwareIntegrationService.js';
+import { upsertDoc } from '../src/server/services/db.js';
 
 const app = express();
 app.use(express.json());
@@ -66,7 +67,15 @@ async function makeRequest(
 
 describe('GAO 216031A Physical Hardware Reader Ingestion', () => {
   beforeAll(async () => {
-    await bootstrapDefaultHardware();
+    await upsertDoc('hardware_readers', {
+      id: '100EHH8325020026',
+      readerId: '100EHH8325020026',
+      name: 'Meeting Room Android Reader',
+      antennas: [
+        { port: 1, name: 'Antenna 1', zoneName: 'Zone 1 - Inside Meeting Room' },
+        { port: 2, name: 'Antenna 2', zoneName: 'Zone 2 - Outside Meeting Room' }
+      ]
+    }, 'default');
   });
 
   it('successfully receives and processes Adam GAO 216031A native HTTP push payload without requiring auth tokens', async () => {

@@ -5,7 +5,7 @@ import { dataRouter } from '../src/server/routes/data.js';
 import { adminRouter } from '../src/server/routes/admin.js';
 import { hardwareRouter } from '../src/server/routes/hardware.js';
 import { rfidRouter } from '../src/server/routes/rfid.js';
-import { seedAllDemoData, getDocById, getCollectionDocs } from '../src/server/services/db.js';
+import { seedAllDemoData, getDocById, getCollectionDocs, upsertDoc } from '../src/server/services/db.js';
 
 // Setup test express application
 const app = express();
@@ -93,9 +93,10 @@ async function makeRequest(
 
 describe('Multi-Tenant B2B SaaS Architecture Verification', () => {
   beforeAll(async () => {
-    // Seed initial demo data and bootstrap demo admin
-    await seedAllDemoData(true);
+    // Bootstrap test demo admin and test workers
     await bootstrapAdminUser();
+    await upsertDoc('registered_people', { id: 'demo_worker_1', name: 'Demo Worker 1', organizationId: 'demo' }, 'demo');
+    await upsertDoc('registered_people', { id: 'demo_worker_2', name: 'Demo Worker 2', organizationId: 'demo' }, 'demo');
   });
 
   it('1. Bootstraps and isolates demo tenant data', async () => {

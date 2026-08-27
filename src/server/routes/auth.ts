@@ -40,48 +40,88 @@ export function sanitizeUser(user: any) {
 
 // Admin bootstrap helper
 export async function bootstrapAdminUser() {
-  // Ensure default demo organization exists
-  const demoOrg = await getDocById('organizations', 'demo');
-  if (!demoOrg) {
-    await upsertDoc('organizations', {
-      id: 'demo',
-      name: 'Metro Commercial Tower (Demo)',
-      slug: 'demo',
-      status: 'active',
-      plan: 'enterprise',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    }, 'demo');
-    console.log('[Auth Bootstrap] Default demo organization initialized.');
+  const isTest = process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST);
+
+  // In test environments only: bootstrap demo organization and demo admin for automated test suites
+  if (isTest) {
+    const demoOrg = await getDocById('organizations', 'demo');
+    if (!demoOrg) {
+      await upsertDoc('organizations', {
+        id: 'demo',
+        name: 'Metro Commercial Tower (Demo)',
+        slug: 'demo',
+        status: 'active',
+        plan: 'enterprise',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, 'demo');
+    }
+
+    const users = await getCollectionDocs('users');
+    const defaultAdmins = [
+      { email: 'admin@aperture.com', password: 'AdminPassword123!', name: 'Aperture Site Admin' }
+    ];
+
+    for (const adm of defaultAdmins) {
+      const existing = users.find((u: any) => u.email?.toLowerCase() === adm.email.toLowerCase());
+      if (!existing) {
+        const hashedPassword = await bcrypt.hash(adm.password, 10);
+        const adminUser = {
+          id: `usr_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+          email: adm.email,
+          name: adm.name,
+          role: 'admin',
+          organizationId: 'demo',
+          isPlatformAdmin: true,
+          passwordHash: hashedPassword,
+          createdAt: new Date().toISOString()
+        };
+        await upsertDoc('users', adminUser, 'demo');
+      }
+    }
+    return;
+  }
+
+  // In production / live DB: Only bootstrap an initial admin if explicitly configured via environment variables
+  const adminEmail = process.env.ADMIN_INITIAL_EMAIL?.toLowerCase()?.trim();
+  const adminPassword = process.env.ADMIN_INITIAL_PASSWORD;
+  if (!adminEmail || !adminPassword) {
+    // No demo org or mock users auto-created in MongoDB
+    return;
   }
 
   const users = await getCollectionDocs('users');
+  const existing = users.find((u: any) => u.email?.toLowerCase() === adminEmail);
+  if (!existing) {
+    const orgId = process.env.ADMIN_INITIAL_ORG_ID || 'org_main';
+    const orgName = process.env.ADMIN_INITIAL_ORG_NAME || 'Primary Organization';
 
-  const defaultAdmins = [
-    { email: (process.env.ADMIN_INITIAL_EMAIL || 'sigmund.t.d@gaostaff.com').toLowerCase(), password: process.env.ADMIN_INITIAL_PASSWORD || 'password123', name: 'GAO Systems Admin' },
-    { email: 'admin@aperture.com', password: 'AdminPassword123!', name: 'Aperture Site Admin' }
-  ];
-
-  for (const adm of defaultAdmins) {
-    const existing = users.find((u: any) => u.email?.toLowerCase() === adm.email);
-    if (!existing) {
-      const hashedPassword = await bcrypt.hash(adm.password, 10);
-      const adminUser = {
-        id: `usr_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-        email: adm.email,
-        name: adm.name,
-        role: 'admin',
-        organizationId: 'demo',
-        isPlatformAdmin: true,
-        passwordHash: hashedPassword,
-        createdAt: new Date().toISOString()
-      };
-      await upsertDoc('users', adminUser, 'demo');
-      console.log(`[Auth Bootstrap] Initial admin user '${adm.email}' verified/created under demo org.`);
-    } else if (!existing.organizationId) {
-      existing.organizationId = 'demo';
-      await upsertDoc('users', existing, 'demo');
+    const existingOrg = await getDocById('organizations', orgId);
+    if (!existingOrg) {
+      await upsertDoc('organizations', {
+        id: orgId,
+        name: orgName,
+        slug: orgName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        status: 'active',
+        plan: 'enterprise',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      }, orgId);
     }
+
+    const hashedPassword = await bcrypt.hash(adminPassword, 10);
+    const adminUser = {
+      id: `usr_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+      email: adminEmail,
+      name: process.env.ADMIN_INITIAL_NAME || 'Systems Admin',
+      role: 'admin',
+      organizationId: orgId,
+      isPlatformAdmin: true,
+      passwordHash: hashedPassword,
+      createdAt: new Date().toISOString()
+    };
+    await upsertDoc('users', adminUser, orgId);
+    console.log(`[Auth Bootstrap] Initial admin user '${adminEmail}' initialized under organization '${orgId}'.`);
   }
 }
 
@@ -106,10 +146,10 @@ authRouter.post('/register', authRateLimiter, async (req: Request, res: Response
       return res.status(400).json({ error: 'User with this email already exists' });
     }
 
-    let resolvedOrgId = organizationId || 'demo';
-    let resolvedOrgName = 'Demo Organization';
+    let resolvedOrgId = organizationId;
+    let resolvedOrgName = organizationName || 'My Organization';
 
-    // If new B2B customer provides company/organization name, create dedicated organization
+    // If new customer provides company/organization name, create dedicated organization
     if (organizationName && organizationName.trim()) {
       resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       resolvedOrgName = organizationName.trim();
@@ -128,6 +168,20 @@ authRouter.post('/register', authRateLimiter, async (req: Request, res: Response
       if (existingOrg) {
         resolvedOrgName = existingOrg.name;
       }
+    } else {
+      // Auto-create a dedicated unique organization for this new user instead of demo
+      resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      resolvedOrgName = name ? `${name}'s Organization` : `${lowerEmail.split('@')[0]}'s Organization`;
+      const newOrg = {
+        id: resolvedOrgId,
+        name: resolvedOrgName,
+        slug: resolvedOrgName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        status: 'active',
+        plan: 'standard',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      await upsertDoc('organizations', newOrg, resolvedOrgId);
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
@@ -216,7 +270,7 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) =
         // Upgrade to hashed password immediately
         user.passwordHash = await bcrypt.hash(password, 10);
         delete user.password;
-        await upsertDoc('users', user, user.organizationId || 'demo');
+        await upsertDoc('users', user, user.organizationId || 'default');
       }
     }
 
@@ -224,7 +278,7 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) =
       await logAuditEvent({
         userId: user.id,
         userEmail: lowerEmail,
-        organizationId: user.organizationId || 'demo',
+        organizationId: user.organizationId || 'default',
         action: 'USER_LOGIN_FAILED',
         resource: 'auth',
         details: { reason: 'Invalid password' },
@@ -234,7 +288,7 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) =
     }
 
     const tokenVersion = user.tokenVersion || 1;
-    const organizationId = user.organizationId || 'demo';
+    const organizationId = user.organizationId || 'default';
     user.organizationId = organizationId;
     
     // Update login audit/session metadata
@@ -266,7 +320,7 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) =
     return res.json({
       message: 'Login successful',
       user: sanitizeUser(user),
-      organization: orgDoc || { id: organizationId, name: 'Metro Commercial Tower (Demo)' },
+      organization: orgDoc || { id: organizationId, name: orgDoc?.name || organizationId, status: 'active', plan: 'standard' },
       token
     });
   } catch (err: any) {
@@ -293,7 +347,7 @@ authRouter.post('/firebase-login', authRateLimiter, async (req: Request, res: Re
     let user = users.find((u: any) => u.id === firebaseUser.id || (u.email && u.email.toLowerCase() === lowerEmail));
 
     const assignedRole = role || (lowerEmail.endsWith('@gaostaff.com') ? 'admin' : (user?.role || 'operator'));
-    const resolvedOrgId = organizationId || user?.organizationId || 'demo';
+    const resolvedOrgId = organizationId || user?.organizationId || 'default';
 
     if (!user) {
       user = {
@@ -353,7 +407,7 @@ authRouter.post('/firebase-login', authRateLimiter, async (req: Request, res: Re
     return res.json({
       message: 'Firebase authentication successful',
       user: sanitizeUser(user),
-      organization: orgDoc || { id: user.organizationId, name: 'Metro Commercial Tower (Demo)' },
+      organization: orgDoc || { id: user.organizationId, name: orgDoc?.name || user.organizationId, status: 'active', plan: 'standard' },
       token
     });
   } catch (err: any) {
@@ -364,17 +418,17 @@ authRouter.post('/firebase-login', authRateLimiter, async (req: Request, res: Re
 
 // GET /api/auth/me
 authRouter.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
-  const orgId = req.user?.organizationId || 'demo';
+  const orgId = req.user?.organizationId || 'default';
   const orgDoc = await getDocById('organizations', orgId);
   return res.json({
     user: req.user,
-    organization: orgDoc || { id: orgId, name: 'Metro Commercial Tower (Demo)' }
+    organization: orgDoc || { id: orgId, name: orgDoc?.name || orgId, status: 'active', plan: 'standard' }
   });
 });
 
 // GET /api/auth/organization
 authRouter.get('/organization', requireAuth, async (req: AuthRequest, res: Response) => {
-  const orgId = req.user?.organizationId || 'demo';
+  const orgId = req.user?.organizationId || 'default';
   const orgDoc = await getDocById('organizations', orgId, 'ALL');
   const org = orgDoc || { id: orgId, name: orgId === 'demo' ? 'Metro Commercial Tower (Demo)' : orgId, status: 'active', plan: 'standard' };
   return res.json({ success: true, organization: org, ...org });

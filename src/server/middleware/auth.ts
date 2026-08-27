@@ -121,7 +121,7 @@ export function verifyToken(token: string): AuthenticatedUser | null {
       email: decoded.email,
       name: decoded.name || '',
       role: decoded.role || 'viewer',
-      organizationId: decoded.organizationId || 'demo',
+      organizationId: decoded.organizationId || 'default',
       isPlatformAdmin: Boolean(decoded.isPlatformAdmin),
       tokenVersion: decoded.tokenVersion || 1
     };
@@ -181,7 +181,7 @@ export async function verifyFirebaseTokenRS256(token: string): Promise<Authentic
       email: verifiedPayload.email || '',
       name: verifiedPayload.name || verifiedPayload.displayName || '',
       role: verifiedPayload.role || 'viewer',
-      organizationId: verifiedPayload.organizationId || 'demo',
+      organizationId: verifiedPayload.organizationId || 'default',
       isPlatformAdmin: Boolean(verifiedPayload.isPlatformAdmin),
       tokenVersion: 1
     };
@@ -277,7 +277,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
         }
         // Sync role, organizationId, and details from database
         user.role = userDoc.role || user.role;
-        user.organizationId = userDoc.organizationId || user.organizationId || 'demo';
+        user.organizationId = userDoc.organizationId || user.organizationId || 'default';
         user.isPlatformAdmin = Boolean(userDoc.isPlatformAdmin || user.isPlatformAdmin);
         user.name = userDoc.name || userDoc.displayName || user.name;
         user.id = userDoc.id || user.id;
@@ -285,7 +285,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
         // If the user is authenticated in Firebase but doesn't exist in local DB, bootstrap them
         const isInitialAdmin = user.email?.toLowerCase() === 'sigmund.t.d@gaostaff.com' || user.email?.endsWith('@gaostaff.com');
         const role = isInitialAdmin ? 'admin' : 'viewer';
-        const orgId = user.organizationId || 'demo';
+        const orgId = user.organizationId || 'default';
         user.role = role;
         user.organizationId = orgId;
 
@@ -307,7 +307,7 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   }
 
   if (!user.organizationId) {
-    user.organizationId = 'demo';
+    user.organizationId = 'default';
   }
 
   req.user = user;

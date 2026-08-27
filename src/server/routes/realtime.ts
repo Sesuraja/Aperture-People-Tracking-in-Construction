@@ -83,7 +83,7 @@ realtimeRouter.get('/ws/info', (req: Request, res: Response) => {
 realtimeRouter.post('/ws/broadcast', (req: Request, res: Response) => {
   try {
     const { type, payload } = req.body || {};
-    const orgId = (req as any).user?.organizationId || req.body?.organizationId || 'demo';
+    const orgId = (req as any).user?.organizationId || req.body?.organizationId || 'default';
     const eventType = type || 'custom_broadcast';
     const eventPayload = payload || req.body || {};
 
@@ -118,7 +118,7 @@ realtimeRouter.get('/sse/subscribe', (req: Request, res: Response) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
 
-  const orgId = (req as any).user?.organizationId || (req.query.organizationId as string) || 'demo';
+  const orgId = (req as any).user?.organizationId || (req.query.organizationId as string) || 'default';
 
   res.write(`event: connected\ndata: ${JSON.stringify({ status: 'connected', method: 'SSE', organizationId: orgId, timestamp: new Date().toISOString() })}\n\n`);
 
@@ -136,7 +136,7 @@ realtimeRouter.get('/sse/subscribe', (req: Request, res: Response) => {
 realtimeRouter.post('/sse/broadcast', (req: Request, res: Response) => {
   try {
     const { event, payload } = req.body || {};
-    const orgId = (req as any).user?.organizationId || req.body?.organizationId || 'demo';
+    const orgId = (req as any).user?.organizationId || req.body?.organizationId || 'default';
     const eventName = event || 'notification';
     const eventData = payload || req.body || {};
 
@@ -463,7 +463,7 @@ realtimeRouter.get('/poll', (req: Request, res: Response) => {
  */
 realtimeRouter.post('/ingest', async (req: Request, res: Response) => {
   try {
-    const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
+    const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
     const protocol = req.body?.protocol || 'HTTP Ingestion';
     const rawEvents = req.body?.events || req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
 

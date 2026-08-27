@@ -34,10 +34,10 @@ export function initWebSocketServer(server: HttpServer): WebSocketServer {
     const clientIp = req.socket.remoteAddress || '127.0.0.1';
     const sessionId = `ws_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
     
-    let organizationId = 'demo';
+    let organizationId = 'default';
     try {
       const url = new URL(req.url || '', `http://${req.headers.host || 'localhost'}`);
-      organizationId = url.searchParams.get('organizationId') || url.searchParams.get('orgId') || 'demo';
+      organizationId = url.searchParams.get('organizationId') || url.searchParams.get('orgId') || 'default';
     } catch {}
 
     const session: ClientSession = {

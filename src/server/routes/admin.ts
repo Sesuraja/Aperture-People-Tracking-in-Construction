@@ -8,7 +8,8 @@ import {
   deleteDocsByFilter,
   getDocById,
   logAuditEvent,
-  getAuditLogs
+  getAuditLogs,
+  wipeAllCollections
 } from '../services/db.js';
 import { requireAuth, requirePermission, AuthRequest } from '../middleware/auth.js';
 import { sanitizeUser } from './auth.js';
@@ -606,5 +607,32 @@ adminRouter.post('/data-retention/execute', requirePermission('settings'), async
   } catch (err: any) {
     console.error('[Admin Route] Execute retention cleanup error:', err);
     return res.status(500).json({ error: 'Failed to execute data retention cleanup' });
+  }
+});
+
+// POST /api/admin/purge-demo
+adminRouter.post('/purge-demo', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await wipeAllCollections('demo');
+    await deleteDocById('organizations', 'demo', 'ALL');
+
+    await logAuditEvent({
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      organizationId: req.user?.organizationId || 'default',
+      action: 'ADMIN_PURGE_DEMO_DATA',
+      resource: 'database',
+      details: { ...result },
+      ip: req.ip
+    });
+
+    return res.json({
+      success: true,
+      message: `Purged demo organization and deleted ${result.totalDeleted} demo documents across collections.`,
+      result
+    });
+  } catch (err: any) {
+    console.error('[Admin Route] Purge demo error:', err);
+    return res.status(500).json({ success: false, error: err.message || 'Failed to purge demo data' });
   }
 });

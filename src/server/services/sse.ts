@@ -2,7 +2,7 @@ import { Response } from 'express';
 
 const subscribers: Map<Response, string> = new Map();
 
-export function addSseSubscriber(res: Response, organizationId: string = 'demo'): void {
+export function addSseSubscriber(res: Response, organizationId: string = 'default'): void {
   subscribers.set(res, organizationId);
   console.log(`[SSE Service] Client subscribed for org [${organizationId}]. Active connections: ${subscribers.size}`);
 }

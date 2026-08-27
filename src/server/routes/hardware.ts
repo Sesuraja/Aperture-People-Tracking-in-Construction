@@ -30,7 +30,7 @@ function getReqOrgId(req: Request): string {
     const decoded = verifyToken(token);
     if (decoded?.organizationId) return decoded.organizationId;
   }
-  return req.body?.organizationId || (req.query.organizationId as string) || 'demo';
+  return req.body?.organizationId || (req.query.organizationId as string) || 'default';
 }
 
 // ===========================================================================
@@ -124,9 +124,6 @@ hardwareRouter.use(requireAuth);
 hardwareRouter.get('/readers', async (req: Request, res: Response) => {
   const orgId = getReqOrgId(req);
   try {
-    if (orgId === 'demo') {
-      await bootstrapDefaultHardware();
-    }
     const readers = await getCollectionDocs('hardware_readers', undefined, orgId);
     return res.json({ success: true, count: readers.length, readers, organizationId: orgId });
   } catch (err: any) {
@@ -188,9 +185,6 @@ hardwareRouter.delete('/readers/:id', async (req: Request, res: Response) => {
 hardwareRouter.get('/mappings', async (req: Request, res: Response) => {
   const orgId = getReqOrgId(req);
   try {
-    if (orgId === 'demo') {
-      await bootstrapDefaultHardware();
-    }
     const mappings = await getCollectionDocs('hardware_tag_mappings', undefined, orgId);
     return res.json({ success: true, count: mappings.length, mappings, organizationId: orgId });
   } catch (err: any) {
@@ -296,9 +290,6 @@ hardwareRouter.post('/test-scan', async (req: Request, res: Response) => {
 hardwareRouter.get('/status', async (req: Request, res: Response) => {
   const orgId = getReqOrgId(req);
   try {
-    if (orgId === 'demo') {
-      await bootstrapDefaultHardware();
-    }
     const readers: HardwareReader[] = await getCollectionDocs('hardware_readers', undefined, orgId);
     const mappings: TagEntityMapping[] = await getCollectionDocs('hardware_tag_mappings', undefined, orgId);
 

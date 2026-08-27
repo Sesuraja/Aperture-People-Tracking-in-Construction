@@ -16,7 +16,7 @@ dataRouter.use(requireAuth);
 
 // GET /api/data/stats
 dataRouter.get('/stats', async (req: AuthRequest, res: Response) => {
-  const orgId = req.user?.organizationId || 'demo';
+  const orgId = req.user?.organizationId || 'default';
   try {
     const people = await getCollectionDocs('registered_people', undefined, orgId);
     const devices = await getCollectionDocs('devices', undefined, orgId);
@@ -42,7 +42,7 @@ dataRouter.get('/stats', async (req: AuthRequest, res: Response) => {
 // GET /api/data/:collection
 dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
   const { collection } = req.params;
-  const orgId = req.user?.organizationId || 'demo';
+  const orgId = req.user?.organizationId || 'default';
   const allowed = [
     'organizations', 'registered_people', 'devices', 'visitors', 'alerts',
     'live_tags', 'real_time_tags', 'rfid_realtime_events', 'tag_history', 'settings', 'projects', 'floorplans',
@@ -78,7 +78,7 @@ dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
 // GET /api/data/:collection/:id
 dataRouter.get('/:collection/:id', async (req: AuthRequest, res: Response) => {
   const { collection, id } = req.params;
-  const orgId = req.user?.organizationId || 'demo';
+  const orgId = req.user?.organizationId || 'default';
   try {
     const doc = await getDocById(collection, id, orgId);
     if (!doc) {
@@ -95,7 +95,7 @@ dataRouter.get('/:collection/:id', async (req: AuthRequest, res: Response) => {
 dataRouter.post('/:collection', async (req: AuthRequest, res: Response) => {
   const { collection } = req.params;
   const user = req.user;
-  const orgId = user?.organizationId || 'demo';
+  const orgId = user?.organizationId || 'default';
 
   const body = req.body;
   if (!body || typeof body !== 'object') {
@@ -126,7 +126,7 @@ dataRouter.post('/:collection', async (req: AuthRequest, res: Response) => {
 dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
   const { collection, id } = req.params;
   const user = req.user;
-  const orgId = user?.organizationId || 'demo';
+  const orgId = user?.organizationId || 'default';
 
   // IDOR check: if updating existing doc, ensure it belongs to the tenant
   const existingDoc = await getDocById(collection, id, orgId);
@@ -162,7 +162,7 @@ dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
 dataRouter.delete('/:collection/:id', async (req: AuthRequest, res: Response) => {
   const { collection, id } = req.params;
   const user = req.user;
-  const orgId = user?.organizationId || 'demo';
+  const orgId = user?.organizationId || 'default';
 
   try {
     const deleted = await deleteDocById(collection, id, orgId);

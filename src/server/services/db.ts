@@ -287,9 +287,6 @@ export async function getCollectionDocs(
       return docs.map(doc => {
         const { _id, ...rest } = doc;
         const out: any = { id: doc.id || (_id ? _id.toString() : undefined), ...rest };
-        if (!out.organizationId && colName !== 'organizations') {
-          out.organizationId = 'demo';
-        }
         // Normalise duplicate TagID / tagId keys written by different ingestion paths
         if (colName === 'live_tags' || colName === 'real_time_tags' || colName === 'rfid_realtime_events') {
           if (out.TagID !== undefined && out.tagId !== undefined) {
@@ -340,9 +337,6 @@ export async function getDocById(colName: string, id: string, organizationId?: s
       if (doc) {
         const { _id, ...rest } = doc;
         const out: any = { id: doc.id || (_id ? _id.toString() : idStr), ...rest };
-        if (!out.organizationId && colName !== 'organizations') {
-          out.organizationId = 'demo';
-        }
         return out;
       }
       return null;
@@ -359,8 +353,8 @@ export async function getDocById(colName: string, id: string, organizationId?: s
   );
   if (!doc) return null;
   if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-    const docOrg = doc.organizationId || 'demo';
-    if (docOrg !== organizationId) return null; // IDOR protected: do not return other tenant's document
+    const docOrg = doc.organizationId;
+    if (docOrg && docOrg !== organizationId) return null; // IDOR protected: do not return other tenant's document
   }
   return doc;
 }
@@ -376,8 +370,8 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
   // Enforce organizationId on tenant-scoped collections
   if (colName === 'organizations') {
     cleanDoc.organizationId = cleanDoc.id;
-  } else {
-    cleanDoc.organizationId = organizationId || cleanDoc.organizationId || 'demo';
+  } else if (organizationId) {
+    cleanDoc.organizationId = organizationId;
   }
 
   if (mongoDb) {
@@ -413,8 +407,8 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
   const idLower = String(cleanDoc.id || '').toLowerCase().trim();
   const idx = inMemoryStore[colName].findIndex((item: any) => {
     const sameId = item.id === cleanDoc.id || String(item.id || '').toLowerCase().trim() === idLower;
-    if (colName !== 'organizations') {
-      return sameId && (item.organizationId || 'demo') === cleanDoc.organizationId;
+    if (colName !== 'organizations' && cleanDoc.organizationId) {
+      return sameId && item.organizationId === cleanDoc.organizationId;
     }
     return sameId;
   });
@@ -466,8 +460,8 @@ export async function deleteDocById(colName: string, id: string, organizationId?
       );
       if (!matchesId) return true; // keep
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-        const itemOrg = item.organizationId || 'demo';
-        if (itemOrg !== organizationId) return true; // not matching org, keep (prevent IDOR delete)
+        const itemOrg = item.organizationId;
+        if (itemOrg && itemOrg !== organizationId) return true; // not matching org, keep (prevent IDOR delete)
       }
       return false; // delete
     });
@@ -498,7 +492,7 @@ export async function logAuditEvent(event: {
   details?: any;
   ip?: string;
 }): Promise<void> {
-  const orgId = event.organizationId || 'demo';
+  const orgId = event.organizationId || 'default';
   const auditDoc = {
     id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     timestamp: new Date().toISOString(),
@@ -528,7 +522,7 @@ export async function getAuditLogs(limitCount = 100, organizationId?: string): P
 export async function bulkWriteRfidRealtimeEvents(
   rawEvents: any[],
   protocol: string = 'Multi-Protocol',
-  organizationId: string = 'demo'
+  organizationId: string = 'default'
 ): Promise<{ insertedCount: number; modifiedCount: number; totalProcessed: number }> {
   if (!Array.isArray(rawEvents) || rawEvents.length === 0) {
     return { insertedCount: 0, modifiedCount: 0, totalProcessed: 0 };
@@ -612,7 +606,7 @@ export async function bulkWriteRfidRealtimeEvents(
  */
 export async function bulkWriteRealtimeTags(
   tags: any[],
-  organizationId: string = 'demo'
+  organizationId: string = 'default'
 ): Promise<{ insertedCount: number; updatedCount: number; totalProcessed: number }> {
   if (!Array.isArray(tags) || tags.length === 0) {
     return { insertedCount: 0, updatedCount: 0, totalProcessed: 0 };
