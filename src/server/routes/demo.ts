@@ -2,10 +2,10 @@ import { Router, Request, Response } from 'express';
 import { 
   seedAllDemoData, 
   getCollectionDocs, 
-  upsertDoc, 
-  DEFAULT_PEOPLE,
-  DEFAULT_PERMANENT_ZONES
+  upsertDoc,
+  wipeAllCollections
 } from '../services/db.js';
+
 import { broadcastWebSocketEvent } from '../services/websocket.js';
 import {
   startMockGaoSimulator,
@@ -75,22 +75,16 @@ demoRouter.get('/status', async (req: Request, res: Response) => {
 
 /**
  * POST /api/demo/seed
- * Forces re-seeding of all synthetic datasets into MongoDB
+ * Forces re-seeding of all synthetic datasets into MongoDB (currently disabled)
  */
 demoRouter.post('/seed', async (req: Request, res: Response) => {
   try {
     const { force = true } = req.body || {};
     const result = await seedAllDemoData(Boolean(force));
 
-    // Broadcast system notification via WebSocket
-    broadcastWebSocketEvent('DEMO_DATA_RESEEDED', {
-      timestamp: new Date().toISOString(),
-      message: 'All enterprise collections re-seeded with synthetic demo data.'
-    });
-
     res.json({
       success: result.success,
-      message: 'All enterprise demo collections successfully seeded.',
+      message: 'Demo data seeding is disabled. Database runs on real API data only.',
       seededCollections: result.seededCollections
     });
   } catch (err: any) {
@@ -98,6 +92,36 @@ demoRouter.post('/seed', async (req: Request, res: Response) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+/**
+ * POST /api/demo/wipe-all
+ * Wipes ALL documents from all collections — resets MongoDB to blank state.
+ * After this, only real RFID hardware data will appear in the dashboard.
+ */
+demoRouter.post('/wipe-all', async (req: Request, res: Response) => {
+  try {
+    const { organizationId } = req.body || {};
+    console.log('[Demo Router] Wipe-all requested. OrganizationId filter:', organizationId || 'ALL');
+
+    const result = await wipeAllCollections(organizationId);
+
+    broadcastWebSocketEvent('DB_WIPED', {
+      timestamp: new Date().toISOString(),
+      message: `Database wiped. ${result.totalDeleted} documents deleted across ${Object.keys(result.wipedCollections).length} collections.`
+    });
+
+    res.json({
+      success: true,
+      message: `Database wiped. ${result.totalDeleted} total documents deleted.`,
+      totalDeleted: result.totalDeleted,
+      wipedCollections: result.wipedCollections
+    });
+  } catch (err: any) {
+    console.error('[Demo Router] Error wiping database:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 
 /**
  * GET /api/demo/realtime
