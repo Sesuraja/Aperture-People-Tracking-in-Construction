@@ -6,6 +6,7 @@ export const mongodbRouter = Router();
 
 // GET /api/mongodb/status - accessible for system health checks across all tabs
 mongodbRouter.get('/status', async (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   try {
     const stats = await getMongoStats();
     return res.json(stats);

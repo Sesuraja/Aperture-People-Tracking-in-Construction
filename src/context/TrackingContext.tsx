@@ -6,6 +6,8 @@ import {
   AssetItem, VehicleItem, CCTVCameraItem, EnvironmentalSensorItem, InfrastructureItem
 } from '../lib/trackingLayers';
 import { ZoneBounds } from '../components/MapEditorModal';
+import { IndustryConfig, IndustryTerminology, INDUSTRY_PRESETS } from '../constants/industryPresets';
+import { safeStorage } from '../lib/safeStorage';
 
 export interface MapZoneDefinition {
   id: string;
@@ -58,6 +60,16 @@ export interface TrackingContextType {
   customSvgSource: string | null;
   isLoading: boolean;
   lastUpdateTimestamp: string | null;
+  // Dynamic Industry & Terminology
+  industryConfig: IndustryConfig;
+  setIndustryConfig: React.Dispatch<React.SetStateAction<IndustryConfig>>;
+  updateIndustryConfig: (cfg: Partial<IndustryConfig>) => Promise<void>;
+  applyIndustryPreset: (presetId: string) => Promise<void>;
+  t: (key: keyof IndustryTerminology | string, fallback?: string) => string;
+  customRoles: string[];
+  saveRoles: (roles: string[]) => Promise<void>;
+  customSubcontractors: string[];
+  saveSubcontractors: (subs: string[]) => Promise<void>;
   // Sync handlers
   saveMapConfig: (cfg: any) => Promise<void>;
   saveZone: (zone: Partial<MapZoneDefinition>) => Promise<void>;
@@ -103,19 +115,6 @@ export const SITE_ZONE_WAYPOINTS: { name: string; x: number; y: number; minX: nu
   { name: 'High Voltage Area', x: 82.0, y: 75.0, minX: 72, maxX: 90, minY: 70, maxY: 83 }
 ];
 
-const DEFAULT_INITIAL_PEOPLE: Person[] = [
-  { id: 'HH-1001', name: 'Viktor', role: 'Site Specialist', tradeCompany: 'Site Logistics JV', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1001', currentZone: 'Material Storage', presenceState: 'IDLE', dwellTime: 45, x: 16.0, y: 14.0, rssi: -62, battery: 94, photoUrl: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
-  { id: 'HH-1002', name: 'Carlos', role: 'Heavy Handler', tradeCompany: 'Apex Heavy Staging', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1002', currentZone: 'Material Storage', presenceState: 'IDLE', dwellTime: 32, x: 24.5, y: 14.0, rssi: -58, battery: 88, photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
-  { id: 'HH-1003', name: 'Elena', role: 'Structural Inspector', tradeCompany: 'Apex QA Group', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1003', currentZone: 'Structure Work Area', presenceState: 'IDLE', dwellTime: 18, x: 45.0, y: 22.0, rssi: -65, battery: 92, photoUrl: 'https://images.unsplash.com/photo-1580489944761-15a19d654956?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
-  { id: 'HH-1004', name: 'Marcus', role: 'Contractor Lead', tradeCompany: 'Apex Contractors', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1004', currentZone: 'Site Office', presenceState: 'IDLE', dwellTime: 24, x: 18.0, y: 48.0, rssi: -70, battery: 79, photoUrl: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
-  { id: 'HH-1005', name: 'Rachel', role: 'Contractor QA', tradeCompany: 'Apex Contractors', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1005', currentZone: 'Site Office', presenceState: 'IDLE', dwellTime: 50, x: 24.5, y: 48.0, rssi: -60, battery: 85, photoUrl: 'https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
-  { id: 'HH-1006', name: 'Arthur', role: 'Contractor Ops', tradeCompany: 'Apex Contractors', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1006', currentZone: 'Site Office', presenceState: 'IDLE', dwellTime: 15, x: 22.0, y: 56.0, rssi: -54, battery: 95, photoUrl: 'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
-  { id: 'HH-1007', name: 'David', role: 'Rebar Lead', tradeCompany: 'Apex Steelworks', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1007', currentZone: 'Open Work Area', presenceState: 'IDLE', dwellTime: 28, x: 52.0, y: 44.0, rssi: -64, battery: 91, photoUrl: 'https://images.unsplash.com/photo-1519085360753-af0119f7cbe7?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
-  { id: 'HH-1008', name: 'Tariq', role: 'Heavy Equip Tech', tradeCompany: 'Apex Machinery', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1008', currentZone: 'Equipment Parking', presenceState: 'IDLE', dwellTime: 40, x: 78.0, y: 54.0, rssi: -68, battery: 86, photoUrl: 'https://images.unsplash.com/photo-1560250097-0b93528c311a?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
-  { id: 'HH-1009', name: 'Sarah', role: 'Excavation Contractor', tradeCompany: 'Apex Groundworks', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', hardhatTagId: 'HH-1009', currentZone: 'Excavation Area', presenceState: 'IDLE', dwellTime: 30, x: 24.0, y: 78.0, rssi: -66, battery: 89, photoUrl: 'https://images.unsplash.com/photo-1573497019940-1c28c88b4f3e?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] },
-  { id: 'HH-1010', name: 'Liam', role: 'Electrical Specialist', tradeCompany: 'VoltTech Power', ppeStatus: 'WARNING', shiftStatus: 'ON_SITE', trainingStatus: 'DUE_SOON', hardhatTagId: 'HH-1010', currentZone: 'High Voltage Area', presenceState: 'IDLE', dwellTime: 22, x: 84.0, y: 78.0, rssi: -61, battery: 93, photoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?auto=format&fit=crop&q=80&w=120', lastSeen: new Date(), trail: [] }
-];
-
 export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const [activeProject, setActiveProjectState] = useState<string>(() => {
     return localStorage.getItem('gao_active_project') || 'metro-tower';
@@ -125,14 +124,207 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     return (localStorage.getItem('gao_app_mode') as 'real' | 'demo') || 'real';
   });
 
+  const [industryConfig, setIndustryConfig] = useState<IndustryConfig>(() => {
+    try {
+      const saved = localStorage.getItem('gao_industry_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.industryId && parsed.terminology) return parsed;
+      }
+    } catch {}
+    return INDUSTRY_PRESETS.construction;
+  });
+
+  const [customRoles, setCustomRoles] = useState<string[]>(() => {
+    try {
+      const saved = safeStorage.getItem('gao_custom_roles');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return industryConfig.defaultRoles || INDUSTRY_PRESETS.construction.defaultRoles;
+  });
+
+  const [customSubcontractors, setCustomSubcontractors] = useState<string[]>(() => {
+    try {
+      const saved = safeStorage.getItem('gao_custom_subcontractors');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return industryConfig.defaultDepartments || INDUSTRY_PRESETS.construction.defaultDepartments;
+  });
+
   const [wsConnected, setWsConnected] = useState(false);
   const [liveTags, setLiveTags] = useState<RealtimeTag[]>([]);
-  const [people, setPeople] = useState<Person[]>(DEFAULT_INITIAL_PEOPLE);
+  const [people, setPeople] = useState<Person[]>([]);
+
+  // Real-time listener for MongoDB Industry Configuration
+  useEffect(() => {
+    try {
+      const unsub = onSnapshot(doc(db, 'settings', 'industry_config'), (snap) => {
+        if (snap.exists()) {
+          const remoteData = snap.data() as IndustryConfig;
+          if (remoteData && remoteData.industryId) {
+            setIndustryConfig(prev => {
+              const merged: IndustryConfig = {
+                ...prev,
+                ...remoteData,
+                terminology: {
+                  ...prev.terminology,
+                  ...(remoteData.terminology || {})
+                }
+              };
+              safeStorage.setItem('gao_industry_config', JSON.stringify(merged));
+              return merged;
+            });
+            if (remoteData.defaultRoles && Array.isArray(remoteData.defaultRoles)) {
+              setCustomRoles(remoteData.defaultRoles);
+              safeStorage.setItem('gao_custom_roles', JSON.stringify(remoteData.defaultRoles));
+            }
+            if (remoteData.defaultDepartments && Array.isArray(remoteData.defaultDepartments)) {
+              setCustomSubcontractors(remoteData.defaultDepartments);
+              safeStorage.setItem('gao_custom_subcontractors', JSON.stringify(remoteData.defaultDepartments));
+            }
+          }
+        }
+      });
+      return () => unsub();
+    } catch (e) {
+      console.warn('[TrackingContext] Firestore/MongoDB settings listener:', e);
+    }
+  }, []);
+
+  // Fetch Industry Config from Backend REST on Mount
+  useEffect(() => {
+    const fetchIndustrySettings = async () => {
+      try {
+        const res = await fetch('/api/data/settings/industry_config', { headers: getAuthHeaders() });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.industryId) {
+            setIndustryConfig(data);
+            safeStorage.setItem('gao_industry_config', JSON.stringify(data));
+            if (data.defaultRoles) {
+              setCustomRoles(data.defaultRoles);
+              safeStorage.setItem('gao_custom_roles', JSON.stringify(data.defaultRoles));
+            }
+            if (data.defaultDepartments) {
+              setCustomSubcontractors(data.defaultDepartments);
+              safeStorage.setItem('gao_custom_subcontractors', JSON.stringify(data.defaultDepartments));
+            }
+          }
+        }
+      } catch {}
+    };
+    fetchIndustrySettings();
+  }, []);
+
+  // Terminology helper: t('personnelSingular') -> returns e.g. "Nurse", "Miner", "Worker"
+  const t = useCallback((key: keyof IndustryTerminology | string, fallback?: string): string => {
+    if (industryConfig?.terminology && (key in industryConfig.terminology)) {
+      return (industryConfig.terminology as any)[key] || fallback || key;
+    }
+    return fallback || key;
+  }, [industryConfig]);
+
+  // Update and persist industry configuration
+  const updateIndustryConfig = useCallback(async (cfg: Partial<IndustryConfig>) => {
+    setIndustryConfig(prev => {
+      const next: IndustryConfig = {
+        ...prev,
+        ...cfg,
+        terminology: {
+          ...prev.terminology,
+          ...(cfg.terminology || {})
+        },
+        updatedAt: new Date().toISOString()
+      };
+      safeStorage.setItem('gao_industry_config', JSON.stringify(next));
+      return next;
+    });
+
+    try {
+      await setDoc(doc(db, 'settings', 'industry_config'), cfg, { merge: true });
+      await fetch('/api/data/settings/industry_config', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(cfg)
+      });
+      // Also notify AI endpoints of updated persona
+      await fetch('/api/ai/update-industry', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          industryId: cfg.industryId || industryConfig.industryId,
+          personaPrompt: cfg.aiPersonaPrompt || industryConfig.aiPersonaPrompt,
+          complianceFramework: cfg.complianceFramework || industryConfig.complianceFramework
+        })
+      }).catch(() => {});
+    } catch (e) {
+      console.warn('[TrackingContext] Failed to persist industry config to MongoDB:', e);
+    }
+  }, [industryConfig]);
+
+  // 1-Click Apply Industry Preset
+  const applyIndustryPreset = useCallback(async (presetId: string) => {
+    const preset = INDUSTRY_PRESETS[presetId] || INDUSTRY_PRESETS.construction;
+    const fullConfig: IndustryConfig = {
+      ...preset,
+      updatedAt: new Date().toISOString()
+    };
+    setIndustryConfig(fullConfig);
+    safeStorage.setItem('gao_industry_config', JSON.stringify(fullConfig));
+    setCustomRoles(fullConfig.defaultRoles);
+    safeStorage.setItem('gao_custom_roles', JSON.stringify(fullConfig.defaultRoles));
+
+    try {
+      await setDoc(doc(db, 'settings', 'industry_config'), fullConfig);
+      await fetch('/api/data/settings/industry_config', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(fullConfig)
+      });
+      // Also update global settings app title & site
+      await setDoc(doc(db, 'settings', 'global'), {
+        companyName: fullConfig.appTitle,
+        siteLocation: fullConfig.primarySiteName,
+        complianceFrameworks: fullConfig.complianceFramework
+      }, { merge: true });
+
+      // Notify AI server
+      await fetch('/api/ai/update-industry', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          industryId: fullConfig.industryId,
+          personaPrompt: fullConfig.aiPersonaPrompt,
+          complianceFramework: fullConfig.complianceFramework
+        })
+      }).catch(() => {});
+    } catch (e) {
+      console.warn('[TrackingContext] Apply preset DB error:', e);
+    }
+  }, []);
+
+  const saveRoles = useCallback(async (roles: string[]) => {
+    setCustomRoles(roles);
+    safeStorage.setItem('gao_custom_roles', JSON.stringify(roles));
+    await updateIndustryConfig({ defaultRoles: roles });
+  }, [updateIndustryConfig]);
+
+  const saveSubcontractors = useCallback(async (subs: string[]) => {
+    setCustomSubcontractors(subs);
+    safeStorage.setItem('gao_custom_subcontractors', JSON.stringify(subs));
+    await updateIndustryConfig({ defaultDepartments: subs });
+  }, [updateIndustryConfig]);
 
   // Entities initialized from persistent MongoDB storage
   const [assets, setAssets] = useState<AssetItem[]>(() => {
     try {
-      const saved = localStorage.getItem('gao_db_assets');
+      const saved = safeStorage.getItem('gao_db_assets');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
@@ -143,7 +335,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
   const [vehicles, setVehicles] = useState<VehicleItem[]>(() => {
     try {
-      const saved = localStorage.getItem('gao_db_vehicles');
+      const saved = safeStorage.getItem('gao_db_vehicles');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
@@ -154,7 +346,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
   const [cameras, setCameras] = useState<CCTVCameraItem[]>(() => {
     try {
-      const saved = localStorage.getItem('gao_db_cameras');
+      const saved = safeStorage.getItem('gao_db_cameras');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
@@ -165,7 +357,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
   const [envSensors, setEnvSensors] = useState<EnvironmentalSensorItem[]>(() => {
     try {
-      const saved = localStorage.getItem('gao_db_sensors');
+      const saved = safeStorage.getItem('gao_db_sensors');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
@@ -176,7 +368,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
   const [infrastructure, setInfrastructure] = useState<InfrastructureItem[]>(() => {
     try {
-      const saved = localStorage.getItem('gao_db_infrastructure');
+      const saved = safeStorage.getItem('gao_db_infrastructure');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed)) return parsed;
@@ -187,7 +379,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
   const [zones, setZones] = useState<MapZoneDefinition[]>(() => {
     try {
-      const saved = localStorage.getItem('gao_db_zones');
+      const saved = safeStorage.getItem('gao_db_zones');
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -197,11 +389,11 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   });
 
   const [customFloorplan, setCustomFloorplanState] = useState<string | null>(() => {
-    return localStorage.getItem('gao_custom_floorplan') || null;
+    return safeStorage.getItem('gao_custom_floorplan') || null;
   });
 
   const [customSvgSource, setCustomSvgSourceState] = useState<string | null>(() => {
-    return localStorage.getItem('gao_custom_svg_source') || null;
+    return safeStorage.getItem('gao_custom_svg_source') || null;
   });
 
   const [readerMappings, setReaderMappings] = useState<ReaderZoneMapping[]>([]);
@@ -214,12 +406,12 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
   const setActiveProject = useCallback((id: string) => {
     setActiveProjectState(id);
-    localStorage.setItem('gao_active_project', id);
+    safeStorage.setItem('gao_active_project', id);
   }, []);
 
   const setMode = useCallback((newMode: 'real' | 'demo') => {
     setModeState(newMode);
-    localStorage.setItem('gao_app_mode', newMode);
+    safeStorage.setItem('gao_app_mode', newMode);
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify({
         type: newMode === 'demo' ? 'enable_demo_mode' : 'disable_demo_mode',
@@ -231,9 +423,9 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const setCustomFloorplan = useCallback((url: string | null) => {
     setCustomFloorplanState(url);
     if (url) {
-      localStorage.setItem('gao_custom_floorplan', url);
+      safeStorage.setItem('gao_custom_floorplan', url);
     } else {
-      localStorage.removeItem('gao_custom_floorplan');
+      safeStorage.removeItem('gao_custom_floorplan');
     }
     window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
   }, []);
@@ -241,9 +433,9 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const setCustomSvgSource = useCallback((svg: string | null) => {
     setCustomSvgSourceState(svg);
     if (svg) {
-      localStorage.setItem('gao_custom_svg_source', svg);
+      safeStorage.setItem('gao_custom_svg_source', svg);
     } else {
-      localStorage.removeItem('gao_custom_svg_source');
+      safeStorage.removeItem('gao_custom_svg_source');
     }
     window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
   }, []);
@@ -309,28 +501,86 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     });
 
     setZones(zoneDefinitions);
-    localStorage.setItem('gao_db_zones', JSON.stringify(zoneDefinitions));
+    safeStorage.setItem('gao_db_zones', JSON.stringify(zoneDefinitions));
 
     if (newFloorplanUrl !== undefined) {
-      setCustomFloorplan(newFloorplanUrl);
+      setCustomFloorplanState(newFloorplanUrl);
+      if (newFloorplanUrl) safeStorage.setItem('gao_custom_floorplan', newFloorplanUrl);
+      else safeStorage.removeItem('gao_custom_floorplan');
     }
+
     if (newSvgSource !== undefined) {
-      setCustomSvgSource(newSvgSource);
+      setCustomSvgSourceState(newSvgSource);
+      if (newSvgSource) safeStorage.setItem('gao_custom_svg_source', newSvgSource);
+      else safeStorage.removeItem('gao_custom_svg_source');
     }
 
     try {
-      const authHeaders = getAuthHeaders();
-      for (const zone of zoneDefinitions) {
-        await fetch('/api/data/zones', {
-          method: 'POST',
-          headers: authHeaders,
-          body: JSON.stringify(zone)
-        });
-      }
+      await fetch('/api/data/zones/batch', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          zones: zoneDefinitions,
+          floorplanUrl: newFloorplanUrl,
+          svgSource: newSvgSource
+        })
+      });
     } catch {}
 
     window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-  }, [activeProject, setCustomFloorplan, setCustomSvgSource]);
+  }, [activeProject]);
+
+  const saveZone = useCallback(async (zone: Partial<MapZoneDefinition>) => {
+    if (!zone.name && !zone.zoneId) return;
+    const zoneId = zone.zoneId || `zone_${(zone.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+    const completeZone: MapZoneDefinition = {
+      id: zone.id || zoneId,
+      zoneId,
+      name: zone.name || zoneId,
+      category: zone.category || 'GENERAL',
+      hazardLevel: zone.hazardLevel || 'normal',
+      capacity: zone.capacity || 10,
+      siteId: zone.siteId || activeProject,
+      x: zone.x ?? 10,
+      y: zone.y ?? 10,
+      width: zone.width ?? 20,
+      height: zone.height ?? 20,
+      readerIds: zone.readerIds || [],
+      antennaIds: zone.antennaIds || [],
+      polygonPoints: zone.polygonPoints,
+      proximityAlertEnabled: zone.proximityAlertEnabled
+    };
+
+    setZones(prev => {
+      const idx = prev.findIndex(z => z.id === completeZone.id || z.zoneId === completeZone.zoneId);
+      const next = idx >= 0 ? [...prev] : [...prev, completeZone];
+      if (idx >= 0) next[idx] = completeZone;
+      safeStorage.setItem('gao_db_zones', JSON.stringify(next));
+      return next;
+    });
+
+    try {
+      await fetch('/api/data/zones', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(completeZone)
+      });
+    } catch {}
+
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+  }, [activeProject]);
+
+  const deleteZone = useCallback(async (zoneId: string) => {
+    setZones(prev => {
+      const next = prev.filter(z => z.id !== zoneId && z.zoneId !== zoneId);
+      safeStorage.setItem('gao_db_zones', JSON.stringify(next));
+      return next;
+    });
+    try {
+      await fetch(`/api/data/zones/${zoneId}`, { method: 'DELETE', headers: getAuthHeaders() });
+    } catch {}
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+  }, []);
 
   // Asset CRUD
   const saveAsset = useCallback(async (item: AssetItem) => {
@@ -338,7 +588,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       const idx = prev.findIndex(a => a.id === item.id);
       const next = idx >= 0 ? [...prev] : [item, ...prev];
       if (idx >= 0) next[idx] = item;
-      localStorage.setItem('gao_db_assets', JSON.stringify(next));
+      safeStorage.setItem('gao_db_assets', JSON.stringify(next));
       return next;
     });
     try {
@@ -354,7 +604,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const deleteAsset = useCallback(async (id: string) => {
     setAssets(prev => {
       const next = prev.filter(a => a.id !== id);
-      localStorage.setItem('gao_db_assets', JSON.stringify(next));
+      safeStorage.setItem('gao_db_assets', JSON.stringify(next));
       return next;
     });
     try {
@@ -369,7 +619,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       const idx = prev.findIndex(v => v.id === item.id);
       const next = idx >= 0 ? [...prev] : [item, ...prev];
       if (idx >= 0) next[idx] = item;
-      localStorage.setItem('gao_db_vehicles', JSON.stringify(next));
+      safeStorage.setItem('gao_db_vehicles', JSON.stringify(next));
       return next;
     });
     try {
@@ -385,7 +635,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const deleteVehicle = useCallback(async (id: string) => {
     setVehicles(prev => {
       const next = prev.filter(v => v.id !== id);
-      localStorage.setItem('gao_db_vehicles', JSON.stringify(next));
+      safeStorage.setItem('gao_db_vehicles', JSON.stringify(next));
       return next;
     });
     try {
@@ -400,7 +650,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       const idx = prev.findIndex(c => c.id === item.id);
       const next = idx >= 0 ? [...prev] : [item, ...prev];
       if (idx >= 0) next[idx] = item;
-      localStorage.setItem('gao_db_cameras', JSON.stringify(next));
+      safeStorage.setItem('gao_db_cameras', JSON.stringify(next));
       return next;
     });
     try {
@@ -416,7 +666,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const deleteCamera = useCallback(async (id: string) => {
     setCameras(prev => {
       const next = prev.filter(c => c.id !== id);
-      localStorage.setItem('gao_db_cameras', JSON.stringify(next));
+      safeStorage.setItem('gao_db_cameras', JSON.stringify(next));
       return next;
     });
     try {
@@ -431,7 +681,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       const idx = prev.findIndex(s => s.id === item.id);
       const next = idx >= 0 ? [...prev] : [item, ...prev];
       if (idx >= 0) next[idx] = item;
-      localStorage.setItem('gao_db_sensors', JSON.stringify(next));
+      safeStorage.setItem('gao_db_sensors', JSON.stringify(next));
       return next;
     });
     try {
@@ -447,7 +697,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const deleteEnvSensor = useCallback(async (id: string) => {
     setEnvSensors(prev => {
       const next = prev.filter(s => s.id !== id);
-      localStorage.setItem('gao_db_sensors', JSON.stringify(next));
+      safeStorage.setItem('gao_db_sensors', JSON.stringify(next));
       return next;
     });
     try {
@@ -462,7 +712,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       const idx = prev.findIndex(i => i.id === item.id);
       const next = idx >= 0 ? [...prev] : [item, ...prev];
       if (idx >= 0) next[idx] = item;
-      localStorage.setItem('gao_db_infrastructure', JSON.stringify(next));
+      safeStorage.setItem('gao_db_infrastructure', JSON.stringify(next));
       return next;
     });
     try {
@@ -478,7 +728,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const deleteInfrastructure = useCallback(async (id: string) => {
     setInfrastructure(prev => {
       const next = prev.filter(i => i.id !== id);
-      localStorage.setItem('gao_db_infrastructure', JSON.stringify(next));
+      safeStorage.setItem('gao_db_infrastructure', JSON.stringify(next));
       return next;
     });
     try {
@@ -492,42 +742,60 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     try {
       setIsLoading(true);
       const authHeaders = getAuthHeaders();
-      const [zonesRes, mapRes, readersRes, assetsRes, vehiclesRes, peopleRes, visitorsRes] = await Promise.allSettled([
+      const [zonesRes, mapRes, readersRes, assetsRes, vehiclesRes, peopleRes, visitorsRes, camerasRes, sensorsRes, infraRes] = await Promise.allSettled([
         fetch('/api/data/zones', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch(`/api/data/map_configurations/${activeProject}`, { headers: authHeaders }).then(r => r.ok ? r.json() : null),
         fetch('/api/data/reader_zone_mappings', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/assets', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/vehicles', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/registered_people', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
-        fetch('/api/data/visitors', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
+        fetch('/api/data/visitors', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
+        fetch('/api/data/cameras', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
+        fetch('/api/data/sensors', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
+        fetch('/api/data/infrastructure', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
       ]);
 
-      if (zonesRes.status === 'fulfilled' && Array.isArray(zonesRes.value) && zonesRes.value.length > 0) {
+      if (zonesRes.status === 'fulfilled' && Array.isArray(zonesRes.value)) {
         setZones(zonesRes.value);
-        localStorage.setItem('gao_db_zones', JSON.stringify(zonesRes.value));
+        safeStorage.setItem('gao_db_zones', JSON.stringify(zonesRes.value));
       }
 
-      if (mapRes.status === 'fulfilled' && mapRes.value) {
-        setMapConfig(mapRes.value);
+      if (mapRes.status === 'fulfilled') {
+        setMapConfig(mapRes.value || null);
       }
 
       if (readersRes.status === 'fulfilled' && Array.isArray(readersRes.value)) {
         setReaderMappings(readersRes.value);
       }
 
-      if (assetsRes.status === 'fulfilled' && Array.isArray(assetsRes.value) && assetsRes.value.length > 0) {
+      if (assetsRes.status === 'fulfilled' && Array.isArray(assetsRes.value)) {
         setAssets(assetsRes.value);
-        localStorage.setItem('gao_db_assets', JSON.stringify(assetsRes.value));
+        safeStorage.setItem('gao_db_assets', JSON.stringify(assetsRes.value));
       }
 
-      if (vehiclesRes.status === 'fulfilled' && Array.isArray(vehiclesRes.value) && vehiclesRes.value.length > 0) {
+      if (vehiclesRes.status === 'fulfilled' && Array.isArray(vehiclesRes.value)) {
         setVehicles(vehiclesRes.value);
-        localStorage.setItem('gao_db_vehicles', JSON.stringify(vehiclesRes.value));
+        safeStorage.setItem('gao_db_vehicles', JSON.stringify(vehiclesRes.value));
       }
 
-      const rawPeople = (peopleRes.status === 'fulfilled' && Array.isArray(peopleRes.value) && peopleRes.value.length > 0)
+      if (camerasRes.status === 'fulfilled' && Array.isArray(camerasRes.value)) {
+        setCameras(camerasRes.value);
+        safeStorage.setItem('gao_db_cameras', JSON.stringify(camerasRes.value));
+      }
+
+      if (sensorsRes.status === 'fulfilled' && Array.isArray(sensorsRes.value)) {
+        setEnvSensors(sensorsRes.value);
+        safeStorage.setItem('gao_db_sensors', JSON.stringify(sensorsRes.value));
+      }
+
+      if (infraRes.status === 'fulfilled' && Array.isArray(infraRes.value)) {
+        setInfrastructure(infraRes.value);
+        safeStorage.setItem('gao_db_infrastructure', JSON.stringify(infraRes.value));
+      }
+
+      const rawPeople = (peopleRes.status === 'fulfilled' && Array.isArray(peopleRes.value))
         ? peopleRes.value
-        : DEFAULT_INITIAL_PEOPLE;
+        : [];
         
       const loadedPeople: Person[] = rawPeople.map((p: any, idx: number) => {
         const id = p.id || p.tagId || p.TagID || `P-${idx + 101}`;
@@ -632,7 +900,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       });
     } catch (err) {
       console.warn('[TrackingContext] Initial config load error:', err);
-      setPeople(DEFAULT_INITIAL_PEOPLE);
+      setPeople([]);
     } finally {
       setIsLoading(false);
     }
@@ -660,67 +928,9 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     }
   }, [activeProject]);
 
-  // Save zone definition to DB
-  const saveZone = useCallback(async (zoneData: Partial<MapZoneDefinition>) => {
-    try {
-      const zoneId = zoneData.zoneId || zoneData.id || `zone_${Date.now()}`;
-      const payload: MapZoneDefinition = {
-        id: zoneId,
-        zoneId,
-        name: zoneData.name || 'Unnamed Zone',
-        category: zoneData.category || 'GENERAL',
-        hazardLevel: zoneData.hazardLevel || 'normal',
-        capacity: zoneData.capacity || 10,
-        siteId: zoneData.siteId || activeProject,
-        x: zoneData.x ?? 50,
-        y: zoneData.y ?? 50,
-        width: zoneData.width ?? 20,
-        height: zoneData.height ?? 20,
-        polygonPoints: zoneData.polygonPoints,
-        proximityAlertEnabled: zoneData.proximityAlertEnabled,
-        aliasNames: zoneData.aliasNames || [zoneData.name || 'Unnamed Zone'],
-        readerIds: zoneData.readerIds || [],
-        antennaIds: zoneData.antennaIds || [1]
-      };
-
-      await fetch('/api/data/zones', {
-        method: 'POST',
-        headers: getAuthHeaders(),
-        body: JSON.stringify(payload)
-      });
-
-      setZones(prev => {
-        const idx = prev.findIndex(z => z.zoneId === zoneId || z.id === zoneId);
-        const next = idx >= 0 ? [...prev] : [...prev, payload];
-        if (idx >= 0) next[idx] = payload;
-        localStorage.setItem('gao_db_zones', JSON.stringify(next));
-        return next;
-      });
-      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-    } catch (err) {
-      console.error('[TrackingContext] Failed to save zone to DB:', err);
-      throw err;
-    }
-  }, [activeProject]);
-
-  // Delete zone definition from DB
-  const deleteZone = useCallback(async (zoneId: string) => {
-    try {
-      await fetch(`/api/data/zones/${zoneId}`, { method: 'DELETE', headers: getAuthHeaders() });
-      setZones(prev => {
-        const next = prev.filter(z => z.zoneId !== zoneId && z.id !== zoneId);
-        localStorage.setItem('gao_db_zones', JSON.stringify(next));
-        return next;
-      });
-      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-    } catch (err) {
-      console.error('[TrackingContext] Failed to delete zone from DB:', err);
-      throw err;
-    }
-  }, []);
-
   // Handler for normalized tag update
   const handleNormalizedTagUpdate = useCallback((tagUpdate: any) => {
+
     if (!tagUpdate) return;
     const tagId = String(tagUpdate.TagID || tagUpdate.tagId || tagUpdate.id || '').trim();
     if (!tagId) return;
@@ -921,12 +1131,12 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    // Real-time MongoDB Atlas Firestore listeners for site assets & infrastructure
+    // Real-time MongoDB Atlas listeners for site assets & infrastructure
     const unsubAssets = onSnapshot(collection(db, 'assets'), (snap) => {
       const items: any[] = snap.docs.map(docSnap => docSnap.data());
       if (items.length > 0) {
         setAssets(items);
-        localStorage.setItem('gao_db_assets', JSON.stringify(items));
+        safeStorage.setItem('gao_db_assets', JSON.stringify(items));
       }
     });
 
@@ -934,7 +1144,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       const items: any[] = snap.docs.map(docSnap => docSnap.data());
       if (items.length > 0) {
         setVehicles(items);
-        localStorage.setItem('gao_db_vehicles', JSON.stringify(items));
+        safeStorage.setItem('gao_db_vehicles', JSON.stringify(items));
       }
     });
 
@@ -971,130 +1181,31 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     return () => clearInterval(pollInterval);
   }, [refreshLiveState]);
 
-  // 10-second Single-Worker Rotating Movement Engine
-  // 1 worker moves for 10 seconds to a different zone point while all other workers rest (IDLE).
-  // Then the next worker takes their 10-second turn, and so on.
-  useEffect(() => {
-    let activeWorkerIndex = 0;
-    let ticksInCycle = 0;
-    const TICKS_PER_CYCLE = 100; // 100 ticks * 100ms = 10,000ms (10 seconds)
-    let isInitialized = false;
-
-    const moveInterval = setInterval(() => {
-      ticksInCycle += 1;
-      const isNewTurn = ticksInCycle >= TICKS_PER_CYCLE;
-
-      setPeople(prevPeople => {
-        if (!prevPeople || prevPeople.length === 0) return prevPeople;
-
-        if (isNewTurn || !isInitialized) {
-          if (isNewTurn) {
-            ticksInCycle = 0;
-            activeWorkerIndex = (activeWorkerIndex + 1) % prevPeople.length;
-          }
-          isInitialized = true;
-        }
-
-        const safeIndex = activeWorkerIndex % prevPeople.length;
-
-        return prevPeople.map((p, idx) => {
-          const isMover = idx === safeIndex;
-
-          if (!isMover) {
-            // Worker is resting in their current zone
-            return {
-              ...p,
-              presenceState: 'IDLE' as const,
-              speed: 0,
-              dwellTime: (p.dwellTime || 0) + 1,
-              lastSeen: new Date()
-            };
-          }
-
-          // Active Mover: At the start of their 10s turn, pick a new destination zone different from current
-          let startX = (p as any).startX;
-          let startY = (p as any).startY;
-          let targetX = (p as any).targetX;
-          let targetY = (p as any).targetY;
-          let targetZone = (p as any).targetZone;
-
-          if (ticksInCycle === 1 || startX === undefined || targetX === undefined || !targetZone) {
-            startX = typeof p.x === 'number' ? p.x : 50;
-            startY = typeof p.y === 'number' ? p.y : 50;
-
-            const currentZoneName = p.currentZone || '';
-            const eligibleZones = SITE_ZONE_WAYPOINTS.filter(
-              z => z.name.toLowerCase() !== currentZoneName.toLowerCase()
-            );
-            const chosenZone = eligibleZones.length > 0
-              ? eligibleZones[Math.floor(Math.random() * eligibleZones.length)]
-              : SITE_ZONE_WAYPOINTS[Math.floor(Math.random() * SITE_ZONE_WAYPOINTS.length)];
-
-            // Destination coordinate strictly clamped inside zone boundary box
-            targetZone = chosenZone.name;
-            targetX = Math.round((chosenZone.minX + Math.random() * (chosenZone.maxX - chosenZone.minX)) * 10) / 10;
-            targetY = Math.round((chosenZone.minY + Math.random() * (chosenZone.maxY - chosenZone.minY)) * 10) / 10;
-          }
-
-          // Interpolate progress across the 100 ticks (10.0 seconds)
-          const progress = Math.min(1.0, Math.max(0.0, ticksInCycle / TICKS_PER_CYCLE));
-          // Smooth easeInOut sine interpolation for organic human walking
-          const easeProgress = 0.5 - Math.cos(progress * Math.PI) / 2;
-
-          const currX = startX + (targetX - startX) * easeProgress;
-          const currY = startY + (targetY - startY) * easeProgress;
-
-          const dx = targetX - startX;
-          const dy = targetY - startY;
-          const heading = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360);
-          const isArrived = progress >= 0.99;
-
-          return {
-            ...p,
-            x: Math.round(currX * 100) / 100,
-            y: Math.round(currY * 100) / 100,
-            startX,
-            startY,
-            targetX,
-            targetY,
-            targetZone,
-            currentZone: progress >= 0.5 ? targetZone : p.currentZone,
-            heading,
-            speed: isArrived ? 0 : 1.4,
-            presenceState: isArrived ? ('IDLE' as const) : ('MOVING' as const),
-            dwellTime: isArrived ? (p.dwellTime || 0) + 1 : 0,
-            lastSeen: new Date()
-          };
-        });
-      });
-    }, 100);
-
-    return () => clearInterval(moveInterval);
-  }, []);
+  // No automatic movement simulation: positions & events are exclusively driven by real MongoDB records / real RFID & GPS hardware feeds.
 
   // Listen to cross-tab/cross-component map updates
   useEffect(() => {
     const handleStorageOrDataUpdate = () => {
       try {
-        const savedAssets = localStorage.getItem('gao_db_assets');
+        const savedAssets = safeStorage.getItem('gao_db_assets');
         if (savedAssets) setAssets(JSON.parse(savedAssets));
 
-        const savedVehicles = localStorage.getItem('gao_db_vehicles');
+        const savedVehicles = safeStorage.getItem('gao_db_vehicles');
         if (savedVehicles) setVehicles(JSON.parse(savedVehicles));
 
-        const savedCameras = localStorage.getItem('gao_db_cameras');
+        const savedCameras = safeStorage.getItem('gao_db_cameras');
         if (savedCameras) setCameras(JSON.parse(savedCameras));
 
-        const savedSensors = localStorage.getItem('gao_db_sensors');
+        const savedSensors = safeStorage.getItem('gao_db_sensors');
         if (savedSensors) setEnvSensors(JSON.parse(savedSensors));
 
-        const savedZones = localStorage.getItem('gao_db_zones');
+        const savedZones = safeStorage.getItem('gao_db_zones');
         if (savedZones) setZones(JSON.parse(savedZones));
 
-        const savedFloorplan = localStorage.getItem('gao_custom_floorplan');
+        const savedFloorplan = safeStorage.getItem('gao_custom_floorplan');
         if (savedFloorplan !== null) setCustomFloorplanState(savedFloorplan);
 
-        const savedSvg = localStorage.getItem('gao_custom_svg_source');
+        const savedSvg = safeStorage.getItem('gao_custom_svg_source');
         if (savedSvg !== null) setCustomSvgSourceState(savedSvg);
       } catch {}
     };
@@ -1131,6 +1242,15 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         customSvgSource,
         isLoading,
         lastUpdateTimestamp,
+        industryConfig,
+        setIndustryConfig,
+        updateIndustryConfig,
+        applyIndustryPreset,
+        t,
+        customRoles,
+        saveRoles,
+        customSubcontractors,
+        saveSubcontractors,
         saveMapConfig,
         saveZone,
         deleteZone,
@@ -1164,4 +1284,20 @@ export function useTracking() {
   }
   return context;
 }
+
+export function useTerminology() {
+  const { industryConfig, t, updateIndustryConfig, applyIndustryPreset, customRoles, saveRoles, customSubcontractors, saveSubcontractors } = useTracking();
+  return {
+    ...industryConfig.terminology,
+    t,
+    config: industryConfig,
+    roles: customRoles,
+    saveRoles,
+    subcontractors: customSubcontractors,
+    saveSubcontractors,
+    updateConfig: updateIndustryConfig,
+    applyPreset: applyIndustryPreset
+  };
+}
+
 

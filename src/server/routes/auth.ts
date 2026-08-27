@@ -2,15 +2,16 @@ import { Router, Request, Response } from 'express';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import rateLimit from 'express-rate-limit';
-import { getCollectionDocs, upsertDoc, logAuditEvent } from '../services/db.js';
+import { getCollectionDocs, getDocById, upsertDoc, logAuditEvent } from '../services/db.js';
 import { generateToken, requireAuth, AuthRequest, verifyFirebaseTokenRS256 } from '../middleware/auth.js';
 
 export const authRouter = Router();
 
-// Rate limiter for auth endpoints: 15 requests per 15 minutes
+// Rate limiter for auth endpoints: 15 requests per 15 minutes (skipped in tests)
 export const authRateLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 15,
+  skip: () => process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST),
   message: { error: 'Too many login or registration attempts. Please try again after 15 minutes.' },
   standardHeaders: true,
   legacyHeaders: false
@@ -25,7 +26,9 @@ const registerSchema = z.object({
   email: z.string().email(),
   password: z.string().min(6, 'Password must be at least 6 characters'),
   name: z.string().optional(),
-  role: z.string().optional().default('viewer')
+  role: z.string().optional().default('viewer'),
+  organizationName: z.string().optional(),
+  organizationId: z.string().optional()
 });
 
 // Helper function to sanitize user object (strip passwords)
@@ -37,24 +40,48 @@ export function sanitizeUser(user: any) {
 
 // Admin bootstrap helper
 export async function bootstrapAdminUser() {
-  const adminEmail = (process.env.ADMIN_INITIAL_EMAIL || 'sigmund.t.d@gaostaff.com').toLowerCase();
-  const adminPassword = process.env.ADMIN_INITIAL_PASSWORD || 'password123';
+  // Ensure default demo organization exists
+  const demoOrg = await getDocById('organizations', 'demo');
+  if (!demoOrg) {
+    await upsertDoc('organizations', {
+      id: 'demo',
+      name: 'Metro Commercial Tower (Demo)',
+      slug: 'demo',
+      status: 'active',
+      plan: 'enterprise',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    }, 'demo');
+    console.log('[Auth Bootstrap] Default demo organization initialized.');
+  }
 
   const users = await getCollectionDocs('users');
-  const existing = users.find((u: any) => u.email?.toLowerCase() === adminEmail);
 
-  if (!existing) {
-    const hashedPassword = await bcrypt.hash(adminPassword, 10);
-    const adminUser = {
-      id: `usr_admin_${Date.now()}`,
-      email: adminEmail,
-      name: 'Primary Admin',
-      role: 'admin',
-      passwordHash: hashedPassword,
-      createdAt: new Date().toISOString()
-    };
-    await upsertDoc('users', adminUser);
-    console.log(`[Auth Bootstrap] Initial admin user '${adminEmail}' created.`);
+  const defaultAdmins = [
+    { email: (process.env.ADMIN_INITIAL_EMAIL || 'sigmund.t.d@gaostaff.com').toLowerCase(), password: process.env.ADMIN_INITIAL_PASSWORD || 'password123', name: 'GAO Systems Admin' },
+    { email: 'admin@aperture.com', password: 'AdminPassword123!', name: 'Aperture Site Admin' }
+  ];
+
+  for (const adm of defaultAdmins) {
+    const existing = users.find((u: any) => u.email?.toLowerCase() === adm.email);
+    if (!existing) {
+      const hashedPassword = await bcrypt.hash(adm.password, 10);
+      const adminUser = {
+        id: `usr_admin_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        email: adm.email,
+        name: adm.name,
+        role: 'admin',
+        organizationId: 'demo',
+        isPlatformAdmin: true,
+        passwordHash: hashedPassword,
+        createdAt: new Date().toISOString()
+      };
+      await upsertDoc('users', adminUser, 'demo');
+      console.log(`[Auth Bootstrap] Initial admin user '${adm.email}' verified/created under demo org.`);
+    } else if (!existing.organizationId) {
+      existing.organizationId = 'demo';
+      await upsertDoc('users', existing, 'demo');
+    }
   }
 }
 
@@ -68,7 +95,7 @@ authRouter.post('/register', authRateLimiter, async (req: Request, res: Response
     });
   }
 
-  const { email, password, name, role } = parseResult.data;
+  const { email, password, name, role, organizationName, organizationId } = parseResult.data;
   const lowerEmail = email.toLowerCase();
 
   try {
@@ -79,39 +106,70 @@ authRouter.post('/register', authRateLimiter, async (req: Request, res: Response
       return res.status(400).json({ error: 'User with this email already exists' });
     }
 
+    let resolvedOrgId = organizationId || 'demo';
+    let resolvedOrgName = 'Demo Organization';
+
+    // If new B2B customer provides company/organization name, create dedicated organization
+    if (organizationName && organizationName.trim()) {
+      resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      resolvedOrgName = organizationName.trim();
+      const newOrg = {
+        id: resolvedOrgId,
+        name: resolvedOrgName,
+        slug: resolvedOrgName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        status: 'active',
+        plan: 'standard',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      await upsertDoc('organizations', newOrg, resolvedOrgId);
+    } else if (organizationId) {
+      const existingOrg = await getDocById('organizations', organizationId);
+      if (existingOrg) {
+        resolvedOrgName = existingOrg.name;
+      }
+    }
+
     const passwordHash = await bcrypt.hash(password, 10);
-    const assignedRole = lowerEmail.endsWith('@gaostaff.com') ? 'admin' : role;
+    const assignedRole = organizationName ? 'admin' : (lowerEmail.endsWith('@gaostaff.com') ? 'admin' : role);
 
     const newUser = {
       id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       email: lowerEmail,
       name: name || lowerEmail.split('@')[0],
       role: assignedRole,
+      organizationId: resolvedOrgId,
       passwordHash,
       tokenVersion: 1,
       createdAt: new Date().toISOString()
     };
 
-    await upsertDoc('users', newUser);
+    await upsertDoc('users', newUser, resolvedOrgId);
     const token = generateToken({
       id: newUser.id,
       email: newUser.email,
       name: newUser.name,
       role: newUser.role,
+      organizationId: newUser.organizationId,
       tokenVersion: newUser.tokenVersion
     });
 
     await logAuditEvent({
       userId: newUser.id,
       userEmail: newUser.email,
+      organizationId: resolvedOrgId,
       action: 'USER_REGISTER',
       resource: 'users',
+      details: { organizationId: resolvedOrgId, organizationName: resolvedOrgName },
       ip: req.ip
     });
+
+    const orgDoc = await getDocById('organizations', resolvedOrgId);
 
     return res.json({
       message: 'User registered successfully',
       user: sanitizeUser(newUser),
+      organization: orgDoc || { id: resolvedOrgId, name: resolvedOrgName },
       token
     });
   } catch (err: any) {
@@ -158,7 +216,7 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) =
         // Upgrade to hashed password immediately
         user.passwordHash = await bcrypt.hash(password, 10);
         delete user.password;
-        await upsertDoc('users', user);
+        await upsertDoc('users', user, user.organizationId || 'demo');
       }
     }
 
@@ -166,6 +224,7 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) =
       await logAuditEvent({
         userId: user.id,
         userEmail: lowerEmail,
+        organizationId: user.organizationId || 'demo',
         action: 'USER_LOGIN_FAILED',
         resource: 'auth',
         details: { reason: 'Invalid password' },
@@ -175,31 +234,39 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) =
     }
 
     const tokenVersion = user.tokenVersion || 1;
+    const organizationId = user.organizationId || 'demo';
+    user.organizationId = organizationId;
     
     // Update login audit/session metadata
     user.hasLoggedIn = true;
     user.lastLogin = new Date().toISOString();
-    await upsertDoc('users', user);
+    await upsertDoc('users', user, organizationId);
 
     const token = generateToken({
       id: user.id,
       email: user.email,
       name: user.name,
       role: user.role,
+      organizationId,
+      isPlatformAdmin: Boolean(user.isPlatformAdmin),
       tokenVersion
     });
 
     await logAuditEvent({
       userId: user.id,
       userEmail: user.email,
+      organizationId,
       action: 'USER_LOGIN_SUCCESS',
       resource: 'auth',
       ip: req.ip
     });
 
+    const orgDoc = await getDocById('organizations', organizationId);
+
     return res.json({
       message: 'Login successful',
       user: sanitizeUser(user),
+      organization: orgDoc || { id: organizationId, name: 'Metro Commercial Tower (Demo)' },
       token
     });
   } catch (err: any) {
@@ -210,7 +277,7 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) =
 
 // POST /api/auth/firebase-login
 authRouter.post('/firebase-login', authRateLimiter, async (req: Request, res: Response) => {
-  const { idToken, role } = req.body || {};
+  const { idToken, role, organizationId } = req.body || {};
   if (!idToken || typeof idToken !== 'string') {
     return res.status(400).json({ error: 'ID token is required' });
   }
@@ -226,6 +293,7 @@ authRouter.post('/firebase-login', authRateLimiter, async (req: Request, res: Re
     let user = users.find((u: any) => u.id === firebaseUser.id || (u.email && u.email.toLowerCase() === lowerEmail));
 
     const assignedRole = role || (lowerEmail.endsWith('@gaostaff.com') ? 'admin' : (user?.role || 'operator'));
+    const resolvedOrgId = organizationId || user?.organizationId || 'demo';
 
     if (!user) {
       user = {
@@ -234,17 +302,19 @@ authRouter.post('/firebase-login', authRateLimiter, async (req: Request, res: Re
         name: firebaseUser.name || lowerEmail.split('@')[0] || 'Google User',
         displayName: firebaseUser.name || lowerEmail.split('@')[0] || 'Google User',
         role: assignedRole,
+        organizationId: resolvedOrgId,
         tokenVersion: 1,
         createdAt: new Date().toISOString()
       };
     } else {
       user.role = role || user.role || assignedRole;
+      user.organizationId = user.organizationId || resolvedOrgId;
       if (firebaseUser.name && !user.name) user.name = firebaseUser.name;
     }
 
     user.hasLoggedIn = true;
     user.lastLogin = new Date().toISOString();
-    await upsertDoc('users', user);
+    await upsertDoc('users', user, user.organizationId);
 
     try {
       await upsertDoc('settings', {
@@ -253,8 +323,9 @@ authRouter.post('/firebase-login', authRateLimiter, async (req: Request, res: Re
         email: user.email,
         displayName: user.name || user.email?.split('@')[0],
         role: user.role,
+        organizationId: user.organizationId,
         updatedAt: new Date().toISOString()
-      });
+      }, user.organizationId);
     } catch (settingErr) {
       console.warn('[Auth Route] Failed to sync user_role setting:', settingErr);
     }
@@ -264,20 +335,25 @@ authRouter.post('/firebase-login', authRateLimiter, async (req: Request, res: Re
       email: user.email,
       name: user.name,
       role: user.role,
+      organizationId: user.organizationId,
       tokenVersion: user.tokenVersion || 1
     });
 
     await logAuditEvent({
       userId: user.id,
       userEmail: user.email,
+      organizationId: user.organizationId,
       action: 'FIREBASE_GOOGLE_LOGIN_SUCCESS',
       resource: 'auth',
       ip: req.ip
     });
 
+    const orgDoc = await getDocById('organizations', user.organizationId);
+
     return res.json({
       message: 'Firebase authentication successful',
       user: sanitizeUser(user),
+      organization: orgDoc || { id: user.organizationId, name: 'Metro Commercial Tower (Demo)' },
       token
     });
   } catch (err: any) {
@@ -287,8 +363,21 @@ authRouter.post('/firebase-login', authRateLimiter, async (req: Request, res: Re
 });
 
 // GET /api/auth/me
-authRouter.get('/me', requireAuth, (req: AuthRequest, res: Response) => {
-  return res.json({ user: req.user });
+authRouter.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'demo';
+  const orgDoc = await getDocById('organizations', orgId);
+  return res.json({
+    user: req.user,
+    organization: orgDoc || { id: orgId, name: 'Metro Commercial Tower (Demo)' }
+  });
+});
+
+// GET /api/auth/organization
+authRouter.get('/organization', requireAuth, async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'demo';
+  const orgDoc = await getDocById('organizations', orgId, 'ALL');
+  const org = orgDoc || { id: orgId, name: orgId === 'demo' ? 'Metro Commercial Tower (Demo)' : orgId, status: 'active', plan: 'standard' };
+  return res.json({ success: true, organization: org, ...org });
 });
 
 // POST /api/auth/logout
@@ -303,17 +392,18 @@ authRouter.post('/logout-everywhere', requireAuth, async (req: AuthRequest, res:
   }
 
   try {
-    const users = await getCollectionDocs('users');
+    const users = await getCollectionDocs('users', undefined, req.user.organizationId);
     const userDoc = users.find((u: any) => u.id === req.user?.id);
 
     if (userDoc) {
       const nextVersion = (userDoc.tokenVersion || 1) + 1;
       userDoc.tokenVersion = nextVersion;
-      await upsertDoc('users', userDoc);
+      await upsertDoc('users', userDoc, req.user.organizationId);
 
       await logAuditEvent({
         userId: req.user.id,
         userEmail: req.user.email,
+        organizationId: req.user.organizationId,
         action: 'LOGOUT_EVERYWHERE_REVOKED_SESSIONS',
         resource: 'auth',
         details: { newVersion: nextVersion },

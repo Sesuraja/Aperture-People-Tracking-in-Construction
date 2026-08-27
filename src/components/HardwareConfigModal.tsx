@@ -320,29 +320,64 @@ export default function HardwareConfigModal({
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4 pt-2">
-                <div>
-                  <label className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">Map Position X (% coordinate)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="99"
-                    value={formData.x}
-                    onChange={e => handleChange('x', Number(e.target.value))}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono text-slate-900"
-                  />
+              <div className="space-y-3 pt-2 bg-slate-50 p-3.5 rounded-xl border border-slate-200">
+                <div className="flex justify-between items-center">
+                  <label className="text-xs font-extrabold text-slate-700 uppercase tracking-wider">Map Coordinates (X & Y %)</label>
+                  <span className="text-xs font-mono font-black text-[#007BC4] bg-[#007BC4]/10 px-2 py-0.5 rounded-lg">
+                    X: {formData.x}% • Y: {formData.y}%
+                  </span>
                 </div>
-                <div>
-                  <label className="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">Map Position Y (% coordinate)</label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="99"
-                    value={formData.y}
-                    onChange={e => handleChange('y', Number(e.target.value))}
-                    className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono text-slate-900"
-                  />
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-[11px] font-bold text-slate-600">
+                      <span>Horizontal X</span>
+                      <span className="font-mono text-[#007BC4]">{formData.x}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={formData.x}
+                      onChange={e => handleChange('x', Number(e.target.value))}
+                      className="w-full accent-[#007BC4] cursor-pointer"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={formData.x}
+                      onChange={e => handleChange('x', Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-900"
+                    />
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between text-[11px] font-bold text-slate-600">
+                      <span>Vertical Y</span>
+                      <span className="font-mono text-[#007BC4]">{formData.y}%</span>
+                    </div>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      step="1"
+                      value={formData.y}
+                      onChange={e => handleChange('y', Number(e.target.value))}
+                      className="w-full accent-[#007BC4] cursor-pointer"
+                    />
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={formData.y}
+                      onChange={e => handleChange('y', Number(e.target.value))}
+                      className="w-full px-2.5 py-1.5 bg-white border border-slate-200 rounded-lg text-xs font-mono font-bold text-slate-900"
+                    />
+                  </div>
                 </div>
+                <p className="text-[10px] text-slate-400">You can also drag this reader directly on the map canvas to reposition it.</p>
               </div>
             </div>
           )}

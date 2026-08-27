@@ -63,9 +63,14 @@ export interface TagEntityMapping {
   lastSeenZone?: string;
 }
 
+import { useTerminology } from "../context/TrackingContext";
+
+
 export default function DirectHardwareIntegrationSection() {
+  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, zoneLabel } = useTerminology();
   const [activeTab, setActiveTab] = useState<'readers' | 'tags' | 'simulator' | 'api_docs'>('readers');
   const [readers, setReaders] = useState<HardwareReader[]>([]);
+
   const [mappings, setMappings] = useState<TagEntityMapping[]>([]);
   const [loading, setLoading] = useState(true);
 

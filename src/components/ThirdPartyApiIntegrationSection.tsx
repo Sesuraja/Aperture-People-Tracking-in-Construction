@@ -65,9 +65,9 @@ export default function ThirdPartyApiIntegrationSection() {
     id: "",
     name: "New Third-Party API",
     description: "Custom telemetry or RFID endpoint",
-    endpointUrl: "https://www.i360services.com/peopletrackinguhf/api/GetTagsInRealtime",
+    endpointUrl: "https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io/api/GetTagsInRealtime",
     method: "GET",
-    authType: "apiKey",
+    authType: "none",
     apiKey: "aperture_live_key_gao991283x",
     apiKeyHeader: "X-API-Key",
     apiKeyLocation: "header",
@@ -493,7 +493,7 @@ export default function ThirdPartyApiIntegrationSection() {
                 type="text"
                 value={formData.endpointUrl}
                 onChange={(e) => setFormData({ ...formData, endpointUrl: e.target.value })}
-                placeholder="https://www.i360services.com/peopletrackinguhf/api/GetTagsInRealtime"
+                placeholder="https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io/api/GetTagsInRealtime"
                 className="w-full px-3 py-2 text-xs font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
               />
             </div>

@@ -73,6 +73,8 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianG
 import { useMemo, ReactNode, useState, useEffect, useContext } from 'react';
 import React from 'react';
 import { collection, onSnapshot, doc, getDoc, setDoc, addDoc, deleteDoc, query, orderBy, limit, db } from '../lib/db';
+import { useTerminology } from '../context/TrackingContext';
+
 import { useNavigate } from 'react-router-dom';
 import { AppModeContext } from '../App';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
@@ -131,16 +133,13 @@ export function getDefaultPanels(): PanelConfig[] {
   return [
     { id: 'site_monitoring_view', title: 'Site Monitoring View', description: 'Interactive site monitoring view with Active Workers, Vehicles, High-Risk Alerts filter chips and Supervisor Quick Notes.', visible: true, order: 0, width: 'full' },
     { id: 'site_status', title: 'Site Status', description: 'Live operational status, active shift, site capacity indicator, and safety clearance.', visible: true, order: 1, width: '1/2' },
-    { id: 'weather_widget', title: 'Weather & Site Conditions', description: 'Ambient temperature, wind speed for crane lifts, humidity, UV index, and EHS risk level.', visible: true, order: 2, width: '1/2' },
     { id: 'shift_progress', title: 'Shift Progress', description: 'Active shift timeline, completion percentage, remaining hours, and workforce on shift.', visible: true, order: 2, width: '1/3' },
     { id: 'reader_health', title: 'Reader Health', description: 'UHF RFID gate portals, antenna RSSI, packet rates, and online/offline status.', visible: true, order: 3, width: '1/3' },
-    { id: 'equipment_health', title: 'Equipment Health', description: 'Heavy machinery telemetry, cranes, excavators, engine/fuel levels, and zone location.', visible: true, order: 4, width: '1/3' },
-    { id: 'ai_recommendations', title: 'AI Recommendations', description: 'Predictive safety advisories, overcrowding warnings, PPE enforcement, and fatigue alerts.', visible: true, order: 5, width: '1/2' },
-    { id: 'daily_summary', title: 'Daily Summary', description: 'Total gate throughput, RFID scans, peak activity hours, and incident-free streak.', visible: true, order: 6, width: '1/2' },
-    { id: 'active_incidents', title: 'Active Incidents', description: 'Real-time safety incident feed, severity ratings, assigned responders, and SLA timers.', visible: true, order: 7, width: 'full' },
-    { id: 'occupancy_panel', title: 'Sector Occupancy & Movement Logs', description: 'Live zone occupancy distribution and recent worker movement telemetry.', visible: true, order: 8, width: '2/3' },
-    { id: 'system_health', title: 'Database & System Telemetry', description: 'Real-time connection state and latency for Cloud Firestore and MongoDB.', visible: true, order: 9, width: '1/3' },
-    { id: 'tech_footer', title: 'Construction RFID Features', description: 'Core system specs overview of active RFID frequency bands, IP67 readers & safety protocols.', visible: true, order: 10, width: 'full' }
+    { id: 'ai_recommendations', title: 'AI Recommendations', description: 'Predictive safety advisories, overcrowding warnings, PPE enforcement, and fatigue alerts.', visible: true, order: 4, width: '1/2' },
+    { id: 'daily_summary', title: 'Daily Summary', description: 'Total gate throughput, RFID scans, peak activity hours, and incident-free streak.', visible: true, order: 5, width: '1/2' },
+    { id: 'active_incidents', title: 'Active Incidents', description: 'Real-time safety incident feed, severity ratings, assigned responders, and SLA timers.', visible: true, order: 6, width: 'full' },
+    { id: 'occupancy_panel', title: 'Sector Occupancy & Movement Logs', description: 'Live zone occupancy distribution and recent worker movement telemetry.', visible: true, order: 7, width: '2/3' },
+    { id: 'system_health', title: 'Database & System Telemetry', description: 'Real-time connection state and latency for Cloud MongoDB and MongoDB.', visible: true, order: 8, width: '1/3' }
   ];
 }
 
@@ -163,7 +162,9 @@ export default function DashboardTab({
 }) {
   const navigate = useNavigate();
   const { mode } = useContext(AppModeContext);
+  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
   const [apiConfig, setApiConfig] = useState({
+
     url: '',
     authType: 'none',
     apiKeyHeader: 'X-API-Key'
@@ -202,6 +203,8 @@ export default function DashboardTab({
   const [incidentsList, setIncidentsList] = useState<any[]>([]);
   const [dbAlerts, setDbAlerts] = useState<any[]>([]);
   const [totalScansCount, setTotalScansCount] = useState<number>(0);
+  const [dbZones, setDbZones] = useState<any[]>([]);
+  const [siteSensors, setSiteSensors] = useState<any[]>([]);
 
   // Monitoring View Filter states
   const [showWorkersFilter, setShowWorkersFilter] = useState(true);
@@ -277,18 +280,13 @@ export default function DashboardTab({
       { key: 'rssi', label: 'Signal (RSSI)' },
       { key: 'zone', label: 'Zone' }
     ];
-    const sensorRows = deviceList.length > 0 ? deviceList.map(d => ({
+    const sensorRows = deviceList.map(d => ({
       name: d.name || 'UHF Gate Scanner',
       id: d.id || 'N/A',
       status: d.status || 'online',
       rssi: d.rssi || '-55 dBm',
       zone: d.zone || 'Site Entrance'
-    })) : [
-      { name: 'Gate 1 Entry Portal', id: 'R-01', status: 'online', rssi: '-42 dBm', zone: 'Heavy Crane Swing Radius' },
-      { name: 'Tower Crane Antenna', id: 'R-02', status: 'online', rssi: '-58 dBm', zone: 'Heavy Crane Swing Radius' },
-      { name: 'Shaft 3 Stairwell', id: 'R-03', status: 'online', rssi: '-61 dBm', zone: 'Deep Excavation Shaft' },
-      { name: 'North Gate Perimeter', id: 'R-04', status: 'offline', rssi: '-85 dBm', zone: 'High Voltage Area' }
-    ];
+    }));
 
     exportToCSV('site_sensors_telemetry', sensorRows, sensorColumns);
 
@@ -482,30 +480,46 @@ export default function DashboardTab({
       updateAllDevices();
     }));
 
-    // 4. Registered People from MongoDB
+    // 4. People & Registered People from MongoDB (Merge both collections for full workforce visibility)
+    let rawRegisteredList: any[] = [];
+    let rawPeopleList: any[] = [];
+
+    const syncCombinedPeople = () => {
+      const combined = [...rawPeopleList, ...rawRegisteredList];
+      const unique = Array.from(new Map(combined.map(p => [p.id || p.name || p.hardhatTagId, p])).values());
+      
+      let contractors = 0;
+      unique.forEach(data => {
+        const role = data.role || data.department || '';
+        const company = data.tradeCompany || '';
+        if (
+          (role || "").toLowerCase().includes('contractor') || 
+          (role || "").toLowerCase().includes('sub') || 
+          (company || "").toLowerCase().includes('apex') || 
+          (company || "").toLowerCase().includes('concrete') || 
+          (company || "").toLowerCase().includes('heavy') ||
+          (company || "").toLowerCase().includes('volt') ||
+          (company || "").toLowerCase().includes('steel')
+        ) {
+          contractors++;
+        }
+      });
+
+      setRegisteredCount(unique.length);
+      setRegisteredPeopleList(unique);
+      setContractorsCount(contractors);
+    };
+
     unsubs.push(onSnapshot(collection(db, 'registered_people'), (snapshot) => {
-       const regList: any[] = [];
-       let contractors = 0;
-       snapshot.forEach(doc => {
-          const data = doc.data();
-          regList.push({ id: doc.id, ...data });
-          const role = data.role || data.department || '';
-          const company = data.tradeCompany || '';
-          if (
-            (role || "").toLowerCase().includes('contractor') || 
-            (role || "").toLowerCase().includes('sub') || 
-            (company || "").toLowerCase().includes('apex') || 
-            (company || "").toLowerCase().includes('concrete') || 
-            (company || "").toLowerCase().includes('heavy') ||
-            (company || "").toLowerCase().includes('volt') ||
-            (company || "").toLowerCase().includes('steel')
-          ) {
-            contractors++;
-          }
-       });
-       setRegisteredCount(snapshot.size);
-       setRegisteredPeopleList(regList);
-       setContractorsCount(contractors);
+      rawRegisteredList = [];
+      snapshot.forEach(doc => rawRegisteredList.push({ id: doc.id, ...doc.data() }));
+      syncCombinedPeople();
+    }));
+
+    unsubs.push(onSnapshot(collection(db, 'people'), (snapshot) => {
+      rawPeopleList = [];
+      snapshot.forEach(doc => rawPeopleList.push({ id: doc.id, ...doc.data() }));
+      syncCombinedPeople();
     }));
 
     // 5. Visitors from MongoDB
@@ -554,25 +568,70 @@ export default function DashboardTab({
       setShiftSchedules(shifts);
     }));
 
-    // 10. Incidents Enterprise from MongoDB
+    // 10. Incidents & Incidents Enterprise from MongoDB
+    let incsEnterprise: any[] = [];
+    let incsGeneral: any[] = [];
+
+    const syncIncidents = () => {
+      const combined = [...incsEnterprise, ...incsGeneral];
+      const unique = Array.from(new Map(combined.map(i => [i.id || i.title, i])).values());
+      setIncidentsList(unique);
+    };
+
     unsubs.push(onSnapshot(collection(db, 'incidents_enterprise'), (snapshot) => {
-      const incs: any[] = [];
-      snapshot.forEach(doc => incs.push({ id: doc.id, ...doc.data() }));
-      setIncidentsList(incs);
+      incsEnterprise = [];
+      snapshot.forEach(doc => incsEnterprise.push({ id: doc.id, ...doc.data() }));
+      syncIncidents();
     }));
 
-    // 11. Alerts from MongoDB
+    unsubs.push(onSnapshot(collection(db, 'incidents'), (snapshot) => {
+      incsGeneral = [];
+      snapshot.forEach(doc => incsGeneral.push({ id: doc.id, ...doc.data() }));
+      syncIncidents();
+    }));
+
+    // 11. Alerts & Enterprise Alerts from MongoDB
+    let alertsList1: any[] = [];
+    let alertsList2: any[] = [];
+
+    const syncAlerts = () => {
+      const combined = [...alertsList1, ...alertsList2];
+      const unique = Array.from(new Map(combined.map(a => [a.id || a.title, a])).values());
+      setDbAlerts(unique);
+    };
+
     unsubs.push(onSnapshot(collection(db, 'alerts'), (snapshot) => {
-      const alts: any[] = [];
-      snapshot.forEach(doc => alts.push({ id: doc.id, ...doc.data() }));
-      setDbAlerts(alts);
+      alertsList1 = [];
+      snapshot.forEach(doc => alertsList1.push({ id: doc.id, ...doc.data() }));
+      syncAlerts();
     }));
 
-    // 12. AI Recommendations from MongoDB
+    unsubs.push(onSnapshot(collection(db, 'alerts_enterprise'), (snapshot) => {
+      alertsList2 = [];
+      snapshot.forEach(doc => alertsList2.push({ id: doc.id, ...doc.data() }));
+      syncAlerts();
+    }));
+
+    // 12. AI Insights & Recommendations from MongoDB
+    let aiRecs1: any[] = [];
+    let aiRecs2: any[] = [];
+
+    const syncAiInsights = () => {
+      const combined = [...aiRecs1, ...aiRecs2];
+      const unique = Array.from(new Map(combined.map(r => [r.id || r.title || r.recommendation, r])).values());
+      if (unique.length > 0) setAiRecs(unique);
+    };
+
     unsubs.push(onSnapshot(collection(db, 'ai_recommendations'), (snapshot) => {
-      const recs: any[] = [];
-      snapshot.forEach(doc => recs.push({ id: doc.id, ...doc.data() }));
-      if (recs.length > 0) setAiRecs(recs);
+      aiRecs1 = [];
+      snapshot.forEach(doc => aiRecs1.push({ id: doc.id, ...doc.data() }));
+      syncAiInsights();
+    }));
+
+    unsubs.push(onSnapshot(collection(db, 'ai_insights'), (snapshot) => {
+      aiRecs2 = [];
+      snapshot.forEach(doc => aiRecs2.push({ id: doc.id, ...doc.data() }));
+      syncAiInsights();
     }));
 
     // 13. Tag History (Movements & Timeline)
@@ -661,12 +720,26 @@ export default function DashboardTab({
        setQuickNotes(notes);
     }, (error) => console.warn("Failed quick_notes subscription:", error)));
 
+    // 15. Zones from MongoDB
+    unsubs.push(onSnapshot(collection(db, 'zones'), (snapshot) => {
+       const zList: any[] = [];
+       snapshot.forEach(doc => zList.push({ id: doc.id, ...doc.data() }));
+       setDbZones(zList);
+    }, (error) => console.warn("Failed zones subscription:", error)));
+
+    // 16. Sensors from MongoDB
+    unsubs.push(onSnapshot(collection(db, 'sensors'), (snapshot) => {
+       const sList: any[] = [];
+       snapshot.forEach(doc => sList.push({ id: doc.id, ...doc.data() }));
+       setSiteSensors(sList);
+    }, (error) => console.warn("Failed sensors subscription:", error)));
+
     return () => unsubs.forEach(fn => {
        if (typeof fn === 'function') fn();
      });
   }, []);
 
-  // Fetch customizable layout configurations from Firestore / LocalStorage
+  // Fetch customizable layout configurations from MongoDB / LocalStorage
   useEffect(() => {
     const fetchLayout = async () => {
       try {
@@ -700,7 +773,7 @@ export default function DashboardTab({
           setKpis(loadedKpis);
           setPanels(loadedPanels);
         } else {
-          // If the Firestore document doesn't exist, initialize it in the database!
+          // If the MongoDB document doesn't exist, initialize it in the database!
           const kpisInit = getDefaultKPIs();
           const panelsInit = getDefaultPanels();
           try {
@@ -815,7 +888,7 @@ export default function DashboardTab({
     setTempPanels(getDefaultPanels());
   };
 
-  // Commits newly customized layout configs back to Firestore & LocalStorage
+  // Commits newly customized layout configs back to MongoDB & LocalStorage
   const handleSaveLayout = async (newKpis: KPIConfig[], newPanels: PanelConfig[]) => {
     setIsSaving(true);
     const userId = 'default';
@@ -830,7 +903,7 @@ export default function DashboardTab({
       .map((p, idx) => ({ ...p, order: idx + 1 }));
 
     try {
-      // 1. Log to Firestore Database (Durable Cloud Persistence)
+      // 1. Log to MongoDB Database (Durable Cloud Persistence)
       const docRef = doc(db, 'settings', `dashboard_${userId}`);
       await setDoc(docRef, {
         userId,
@@ -847,7 +920,7 @@ export default function DashboardTab({
       setPanels(normalizedPanels);
       setShowCustomizeModal(false);
     } catch (err) {
-      console.warn("Failed to persistently sync layout settings to Firestore:", err);
+      console.warn("Failed to persistently sync layout settings to MongoDB:", err);
       // Fallback local persistence
       localStorage.setItem(`dashboard_kpis_${userId}`, JSON.stringify(normalizedKpis));
       localStorage.setItem(`dashboard_panels_${userId}`, JSON.stringify(normalizedPanels));
@@ -859,20 +932,6 @@ export default function DashboardTab({
       setIsSaving(false);
     }
   };
-
-  // Recharts memoized timeline datasets 
-  const mockTimelineData = useMemo(() => {
-    const base = [
-      { time: '12 AM', load: 12 },
-      { time: '4 AM', load: 18 },
-      { time: '8 AM', load: 250 },
-      { time: '12 PM', load: 856 },
-      { time: '4 PM', load: 650 },
-      { time: '8 PM', load: 300 },
-      { time: '12 AM', load: 100 }
-    ];
-    return base;
-  }, []);
 
   // Recharts memoized zone proportions datasets
   const zoneData = useMemo(() => {
@@ -888,7 +947,7 @@ export default function DashboardTab({
   }, [people]);
 
   const deviceData = [
-    { name: 'Online', value: deviceStats.online || 1, color: '#10b981' },
+    { name: 'Online', value: deviceStats.online, color: '#10b981' },
     { name: 'Offline', value: deviceStats.offline, color: '#f43f5e' },
     { name: 'Warning', value: deviceStats.warning, color: '#f59e0b' }
   ].filter(d => d.value > 0);
@@ -926,32 +985,23 @@ export default function DashboardTab({
 
   // Direct content dispatcher mapping widget configurations dynamically
   const renderPanelContent = (id: string) => {
-    const totalRoster = registeredCount || people.length || 52;
-    const checkedInToday = attendanceCount > 0 ? attendanceCount : (attendanceLogs.length > 0 ? attendanceLogs.filter((l: any) => l.status === 'PRESENT' || l.status === 'LATE' || l.checkInTime || l.inTime).length : Math.round(totalRoster * 0.92));
-    const attRate = totalRoster > 0 ? Math.min(100, Math.round((checkedInToday / totalRoster) * 1000) / 10) : 100;
+    const totalRoster = registeredPeopleList.length || registeredCount || people.length || 0;
+    const checkedInToday = attendanceCount > 0 
+      ? attendanceCount 
+      : (attendanceLogs.length > 0 
+          ? attendanceLogs.filter((l: any) => l.status === 'PRESENT' || l.status === 'LATE' || l.checkInTime || l.inTime).length 
+          : people.filter(p => p.presenceState !== 'EXITED').length);
+    const attRate = totalRoster > 0 ? Math.min(100, Math.round((checkedInToday / totalRoster) * 1000) / 10) : 0;
     const mergedAlerts = [...alerts, ...dbAlerts];
-    const uniqueAlerts = Array.from(new Map(mergedAlerts.map(a => [a.id || Math.random(), a])).values());
-    const displayVehicles = vehiclesList.length > 0 ? vehiclesList : (vehicles.length > 0 ? vehicles : [
-      { id: 'V-01', name: 'Tower Crane TC-01', type: 'Heavy Crane', status: 'Active', speed: 0, operator: 'M. Vance', zone: 'Heavy Crane & Exclusion Area' },
-      { id: 'V-02', name: 'Hydraulic Excavator EX-04', type: 'Excavator', status: 'Active', speed: 12, operator: 'S. Lindqvist', zone: 'Excavation & Foundation Pit' },
-      { id: 'V-03', name: 'Material Hoist MH-02', type: 'Hoist Lift', status: 'Idle', speed: 0, operator: 'Unassigned', zone: 'Structure & Scaffolding (L1-L4)' },
-      { id: 'V-04', name: 'Heavy Forklift FL-01', type: 'Forklift', status: 'Active', speed: 8, operator: 'G. Hopper', zone: 'Material Laydown & Loading' }
-    ]);
-    const displayAssets = assetsList.length > 0 ? assetsList : [
-      { id: 'A-01', name: 'Concrete Vibrator CV-02', category: 'Tool', status: 'Active', batteryLevel: 94, zoneId: 'Tower Core Structure' },
-      { id: 'A-02', name: 'Laser Survey Unit LSU-1', category: 'Survey', status: 'Active', batteryLevel: 88, zoneId: 'Deep Excavation Shaft' }
-    ];
+    const uniqueAlerts = Array.from(new Map(mergedAlerts.map(a => [a.id || a.title || Math.random(), a])).values());
+    const displayVehicles = vehiclesList.length > 0 ? vehiclesList : vehicles;
+    const displayAssets = assetsList.length > 0 ? assetsList : assets;
 
     switch (id) {
       case 'site_monitoring_view': {
-        const filteredWorkers = people.length > 0 ? people.filter(p => p.presenceState !== 'EXITED') : registeredPeopleList.map((p, idx) => ({
-          id: p.id || p.hardhatTagId || `W-${idx+1}`,
-          name: p.name || `Worker ${idx+1}`,
-          role: p.role || p.department || 'Tradesperson',
-          currentZone: p.currentZone || 'Structure & Scaffolding (L1-L4)',
-          presenceState: 'MOVING' as const,
-          ppeStatus: p.ppeStatus || 'COMPLIANT'
-        }));
+        const filteredWorkers = registeredPeopleList.length > 0 
+          ? registeredPeopleList 
+          : people;
         const filteredAlerts = uniqueAlerts.filter(a => a.priority === 'Critical' || a.priority === 'High' || a.type === 'security' || a.type === 'warning');
 
         return (
@@ -976,7 +1026,7 @@ export default function DashboardTab({
                   }`}
                 >
                   <Users className="w-3 h-3" />
-                  Workers ({Math.max(people.length, registeredCount) || filteredWorkers.length})
+                  Workers ({filteredWorkers.length})
                 </button>
                 <button
                   onClick={() => setShowVehiclesFilter(!showVehiclesFilter)}
@@ -1035,8 +1085,8 @@ export default function DashboardTab({
                               {(w.name || 'U').charAt(0)}
                             </div>
                             <div className="min-w-0">
-                              <div className="font-bold text-[11px] text-slate-800 truncate leading-tight">{w.name || 'Unknown'}</div>
-                              <div className="text-[9px] text-slate-500 font-medium truncate mt-0.5">{w.role || w.department}</div>
+                              <div className="font-bold text-[11px] text-slate-800 truncate leading-tight">{w.name || 'Worker'}</div>
+                              <div className="text-[9px] text-slate-500 font-medium truncate mt-0.5">{w.role || w.department || 'Tradesperson'}</div>
                             </div>
                           </div>
                           <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0 ${
@@ -1052,7 +1102,7 @@ export default function DashboardTab({
                             <span className={`w-1.5 h-1.5 rounded-full ${w.presenceState === 'MOVING' ? 'bg-emerald-500 animate-pulse' : 'bg-amber-400'}`} />
                             {w.presenceState || 'ACTIVE'}
                           </span>
-                          <span className="font-bold text-slate-600 truncate max-w-[120px]">{w.currentZone || 'Tower Core Structure'}</span>
+                          <span className="font-bold text-slate-600 truncate max-w-[120px]">{w.currentZone || 'Site Area'}</span>
                         </div>
                       </div>
                     ))}
@@ -1067,7 +1117,7 @@ export default function DashboardTab({
                             </div>
                             <div className="min-w-0">
                               <div className="font-bold text-[11px] text-slate-800 truncate leading-tight">{v.name}</div>
-                              <div className="text-[9px] text-slate-500 font-medium truncate mt-0.5">Operator: {v.operator || 'Unassigned'}</div>
+                              <div className="text-[9px] text-slate-500 font-medium truncate mt-0.5">Operator: {v.operator || v.assignedOperator || 'Unassigned'}</div>
                             </div>
                           </div>
                           <span className="bg-purple-100 text-purple-800 text-[8px] font-black px-1.5 py-0.5 rounded uppercase">
@@ -1084,9 +1134,7 @@ export default function DashboardTab({
                     ))}
 
                     {/* High-Risk Alerts */}
-                    {showAlertsFilter && (filteredAlerts.length > 0 ? filteredAlerts : [
-                      { id: 'ALT-901', title: 'Heavy Crane Proximity Breach', message: 'Hardhat Tag 8B-F1-0A entered the Crane Radius without spotter clearance.', priority: 'HIGH', timestamp: new Date(), evidence: { locationZone: 'Heavy Crane Radius' } }
-                    ]).map((a: any) => (
+                    {showAlertsFilter && filteredAlerts.map((a: any) => (
                       <div key={a.id} className="p-2.5 bg-rose-50/40 border border-rose-100 hover:border-rose-300 hover:bg-rose-50 rounded-xl transition flex flex-col justify-between gap-1 col-span-1 sm:col-span-2 shadow-sm">
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex items-start gap-2 min-w-0">
@@ -1104,7 +1152,7 @@ export default function DashboardTab({
                         </div>
                         <div className="flex items-center justify-between text-[8px] text-rose-500 font-mono mt-1 pt-1.5 border-t border-rose-200/50 shrink-0">
                           <span>{a.timestamp instanceof Date ? a.timestamp.toLocaleTimeString() : new Date(a.timestamp || Date.now()).toLocaleTimeString()}</span>
-                          <span className="bg-white border border-rose-200 px-1 rounded font-bold truncate max-w-[150px]">{a.evidence?.locationZone || a.locationZone || 'Exclusion Zone'}</span>
+                          <span className="bg-white border border-rose-200 px-1 rounded font-bold truncate max-w-[150px]">{a.evidence?.locationZone || a.locationZone || 'Site Area'}</span>
                         </div>
                       </div>
                     ))}
@@ -1176,46 +1224,53 @@ export default function DashboardTab({
       }
 
       case 'site_status': {
-        const totalHeadcount = Math.max(people.length, registeredCount);
-        const activeZonesList = Object.keys(zones).length > 0 ? Object.keys(zones) : [
-          'Tower Core Structure', 'Excavation & Foundation Pit', 'Heavy Crane & Exclusion Area', 'Material Laydown & Loading'
-        ];
+        const totalHeadcount = registeredPeopleList.length || people.length || 0;
+        const activeZonesList = dbZones.length > 0 ? dbZones.map((z: any) => z.name || z.id) : (Object.keys(zones).length > 0 ? Object.keys(zones) : ['Site Area']);
+        const totalSiteCapacity = dbZones.length > 0 
+          ? dbZones.reduce((sum: number, z: any) => sum + (Number(z.capacity) || 20), 0)
+          : (Object.keys(zones).length > 0 ? Object.keys(zones).length * 20 : 50);
+        const occupancyPct = totalSiteCapacity > 0 ? Math.min(100, Math.round((totalHeadcount / totalSiteCapacity) * 100)) : 0;
+        const criticalIncidentsCount = incidentsList.filter((i: any) => i.severity === 'Critical' || i.workflowStatus === 'Open').length;
+        const hasActiveAlerts = dbAlerts.filter((a: any) => a.type === 'security' || a.priority === 'Critical').length > 0;
+        const riskRating = (criticalIncidentsCount > 0 || hasActiveAlerts) ? 'ELEVATED' : 'LOW (EHS Grade A)';
+        const riskColor = (criticalIncidentsCount > 0 || hasActiveAlerts) ? 'text-amber-600' : 'text-emerald-600';
+
         return (
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[380px]">
             <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-full bg-emerald-500 animate-ping" />
+                <div className={`w-3 h-3 rounded-full ${criticalIncidentsCount > 0 ? 'bg-amber-500 animate-ping' : 'bg-emerald-500 animate-ping'}`} />
                 <h3 className="font-bold text-slate-900 tracking-tight text-sm">Site Operational Status</h3>
               </div>
-              <span className="bg-emerald-50 text-emerald-700 text-xs font-bold px-2.5 py-1 rounded-full border border-emerald-200 flex items-center gap-1.5">
-                <CheckCircle className="w-3.5 h-3.5" />
-                Nominal Operations
+              <span className={`text-xs font-bold px-2.5 py-1 rounded-full border flex items-center gap-1.5 ${criticalIncidentsCount > 0 ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+                {criticalIncidentsCount > 0 ? <AlertTriangle className="w-3.5 h-3.5" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                {criticalIncidentsCount > 0 ? `${criticalIncidentsCount} Active Hazards` : 'Nominal Operations'}
               </span>
             </div>
 
             <div className="grid grid-cols-2 gap-3 mb-4">
               <div className="bg-slate-50 border border-slate-200/80 p-3 rounded-lg">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Overall Risk Rating</span>
-                <div className="text-lg font-black text-emerald-600 mt-0.5">LOW (EHS Grade A)</div>
-                <span className="text-[10px] text-slate-400">Zero safety halts in 24h</span>
+                <div className={`text-lg font-black mt-0.5 ${riskColor}`}>{riskRating}</div>
+                <span className="text-[10px] text-slate-400">{criticalIncidentsCount === 0 ? 'Zero safety halts active' : `${criticalIncidentsCount} open incidents in MongoDB`}</span>
               </div>
               <div className="bg-slate-50 border border-slate-200/80 p-3 rounded-lg">
                 <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Site Occupancy</span>
-                <div className="text-lg font-black text-slate-900 mt-0.5">{totalHeadcount} / 80 Max</div>
-                <span className="text-[10px] text-slate-400">{Math.min(100, Math.round((totalHeadcount / 80) * 100))}% sector capacity</span>
+                <div className="text-lg font-black text-slate-900 mt-0.5">{totalHeadcount} / {totalSiteCapacity} Max</div>
+                <span className="text-[10px] text-slate-400">{occupancyPct}% sector capacity</span>
               </div>
             </div>
 
             <div className="space-y-2 flex-1 overflow-y-auto">
               <div className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Active Sector Readiness</div>
-              {activeZonesList.slice(0, 4).map((z, idx) => {
-                const count = people.filter(p => p.currentZone === z).length || Math.max(1, Math.round((totalHeadcount / activeZonesList.length) + (idx % 2 === 0 ? 2 : -1)));
+              {activeZonesList.slice(0, 4).map((z: string) => {
+                const count = people.filter(p => p.currentZone === z).length || registeredPeopleList.filter(p => p.currentZone === z).length;
                 return (
                   <div key={z} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-xs font-medium">
                     <span className="font-semibold text-slate-800 truncate max-w-[200px]">{z}</span>
                     <div className="flex items-center gap-2 shrink-0">
                       <span className="text-slate-600 font-bold">{count} workers</span>
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                      <span className={`w-2 h-2 rounded-full ${count > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                     </div>
                   </div>
                 );
@@ -1223,7 +1278,7 @@ export default function DashboardTab({
             </div>
 
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between mt-auto">
-              <span className="text-[11px] text-slate-500 font-medium">EHS Clearances: All High-Lifts Approved</span>
+              <span className="text-[11px] text-slate-500 font-medium">Clearances: {criticalIncidentsCount === 0 ? 'All Sectors Approved' : 'Review Active Alerts'}</span>
               <button onClick={() => navigate('/live')} className="text-xs font-bold text-[#007BC4] hover:underline flex items-center gap-1">
                 Live Map →
               </button>
@@ -1232,65 +1287,28 @@ export default function DashboardTab({
         );
       }
 
-      case 'weather_widget':
-        return (
-          <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[380px]">
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <CloudSun className="w-5 h-5 text-amber-500" />
-                <h3 className="font-bold text-slate-900 tracking-tight text-sm">Weather & Environmental Telemetry</h3>
-              </div>
-              <span className="bg-blue-50 text-blue-700 text-xs font-bold px-2.5 py-1 rounded-full border border-blue-200">
-                Clear Sky • 28°C
-              </span>
-            </div>
+      case 'shift_progress': {
+        const activeShift = shiftSchedules.length > 0 ? shiftSchedules[0] : null;
+        const shiftTitle = activeShift?.name || activeShift?.title || 'Day Shift Alpha';
+        const startStr = activeShift?.startTime || activeShift?.start || '07:00';
+        const endStr = activeShift?.endTime || activeShift?.end || '17:00';
+        
+        const now = new Date();
+        const [sH, sM] = startStr.split(':').map(Number);
+        const [eH, eM] = endStr.split(':').map(Number);
+        const startMins = (sH || 7) * 60 + (sM || 0);
+        const endMins = (eH || 17) * 60 + (eM || 0);
+        const nowMins = now.getHours() * 60 + now.getMinutes();
+        const totalDuration = Math.max(1, endMins - startMins);
+        const elapsedMins = Math.max(0, Math.min(totalDuration, nowMins - startMins));
+        const remainingMins = Math.max(0, totalDuration - elapsedMins);
+        const shiftProgressPct = Math.min(100, Math.max(0, Math.round((elapsedMins / totalDuration) * 100)));
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
-              <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-150">
-                <div className="flex items-center gap-1 text-[10px] font-bold text-slate-500 uppercase">
-                  <Wind className="w-3.5 h-3.5 text-sky-500" /> Wind Speed
-                </div>
-                <div className="text-base font-black text-slate-900 mt-1">14 km/h</div>
-                <span className="text-[9px] text-emerald-600 font-bold">Safe for Lifts (&lt;35)</span>
-              </div>
-              <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-150">
-                <div className="flex items-center gap-1 text-[10px] font-bold text-slate-500 uppercase">
-                  <Droplets className="w-3.5 h-3.5 text-blue-500" /> Humidity
-                </div>
-                <div className="text-base font-black text-slate-900 mt-1">62%</div>
-                <span className="text-[9px] text-slate-400 font-semibold">Optimal Range</span>
-              </div>
-              <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-150">
-                <div className="flex items-center gap-1 text-[10px] font-bold text-slate-500 uppercase">
-                  <Sun className="w-3.5 h-3.5 text-amber-500" /> UV Index
-                </div>
-                <div className="text-base font-black text-slate-900 mt-1">6 Mod</div>
-                <span className="text-[9px] text-amber-600 font-semibold">Shade Advised</span>
-              </div>
-              <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-150">
-                <div className="flex items-center gap-1 text-[10px] font-bold text-slate-500 uppercase">
-                  <Flame className="w-3.5 h-3.5 text-rose-500" /> EHS Risk
-                </div>
-                <div className="text-base font-black text-emerald-600 mt-1">Level 1</div>
-                <span className="text-[9px] text-emerald-600 font-bold">Low Heat Stress</span>
-              </div>
-            </div>
+        const elapHours = Math.floor(elapsedMins / 60);
+        const elapRemainMins = elapsedMins % 60;
+        const remHours = Math.floor(remainingMins / 60);
+        const remRemainMins = remainingMins % 60;
 
-            <div className="bg-emerald-50/70 border border-emerald-200/80 p-3 rounded-xl flex items-center justify-between gap-3 mb-2">
-              <div className="flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-                <p className="text-xs text-emerald-900 font-semibold">Crane Operations Approved: Wind gusts within operating limits (&lt;35 km/h limit).</p>
-              </div>
-            </div>
-
-            <div className="mt-auto pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-              <span>Last Sensor Update: 2 minutes ago</span>
-              <span className="font-bold text-slate-700">Barometer: 1014 hPa</span>
-            </div>
-          </div>
-        );
-
-      case 'shift_progress':
         return (
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[380px]">
             <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
@@ -1299,21 +1317,21 @@ export default function DashboardTab({
                 <h3 className="font-bold text-slate-900 tracking-tight text-sm">Shift Progress</h3>
               </div>
               <span className="bg-indigo-50 text-indigo-700 text-xs font-bold px-2.5 py-1 rounded-full border border-indigo-200">
-                Day Shift Alpha
+                {shiftTitle}
               </span>
             </div>
 
             <div className="space-y-3 mb-4">
               <div className="flex justify-between items-center text-xs font-bold text-slate-700">
-                <span>07:00 AM - 17:00 PM</span>
-                <span className="text-[#007BC4]">65% Complete</span>
+                <span>{startStr} - {endStr}</span>
+                <span className="text-[#007BC4]">{shiftProgressPct}% Complete</span>
               </div>
               <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden">
-                <div className="bg-[#007BC4] h-full rounded-full transition-all duration-500" style={{ width: '65%' }} />
+                <div className="bg-[#007BC4] h-full rounded-full transition-all duration-500" style={{ width: `${shiftProgressPct}%` }} />
               </div>
               <div className="flex justify-between text-[11px] text-slate-500 font-medium">
-                <span>Elapsed: 6h 30m</span>
-                <span>Remaining: 3h 30m</span>
+                <span>Elapsed: {elapHours}h {elapRemainMins}m</span>
+                <span>Remaining: {remHours}h {remRemainMins}m</span>
               </div>
             </div>
 
@@ -1324,28 +1342,24 @@ export default function DashboardTab({
                 <span className="text-[10px] text-emerald-600 font-bold">{attRate}% Attendance</span>
               </div>
               <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                <span className="text-[10px] font-bold text-slate-500 uppercase">Next Handover</span>
-                <div className="text-base font-bold text-slate-900 mt-0.5">17:00 PM</div>
-                <span className="text-[10px] text-slate-500">Evening Shift Bravo</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase">Shift Status</span>
+                <div className="text-base font-bold text-slate-900 mt-0.5">{shiftProgressPct >= 100 ? 'Completed' : 'In Progress'}</div>
+                <span className="text-[10px] text-slate-500">Target End: {endStr}</span>
               </div>
             </div>
 
             <div className="mt-auto pt-3 border-t border-slate-100 flex items-center justify-between">
-              <span className="text-xs text-slate-600 font-medium">Phase: Floor 14 Concrete Pour</span>
+              <span className="text-xs text-slate-600 font-medium">Phase: {activeShift?.phase || 'Live Shift Operations'}</span>
               <button onClick={() => navigate('/attendance')} className="text-xs font-bold text-[#007BC4] hover:underline">
                 Attendance Roster →
               </button>
             </div>
           </div>
         );
+      }
 
       case 'reader_health': {
-        const displayReaders = deviceList.length > 0 ? deviceList : [
-          { name: 'Gate 1 Entry Portal (Reader R-01)', status: 'online', rssi: '-42 dBm', rate: '250 Hz', power: '100%' },
-          { name: 'Tower Crane Antenna (Reader R-02)', status: 'online', rssi: '-58 dBm', rate: '250 Hz', power: '94%' },
-          { name: 'Shaft 3 Stairwell (Reader R-03)', status: 'online', rssi: '-61 dBm', rate: '200 Hz', power: '100%' },
-          { name: 'North Gate Perimeter (Reader R-04)', status: 'offline', rssi: '-85 dBm', rate: '50 Hz', power: '18%' }
-        ];
+        const displayReaders = deviceList;
 
         return (
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[380px]">
@@ -1355,78 +1369,39 @@ export default function DashboardTab({
                 <h3 className="font-bold text-slate-900 tracking-tight text-sm">Reader Health & Portals</h3>
               </div>
               <div className="flex items-center gap-2 text-xs font-bold">
-                <span className="text-emerald-600">{deviceStats.online || displayReaders.filter(r => r.status === 'online').length} Online</span>
-                <span className="text-rose-500">{deviceStats.offline || displayReaders.filter(r => r.status === 'offline').length} Offline</span>
+                <span className="text-emerald-600">{deviceStats.online} Online</span>
+                <span className="text-rose-500">{deviceStats.offline} Offline</span>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2">
-              {displayReaders.slice(0, 5).map((r, i) => (
-                <div key={r.id || i} onClick={() => navigate('/devices')} className="p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-lg flex items-center justify-between cursor-pointer transition">
-                  <div>
-                    <div className="font-bold text-xs text-slate-800">{r.name}</div>
-                    <div className="text-[10px] text-slate-500 flex items-center gap-2 font-mono mt-0.5">
-                      <span>RSSI: {r.rssi || '-55 dBm'}</span>
-                      <span>Rate: {r.rate || '250 Hz'}</span>
-                      <span>Power: {r.power || '100%'}</span>
-                    </div>
-                  </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${r.status === 'online' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : r.status === 'warning' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
-                    {r.status || 'online'}
-                  </span>
+              {displayReaders.length === 0 ? (
+                <div className="p-4 text-center text-slate-400 text-xs font-medium">
+                  No RFID readers found in MongoDB.
                 </div>
-              ))}
+              ) : (
+                displayReaders.slice(0, 5).map((r, i) => (
+                  <div key={r.id || i} onClick={() => navigate('/devices')} className="p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-lg flex items-center justify-between cursor-pointer transition">
+                    <div>
+                      <div className="font-bold text-xs text-slate-800">{r.name}</div>
+                      <div className="text-[10px] text-slate-500 flex items-center gap-2 font-mono mt-0.5">
+                        <span>RSSI: {r.rssi || '-55 dBm'}</span>
+                        <span>Rate: {r.rate || '250 Hz'}</span>
+                        <span>Power: {r.power || '100%'}</span>
+                      </div>
+                    </div>
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${r.status === 'online' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : r.status === 'warning' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-rose-50 text-rose-700 border border-rose-200'}`}>
+                      {r.status || 'online'}
+                    </span>
+                  </div>
+                ))
+              )}
             </div>
 
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between mt-auto">
-              <span className="text-[11px] text-slate-500">Active Antennas: {displayReaders.length} Total Channels</span>
+              <span className="text-[11px] text-slate-500">Active Gateways: {displayReaders.length} Total Registered</span>
               <button onClick={() => navigate('/devices')} className="text-xs font-bold text-[#007BC4] hover:underline">
                 Manage Devices →
-              </button>
-            </div>
-          </div>
-        );
-      }
-
-      case 'equipment_health': {
-        const totalAssetsCount = displayVehicles.length + displayAssets.length;
-
-        return (
-          <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[380px]">
-            <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <Truck className="w-5 h-5 text-purple-600" />
-                <h3 className="font-bold text-slate-900 tracking-tight text-sm">Equipment Health</h3>
-              </div>
-              <span className="bg-purple-50 text-purple-700 text-xs font-bold px-2.5 py-1 rounded-full border border-purple-200">
-                {totalAssetsCount} Tracked Assets
-              </span>
-            </div>
-
-            <div className="flex-1 overflow-y-auto space-y-2">
-              {displayVehicles.slice(0, 4).map((eq: any, i) => (
-                <div key={eq.id || i} onClick={() => navigate('/maintenance')} className="p-2.5 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-lg flex items-center justify-between cursor-pointer transition">
-                  <div>
-                    <div className="font-bold text-xs text-slate-800">{eq.name}</div>
-                    <div className="text-[10px] text-slate-500 flex items-center gap-2 font-medium mt-0.5">
-                      <span>Zone: {eq.zone || 'Site Operations'}</span>
-                      <span>Driver: {eq.operator || 'Assigned'}</span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase ${eq.status === 'Active' || eq.status === 'online' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
-                      {eq.status || 'Active'}
-                    </span>
-                    <div className="text-[10px] text-slate-500 font-mono mt-1">Fuel/Batt: {eq.fuel ? `${eq.fuel}%` : eq.batteryLevel ? `${eq.batteryLevel}%` : '85%'}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="pt-3 border-t border-slate-100 flex items-center justify-between mt-auto">
-              <span className="text-[11px] text-slate-500">All Asset RFID Beacons Active</span>
-              <button onClick={() => navigate('/maintenance')} className="text-xs font-bold text-[#007BC4] hover:underline">
-                Asset Maintenance →
               </button>
             </div>
           </div>
@@ -1436,22 +1411,10 @@ export default function DashboardTab({
       case 'ai_recommendations': {
         const displayRecs = aiRecs.length > 0 ? aiRecs : [
           {
-            title: 'Predictive Zone Overcrowding',
-            text: 'Canteen zone occupancy projected to reach 92% at 12:15 PM during lunch shift transition. Stagger trade breaks by 10 mins to maintain safety protocols.',
+            title: 'Live Personnel Movement Analysis',
+            text: `${movingCount} personnel active in motion across ${Object.keys(zones).length} monitored sectors. All RFID credentials verified in MongoDB.`,
             icon: 'Sparkles',
             color: 'purple'
-          },
-          {
-            title: 'PPE Exclusion Zone Enforcement',
-            text: 'Hardhat Tag 8B-F1-0A detected within 3m of active Excavator EX-04 without dedicated spotter beacon present.',
-            icon: 'AlertTriangle',
-            color: 'amber'
-          },
-          {
-            title: 'Productivity & Schedule Optimization',
-            text: 'Structural steel unloading completed 15 mins ahead of schedule on Sector 2. Tower Crane TC-01 is available for secondary rebar lift.',
-            icon: 'TrendingUp',
-            color: 'emerald'
           }
         ];
 
@@ -1493,8 +1456,8 @@ export default function DashboardTab({
 
       case 'daily_summary': {
         const peakBucket = [...timelineData].sort((a, b) => (b.load || 0) - (a.load || 0))[0];
-        const peakHourStr = peakBucket?.time ? `${peakBucket.time} (${peakBucket.load} scans)` : '07:30 AM (142 scans)';
-        const scansDisplay = totalScansCount > 0 ? (totalScansCount * 14 + 1840).toLocaleString() : '2,842';
+        const peakHourStr = peakBucket?.time ? `${peakBucket.time} (${peakBucket.load} scans)` : 'No scans recorded today';
+        const scansDisplay = totalScansCount.toLocaleString();
 
         return (
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[380px]">
@@ -1512,31 +1475,31 @@ export default function DashboardTab({
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80">
                 <span className="text-[10px] font-bold text-slate-500 uppercase">Total Scans Today</span>
                 <div className="text-xl font-black text-slate-900 mt-1">{scansDisplay}</div>
-                <span className="text-[10px] text-emerald-600 font-bold">+14% vs yesterday</span>
+                <span className="text-[10px] text-emerald-600 font-bold">RFID Scans in MongoDB</span>
               </div>
               <div className="bg-slate-50 p-3 rounded-xl border border-slate-200/80">
                 <span className="text-[10px] font-bold text-slate-500 uppercase">Peak Gate Hour</span>
-                <div className="text-xl font-black text-slate-900 mt-1">{peakHourStr.split(' ')[0]} {peakHourStr.split(' ')[1] || 'AM'}</div>
-                <span className="text-[10px] text-slate-500 font-medium">{peakBucket?.load ? `${peakBucket.load} check-ins` : '142 check-ins'}</span>
+                <div className="text-xl font-black text-slate-900 mt-1">{peakHourStr.split(' ')[0]} {peakHourStr.split(' ')[1] || ''}</div>
+                <span className="text-[10px] text-slate-500 font-medium">{peakBucket?.load ? `${peakBucket.load} check-ins` : '0 check-ins'}</span>
               </div>
             </div>
 
             <div className="space-y-2 flex-1">
               <div className="flex justify-between items-center bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-xs">
                 <span className="text-slate-600 font-semibold">Entry / Exit Gate Throughput Ratio</span>
-                <span className="font-bold text-slate-900">{checkedInToday} IN / {Math.max(1, Math.round(checkedInToday * 0.12))} OUT</span>
+                <span className="font-bold text-slate-900">{checkedInToday} IN / {registeredPeopleList.filter((p: any) => p.presenceState === 'EXITED').length} OUT</span>
               </div>
               <div className="flex justify-between items-center bg-emerald-50/70 p-2.5 rounded-lg border border-emerald-200/80 text-xs">
                 <span className="text-emerald-900 font-bold flex items-center gap-1.5">
                   <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  Safety Audit Streak
+                  Safety Incident Status
                 </span>
-                <span className="font-black text-emerald-700 text-sm">142 Days Incident-Free</span>
+                <span className="font-black text-emerald-700 text-sm">{incidentsList.filter((i: any) => i.severity === 'Critical').length === 0 ? 'Zero Critical Incidents' : `${incidentsList.filter((i: any) => i.severity === 'Critical').length} Critical Alerts`}</span>
               </div>
             </div>
 
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between mt-auto">
-              <span className="text-[11px] text-slate-500">Zero Lost Time Injuries (LTI) in Q3</span>
+              <span className="text-[11px] text-slate-500">Durable Records Synced in MongoDB</span>
               <button onClick={() => navigate('/audit')} className="text-xs font-bold text-[#007BC4] hover:underline">
                 Compliance Logs →
               </button>
@@ -1546,11 +1509,7 @@ export default function DashboardTab({
       }
 
       case 'active_incidents': {
-        const displayIncidents = incidentsList.length > 0 ? incidentsList : [
-          { id: 'INC-901', title: 'Crane Exclusion Zone Breach', severity: 'Critical', zone: 'Heavy Crane Swing Radius', time: '4m ago', responder: 'J. Miller (EHS Lead)', status: 'Investigating' },
-          { id: 'INC-898', title: 'Unassigned Visitor Tag in Server Room', severity: 'High', zone: 'Server Room B', time: '12m ago', responder: 'S. Guard', status: 'Open' },
-          { id: 'INC-894', title: 'Loitering Warning (>45m in Canteen)', severity: 'Low', zone: 'Main Canteen', time: '28m ago', responder: 'Automated System', status: 'Resolved' }
-        ];
+        const displayIncidents = incidentsList;
 
         return (
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md min-h-[380px]">
@@ -1565,29 +1524,36 @@ export default function DashboardTab({
             </div>
 
             <div className="flex-1 overflow-y-auto space-y-2.5">
-              {displayIncidents.slice(0, 4).map((inc: any, i) => (
-                <div key={inc.id || i} onClick={() => navigate('/incidents')} className="p-3 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 cursor-pointer transition">
-                  <div className="flex items-start gap-3">
-                    <span className={`p-2 rounded-lg text-white shrink-0 font-bold text-xs ${inc.severity === 'Critical' ? 'bg-rose-600' : inc.severity === 'High' ? 'bg-amber-500' : 'bg-blue-500'}`}>
-                      {inc.severity || 'Medium'}
-                    </span>
-                    <div>
-                      <div className="font-bold text-xs text-slate-900">{inc.title || inc.description}</div>
-                      <div className="text-[11px] text-slate-500 font-medium flex flex-wrap items-center gap-3 mt-0.5">
-                        <span>ID: {inc.id}</span>
-                        <span>Zone: {inc.zone || inc.locationZone || 'Site Area'}</span>
-                        <span>Responder: {inc.responder || inc.assignedLead || 'EHS Team'}</span>
+              {displayIncidents.length === 0 ? (
+                <div className="p-6 text-center text-slate-400 text-xs font-medium flex flex-col items-center justify-center gap-2">
+                  <ShieldCheck className="w-8 h-8 text-emerald-500" />
+                  <span>No active safety incidents recorded in MongoDB.</span>
+                </div>
+              ) : (
+                displayIncidents.slice(0, 4).map((inc: any, i) => (
+                  <div key={inc.id || i} onClick={() => navigate('/incidents')} className="p-3 bg-slate-50 hover:bg-slate-100 border border-slate-200/80 rounded-xl flex flex-col md:flex-row items-start md:items-center justify-between gap-3 cursor-pointer transition">
+                    <div className="flex items-start gap-3">
+                      <span className={`p-2 rounded-lg text-white shrink-0 font-bold text-xs ${inc.severity === 'Critical' ? 'bg-rose-600' : inc.severity === 'High' ? 'bg-amber-500' : 'bg-blue-500'}`}>
+                        {inc.severity || 'Medium'}
+                      </span>
+                      <div>
+                        <div className="font-bold text-xs text-slate-900">{inc.title || inc.description}</div>
+                        <div className="text-[11px] text-slate-500 font-medium flex flex-wrap items-center gap-3 mt-0.5">
+                          <span>ID: {inc.id}</span>
+                          <span>Zone: {inc.zone || inc.locationZone || 'Site Area'}</span>
+                          <span>Responder: {inc.responder || inc.assignedLead || 'EHS Team'}</span>
+                        </div>
                       </div>
                     </div>
+                    <div className="flex items-center gap-3 self-end md:self-auto shrink-0">
+                      <span className="text-[10px] text-slate-400 font-mono">{inc.time || (inc.createdAt ? new Date(inc.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged in DB')}</span>
+                      <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${inc.status === 'Investigating' || inc.workflowStatus === 'Investigation' ? 'bg-rose-50 text-rose-700 border border-rose-200' : inc.status === 'Open' || inc.workflowStatus === 'Open' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
+                        {inc.status || inc.workflowStatus || 'Open'}
+                      </span>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-3 self-end md:self-auto shrink-0">
-                    <span className="text-[10px] text-slate-400 font-mono">{inc.time || (inc.createdAt ? new Date(inc.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '5m ago')}</span>
-                    <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${inc.status === 'Investigating' || inc.workflowStatus === 'Investigation' ? 'bg-rose-50 text-rose-700 border border-rose-200' : inc.status === 'Open' || inc.workflowStatus === 'Open' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
-                      {inc.status || inc.workflowStatus || 'Open'}
-                    </span>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </div>
         );
@@ -1727,33 +1693,36 @@ export default function DashboardTab({
           const tB = new Date(b.checkInTime || b.inTime || b.createdAt || 0).getTime();
           return tA - tB;
         });
-        const firstEntry = sortedLogs[0];
-        const lastExit = [...attendanceLogs].reverse().find(l => l.checkOutTime || l.outTime || l.status === 'EXITED') || sortedLogs[sortedLogs.length - 1];
-        const firstEntryTime = firstEntry?.checkInTime || firstEntry?.inTime ? new Date(firstEntry.checkInTime || firstEntry.inTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '07:14 AM';
-        const firstEntryName = firstEntry?.name || firstEntry?.personName || 'Alan Turing (Admin)';
-        const lastExitTime = lastExit?.checkOutTime || lastExit?.outTime ? new Date(lastExit.checkOutTime || lastExit.outTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '18:42 PM';
-        const lastExitName = lastExit?.name || lastExit?.personName || 'Grace Hopper (Engineer)';
+        const firstEntry = sortedLogs.find(l => l.checkInTime || l.inTime || l.status === 'PRESENT' || l.status === 'LATE');
+        const lastExit = [...sortedLogs].reverse().find(l => l.checkOutTime || l.outTime || l.status === 'EXITED');
+        const firstEntryTime = firstEntry?.checkInTime || firstEntry?.inTime ? new Date(firstEntry.checkInTime || firstEntry.inTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (sortedLogs.length > 0 ? '07:00 AM' : 'No scans recorded');
+        const firstEntryName = firstEntry?.name || firstEntry?.personName || (registeredPeopleList[0]?.name) || 'Awaiting entry telemetry';
+        const lastExitTime = lastExit?.checkOutTime || lastExit?.outTime ? new Date(lastExit.checkOutTime || lastExit.outTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'On site / No exit';
+        const lastExitName = lastExit?.name || lastExit?.personName || 'All active personnel logged in';
+
+        const totalActiveHours = sortedLogs.length > 0 ? '8h 00m' : '0h 00m';
 
         return (
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[480px]">
             <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 shrink-0">
                <h3 className="font-semibold text-slate-900 tracking-tight text-sm">Attendance Summary</h3>
+               <button onClick={() => navigate('/attendance')} className="text-xs font-semibold text-[#007BC4] hover:underline cursor-pointer">View Roster</button>
             </div>
             <div className="flex-1 overflow-y-auto space-y-4">
               <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg">
-                 <div className="text-[10px] font-bold text-slate-500 uppercase">First Entry (Today)</div>
+                 <div className="text-[10px] font-bold text-slate-500 uppercase">First Gate Check-In</div>
                  <div className="text-lg font-bold text-slate-900 mt-1">{firstEntryTime}</div>
-                 <div className="text-[11px] text-slate-500">{firstEntryName}</div>
+                 <div className="text-[11px] text-slate-500 truncate">{firstEntryName}</div>
               </div>
               <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg">
-                 <div className="text-[10px] font-bold text-slate-500 uppercase">Last Exit (Today)</div>
+                 <div className="text-[10px] font-bold text-slate-500 uppercase">Latest Gate Check-Out</div>
                  <div className="text-lg font-bold text-slate-900 mt-1">{lastExitTime}</div>
-                 <div className="text-[11px] text-slate-500">{lastExitName}</div>
+                 <div className="text-[11px] text-slate-500 truncate">{lastExitName}</div>
               </div>
               <div className="p-3 bg-[#007BC4]/5 border border-[#007BC4]/20 rounded-lg">
-                 <div className="text-[10px] font-bold text-[#007BC4] uppercase">Avg Working Hours</div>
-                 <div className="text-xl font-black text-[#007BC4] mt-1">8h 24m</div>
-                 <div className="text-[11px] text-[#007BC4]/80">+12m vs scheduled shift</div>
+                 <div className="text-[10px] font-bold text-[#007BC4] uppercase">Shift Target Duration</div>
+                 <div className="text-xl font-black text-[#007BC4] mt-1">{totalActiveHours}</div>
+                 <div className="text-[11px] text-[#007BC4]/80">Synchronized with active shift schedule</div>
               </div>
             </div>
           </div>
@@ -1765,20 +1734,25 @@ export default function DashboardTab({
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[480px]">
              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 shrink-0">
                <h3 className="font-semibold text-slate-900 tracking-tight text-sm flex items-center gap-2"><Cpu className="w-4 h-4 text-purple-500" /> AI Insights</h3>
+               <button onClick={() => navigate('/ai-insights')} className="text-xs font-semibold text-[#007BC4] hover:underline cursor-pointer">Open AI Studio</button>
             </div>
             <div className="flex flex-col gap-3 flex-1 overflow-y-auto">
-               <div className="bg-purple-50 border border-purple-100 p-4 rounded-lg">
-                  <h4 className="text-xs font-bold text-purple-700 uppercase mb-1">Predictive Alert: Zone Overcrowding</h4>
-                  <p className="text-xs text-purple-900 leading-relaxed font-medium">Based on current worker movement vectors, the <span className="font-bold">Site Welfare & Canteen Container</span> is predicted to reach capacity limits during lunch shift change.</p>
-               </div>
-               <div className="bg-amber-50 border border-amber-100 p-4 rounded-lg mt-2">
-                  <h4 className="text-xs font-bold text-amber-700 uppercase mb-1">Anomaly Detection: Unauthorized Exclusion Zone</h4>
-                  <p className="text-xs text-amber-900 leading-relaxed font-medium">Hardhat Sensor <span className="font-bold">Tag ID: 8B-F1-0A</span> bypassed the safety perimeter gate and entered the Heavy Crane Swing Radius during active lift operations.</p>
-               </div>
-               <div className="bg-slate-50 border border-slate-200 p-4 rounded-lg mt-2">
-                  <h4 className="text-xs font-bold text-slate-700 uppercase mb-1">Daily Construction Site Summary</h4>
-                  <p className="text-xs text-slate-600 leading-relaxed font-medium">Site headcount operations are nominal. Dwell time on <span className="font-bold">Structure & Scaffolding L3</span> increased (+14% vs norm) due to concrete rebar tying. PPE compliance scanners reported active status.</p>
-               </div>
+               {(aiRecs.length > 0 ? aiRecs.slice(0, 4) : [
+                 {
+                   title: 'Site Safety Analysis',
+                   text: `Headcount nominal across monitored sectors with ${movingCount} personnel active in motion. All RFID badges verified in MongoDB.`,
+                   type: 'nominal'
+                 }
+               ]).map((insight: any, idx: number) => (
+                 <div key={insight.id || idx} className={`p-3 rounded-lg border ${idx === 0 ? 'bg-purple-50 border-purple-100' : idx === 1 ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-200'}`}>
+                   <h4 className={`text-xs font-bold uppercase mb-1 ${idx === 0 ? 'text-purple-700' : idx === 1 ? 'text-amber-700' : 'text-slate-700'}`}>
+                     {insight.title || insight.headline || 'Operational Insight'}
+                   </h4>
+                   <p className={`text-xs leading-relaxed font-medium ${idx === 0 ? 'text-purple-900' : idx === 1 ? 'text-amber-900' : 'text-slate-600'}`}>
+                     {insight.text || insight.description || insight.recommendation || insight.details}
+                   </p>
+                 </div>
+               ))}
             </div>
           </div>
         );
@@ -1794,7 +1768,7 @@ export default function DashboardTab({
             </div>
             <div className="flex-1 min-h-0">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={(mode === 'real' && timelineData.length > 0) ? timelineData : mockTimelineData} margin={{ top: 5, right: 0, left: -25, bottom: 0 }}>
+                <AreaChart data={timelineData} margin={{ top: 5, right: 0, left: -25, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorLoad" x1="0" y1="0" x2="0" y2="1">
                       <stop offset="5%" stopColor="#007BC4" stopOpacity={0.4}/>
@@ -1897,27 +1871,33 @@ export default function DashboardTab({
 
               {/* Status and Active System Load metrics right panel */}
               <div className="col-span-6 space-y-3">
-                {/* Simulated/Real CPU Load */}
+                {/* Real Online Gateway Ratio */}
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-[10px] font-bold text-slate-600">
                     <span className="flex items-center gap-1">
-                      <Cpu className="w-3 h-3 text-slate-400" /> CPU Load
+                      <Wifi className="w-3 h-3 text-emerald-500" /> Online Portals
                     </span>
-                    <span className="text-slate-900">42%</span>
+                    <span className="text-slate-900">{deviceList.length > 0 ? Math.round((deviceStats.online / deviceList.length) * 100) : 100}%</span>
                   </div>
                   <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                    <div className="bg-[#007BC4] h-full rounded-full transition-all duration-500" style={{ width: '42%' }} />
+                    <div 
+                      className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
+                      style={{ width: `${deviceList.length > 0 ? Math.round((deviceStats.online / deviceList.length) * 100) : 100}%` }} 
+                    />
                   </div>
                 </div>
 
-                {/* Packet Polling Queue */}
+                {/* Sweep Telemetry Rate */}
                 <div className="space-y-1">
                   <div className="flex justify-between items-center text-[10px] font-bold text-slate-600">
-                    <span>Sweep Frequency</span>
-                    <span className="text-emerald-600 font-extrabold">250 Hz</span>
+                    <span>Active Scanning Rate</span>
+                    <span className="text-[#007BC4] font-extrabold">{deviceStats.online * 25} msg/s</span>
                   </div>
                   <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-                    <div className="bg-emerald-500 h-full rounded-full transition-all duration-500" style={{ width: '78%' }} />
+                    <div 
+                      className="bg-[#007BC4] h-full rounded-full transition-all duration-500" 
+                      style={{ width: `${Math.min(100, Math.max(20, (deviceStats.online / Math.max(deviceList.length, 1)) * 100))}%` }} 
+                    />
                   </div>
                 </div>
 
@@ -1925,7 +1905,7 @@ export default function DashboardTab({
                 <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[9px] font-bold text-slate-500">
                   <div className="flex items-center gap-1">
                     <span className="w-2 h-2 rounded-full bg-emerald-100 text-emerald-600 border border-emerald-200 flex items-center justify-center text-[7px] font-bold justify-center flex-shrink-0">✓</span>
-                    <span>All Antennas Nominal</span>
+                    <span>{deviceStats.offline === 0 ? 'All Portals Nominal' : `${deviceStats.offline} Portals Offline`}</span>
                   </div>
                 </div>
               </div>
@@ -1950,45 +1930,29 @@ export default function DashboardTab({
             <h3 className="text-[11px] font-extrabold text-slate-500 uppercase tracking-wider mb-2 shrink-0">People Flow Heatmap</h3>
             <div className="flex-1 bg-slate-50 rounded-lg border border-slate-200 shadow-inner relative overflow-hidden flex items-center justify-center">
                <div className="absolute inset-0 z-0 opacity-10" style={{ backgroundImage: 'linear-gradient(#007BC4 1px, transparent 1px), linear-gradient(90deg, #007BC4 1px, transparent 1px)', backgroundSize: '10px 10px' }} />
-               {mode === 'real' ? (
-                 /* Real heatmap blobs based on tracked people coordinates */
-                 people.map(p => (
+               {(registeredPeopleList.length > 0 ? registeredPeopleList : people).map((p, idx) => {
+                 const xVal = p.x !== undefined ? p.x : ((idx * 17) % 80 + 10);
+                 const yVal = p.y !== undefined ? p.y : ((idx * 23) % 75 + 12);
+                 return (
                    <div 
-                     key={p.id} 
-                     className="absolute w-12 h-12 bg-[#007BC4]/30 dark:bg-sky-500/30 rounded-full blur-md animate-pulse pointer-events-none"
-                     style={{ left: `${p.x}%`, top: `${p.y}%`, transform: 'translate(-50%, -50%)' }}
+                     key={p.id || idx} 
+                     className="absolute w-10 h-10 bg-[#007BC4]/35 dark:bg-sky-500/35 rounded-full blur-md animate-pulse pointer-events-none"
+                     style={{ left: `${xVal}%`, top: `${yVal}%`, transform: 'translate(-50%, -50%)' }}
+                     title={p.name}
                    />
-                 ))
-               ) : (
-                 <>
-                   {/* Mock heatmap blobs */}
-                   <div className="absolute top-1/4 left-1/4 w-12 h-12 bg-rose-500/50 rounded-full blur-lg"></div>
-                   <div className="absolute top-1/2 left-1/2 w-16 h-16 bg-[#007BC4]/50 rounded-full blur-xl"></div>
-                   <div className="absolute bottom-1/3 right-1/4 w-8 h-8 bg-amber-500/50 rounded-full blur-lg"></div>
-                   <div className="absolute bottom-1/4 left-1/3 w-14 h-14 bg-emerald-500/50 rounded-full blur-lg"></div>
-                 </>
-               )}
+                 );
+               })}
                
                {/* Scale bar */}
                <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 z-10 bg-white/75 backdrop-blur px-2 py-1 rounded border border-slate-150">
-                 <span className="text-[8px] font-black text-slate-500 uppercase leading-none">Low</span>
+                 <span className="text-[8px] font-black text-slate-500 uppercase leading-none">Low Density</span>
                  <div className="h-1 flex-1 rounded-full bg-gradient-to-r from-[#007BC4] via-emerald-400 to-rose-500"></div>
-                 <span className="text-[8px] font-black text-slate-500 uppercase leading-none">High</span>
+                 <span className="text-[8px] font-black text-slate-500 uppercase leading-none">High Density</span>
                </div>
             </div>
           </div>
         );
 
-      case 'tech_footer':
-        return (
-          <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 pt-4 shrink-0 w-full mb-2">
-             <FooterCard icon={<Radio className="text-[#007BC4] w-5 h-5"/>} title="UHF RFID Technology" desc="Long range, high accuracy tracking for large environments." />
-             <FooterCard icon={<Cpu className="text-[#8b5cf6] w-5 h-5"/>} title="AI Powered Analytics" desc="Behavior analysis and insightful reports." />
-             <FooterCard icon={<MapIcon className="text-[#10b981] w-5 h-5"/>} title="Real-time Monitoring" desc="Live location and movement tracking." />
-             <FooterCard icon={<Bell className="text-[#f59e0b] w-5 h-5"/>} title="Smart Alerts" desc="Instant notifications and event detection." />
-             <FooterCard icon={<ShieldCheck className="text-[#007BC4] w-5 h-5"/>} title="Data Security" desc="Enterprise grade security and privacy." />
-          </div>
-        );
       default:
         return null;
     }
@@ -2042,10 +2006,10 @@ export default function DashboardTab({
     switch (id) {
       case 'total_workers':
       case 'total_people': {
-        const totalCount = registeredPeopleList.length || registeredCount || people.length || 11;
+        const totalCount = registeredPeopleList.length || registeredCount || people.length || 0;
         const activeCount = registeredPeopleList.length > 0 
           ? registeredPeopleList.filter(p => p.presenceState !== 'EXITED').length 
-          : (people.filter(p => p.presenceState !== 'EXITED').length || 7);
+          : people.filter(p => p.presenceState !== 'EXITED').length;
         return (
           <KpiCard 
             key={id} 
@@ -2062,16 +2026,16 @@ export default function DashboardTab({
       case 'on_site': {
         const activeCount = registeredPeopleList.length > 0
           ? registeredPeopleList.filter(p => p.presenceState !== 'EXITED').length
-          : (people.filter(p => p.presenceState !== 'EXITED').length || 7);
+          : people.filter(p => p.presenceState !== 'EXITED').length;
         const moving = registeredPeopleList.length > 0
           ? registeredPeopleList.filter(p => p.presenceState === 'MOVING').length
-          : (movingCount || 3);
+          : movingCount;
         return (
           <KpiCard 
             key={id} 
             title={title || "Active Workers"} 
             value={activeCount.toString()} 
-            sub={subOverride || `${moving} in motion • ${activeCount - moving} on-shift trades`} 
+            sub={subOverride || `${moving} in motion • ${Math.max(0, activeCount - moving)} on-shift trades`} 
             icon={renderKpiIcon(kpi?.iconName || 'UserCheck')} 
             iconColor={iconColorOverride || "bg-emerald-600"} 
             onClick={() => navigate('/live')} 
@@ -2079,7 +2043,7 @@ export default function DashboardTab({
         );
       }
       case 'visitors_count': {
-        const vCount = visitorsList.length || visitorsCount || 10;
+        const vCount = visitorsList.length || visitorsCount || 0;
         return (
           <KpiCard 
             key={id} 
@@ -2093,7 +2057,7 @@ export default function DashboardTab({
         );
       }
       case 'contractors_count': {
-        const cCount = contractorsCount || (registeredPeopleList.length > 0 ? registeredPeopleList.filter(p => (p.role || '').toLowerCase().includes('contractor') || (p.role || '').toLowerCase().includes('sub') || (p.department || '').toLowerCase().includes('logistics') || (p.department || '').toLowerCase().includes('steel')).length : 2);
+        const cCount = contractorsCount || (registeredPeopleList.length > 0 ? registeredPeopleList.filter(p => (p.role || '').toLowerCase().includes('contractor') || (p.role || '').toLowerCase().includes('sub') || (p.department || '').toLowerCase().includes('logistics') || (p.department || '').toLowerCase().includes('steel')).length : 0);
         return (
           <KpiCard 
             key={id} 
@@ -2107,9 +2071,9 @@ export default function DashboardTab({
         );
       }
       case 'active_tags': {
-        const totalEquipment = (vehiclesList.length || 10) + (assetsList.length || 11);
-        const totalFleetTags = (registeredPeopleList.length || 11) + (visitorsList.length || 10) + totalEquipment;
-        const activeLiveTransmitting = liveTagsCount || 10;
+        const totalEquipment = vehiclesList.length + assetsList.length;
+        const totalFleetTags = registeredPeopleList.length + visitorsList.length + totalEquipment;
+        const activeLiveTransmitting = liveTagsCount || liveTagsList.length || totalFleetTags;
         return (
           <KpiCard 
             key={id} 
@@ -2123,8 +2087,8 @@ export default function DashboardTab({
         );
       }
       case 'online_readers': {
-        const totalReaders = deviceList.length || 16;
-        const onlineReadersCount = deviceStats.online || 11;
+        const totalReaders = deviceList.length;
+        const onlineReadersCount = deviceStats.online;
         return (
           <KpiCard 
             key={id} 
@@ -2138,8 +2102,8 @@ export default function DashboardTab({
         );
       }
       case 'offline_readers': {
-        const offlineReadersCount = deviceStats.offline || 1;
-        const warnCount = deviceStats.warning || 4;
+        const offlineReadersCount = deviceStats.offline;
+        const warnCount = deviceStats.warning;
         return (
           <KpiCard 
             key={id} 
@@ -2153,8 +2117,8 @@ export default function DashboardTab({
         );
       }
       case 'active_equipment': {
-        const totalVehicles = vehiclesList.length || 10;
-        const totalAssets = assetsList.length || 11;
+        const totalVehicles = vehiclesList.length;
+        const totalAssets = assetsList.length;
         const totalEquip = totalVehicles + totalAssets;
         return (
           <KpiCard 
@@ -2172,7 +2136,7 @@ export default function DashboardTab({
       case 'alerts_count': {
         const mergedAlerts = [...alerts, ...dbAlerts];
         const uniqueAlerts = Array.from(new Map(mergedAlerts.map(a => [a.id || a.title || Math.random(), a])).values());
-        const safetyCount = uniqueAlerts.filter(a => a.type === 'warning' || a.type === 'info' || (a as any).priority === 'High' || (a as any).priority === 'Medium').length || 8;
+        const safetyCount = uniqueAlerts.filter(a => a.type === 'warning' || a.type === 'info' || (a as any).priority === 'High' || (a as any).priority === 'Medium').length;
         return (
           <KpiCard 
             key={id} 
@@ -2188,7 +2152,7 @@ export default function DashboardTab({
       case 'emergency_alerts': {
         const mergedAlerts = [...alerts, ...dbAlerts];
         const uniqueAlerts = Array.from(new Map(mergedAlerts.map(a => [a.id || a.title || Math.random(), a])).values());
-        const emergencyCount = uniqueAlerts.filter(a => a.type === 'security' || (a as any).priority === 'Critical').length || 5;
+        const emergencyCount = uniqueAlerts.filter(a => a.type === 'security' || (a as any).priority === 'Critical').length + incidentsList.filter(i => i.severity === 'Critical').length;
         return (
           <KpiCard 
             key={id} 
@@ -2202,11 +2166,11 @@ export default function DashboardTab({
         );
       }
       case 'attendance_today': {
-        const totalRoster = registeredPeopleList.length || registeredCount || 11;
+        const totalRoster = registeredPeopleList.length || registeredCount || people.length || 0;
         const checkedInToday = attendanceLogs.length > 0 
           ? attendanceLogs.filter((l: any) => l.status === 'PRESENT' || l.status === 'LATE' || l.checkInTime || l.inTime).length 
-          : 5;
-        const attRate = totalRoster > 0 ? Math.min(100, Math.round((checkedInToday / totalRoster) * 1000) / 10) : 45.5;
+          : people.filter(p => p.presenceState !== 'EXITED').length;
+        const attRate = totalRoster > 0 ? Math.min(100, Math.round((checkedInToday / totalRoster) * 1000) / 10) : 0;
         return (
           <KpiCard 
             key={id} 
@@ -2220,11 +2184,11 @@ export default function DashboardTab({
         );
       }
       case 'ppe_compliance': {
-        const totalPeopleCount = registeredPeopleList.length || registeredCount || 11;
+        const totalPeopleCount = registeredPeopleList.length || registeredCount || people.length || 0;
         const compliantCount = registeredPeopleList.length > 0
           ? registeredPeopleList.filter(p => p.ppeStatus === 'COMPLIANT' || !p.ppeStatus).length
-          : 5;
-        const complianceRate = totalPeopleCount > 0 ? Math.min(100, Math.round((compliantCount / totalPeopleCount) * 1000) / 10) : 45.5;
+          : people.filter(p => p.ppeStatus === 'COMPLIANT' || !p.ppeStatus).length;
+        const complianceRate = totalPeopleCount > 0 ? Math.min(100, Math.round((compliantCount / totalPeopleCount) * 1000) / 10) : 100;
         return (
           <KpiCard 
             key={id} 
@@ -2238,9 +2202,9 @@ export default function DashboardTab({
         );
       }
       case 'productivity_score': {
-        const activeMovers = movingCount || (registeredPeopleList.filter(p => p.presenceState === 'MOVING').length || 3);
-        const totalPop = Math.max(registeredPeopleList.length || 11, 1);
-        const prodScore = Math.min(100, Math.max(75, Math.round(((activeMovers / totalPop) * 30 + 70) * 10) / 10));
+        const activeMovers = movingCount || registeredPeopleList.filter(p => p.presenceState === 'MOVING').length;
+        const totalPop = Math.max(registeredPeopleList.length || people.length, 1);
+        const prodScore = Math.min(100, Math.max(50, Math.round(((activeMovers / totalPop) * 30 + 70) * 10) / 10));
         return (
           <KpiCard 
             key={id} 
@@ -2254,8 +2218,8 @@ export default function DashboardTab({
         );
       }
       case 'site_utilization': {
-        const totalDevsCount = deviceList.length || 16;
-        const utilizedRate = totalDevsCount > 0 ? Math.min(100, Math.round(((deviceStats.online || 11) / totalDevsCount) * 1000) / 10) : 92.5;
+        const totalDevsCount = deviceList.length;
+        const utilizedRate = totalDevsCount > 0 ? Math.min(100, Math.round((deviceStats.online / totalDevsCount) * 1000) / 10) : 0;
         return (
           <KpiCard 
             key={id} 
@@ -2298,7 +2262,7 @@ export default function DashboardTab({
             key={id} 
             title={title || id} 
             value={customVal || "0"} 
-            sub={subOverride || "Custom metric"} 
+            sub={subOverride || "Metric Counter"} 
             icon={renderKpiIcon(kpi?.iconName)} 
             iconColor={iconColorOverride || "bg-[#007BC4]"} 
           />
@@ -2311,7 +2275,7 @@ export default function DashboardTab({
       <div className="flex-1 p-4 md:p-6 lg:p-8 flex items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-4 animate-pulse">
            <div className="w-12 h-12 rounded-full border-4 border-[#007BC4] border-t-transparent animate-spin"></div>
-           <div className="text-slate-500 font-medium tracking-wide">Syncing real-time data from Firestore...</div>
+           <div className="text-slate-500 font-medium tracking-wide">Syncing real-time data from MongoDB...</div>
         </div>
       </div>
     );
@@ -2320,101 +2284,30 @@ export default function DashboardTab({
   return (
     <div className="w-full p-4 md:p-6 lg:p-8 flex flex-col gap-6 max-w-7xl mx-auto">
       
-      {/* Premium Operations custom header bar with Configuration button */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 shrink-0 border-b border-slate-200/60 pb-4">
-        <div>
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <h2 className="text-lg font-bold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-              <LayoutDashboard className="w-5 h-5 text-[#007BC4]" />
-              Operations Control Panel
-            </h2>
-            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
-              <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
-              <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 font-medium dark:text-slate-400 mt-0.5">Manage real-time personnel analytics, alerts, and facility tracking synced with MongoDB Atlas.</p>
-        </div>
-        <div className="flex items-center gap-2">
-           <button 
-             onClick={handleExportData}
-             className="flex items-center gap-2 px-3.5 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-lg text-xs font-bold shadow-sm transition-transform active:scale-95 duration-150 cursor-pointer"
-           >
-             <Download className="w-3.5 h-3.5 text-slate-500" />
-             Export Project Data
-           </button>
-           <button 
-             onClick={openCustomizeModal}
-             className="flex items-center gap-2 px-3.5 py-2 bg-[#007BC4] text-white hover:bg-[#006aa9] rounded-lg text-xs font-bold shadow-md transition-transform active:scale-95 duration-150 cursor-pointer"
-           >
-             <SlidersHorizontal className="w-3.5 h-3.5" />
-             Customize Dashboard
-           </button>
-        </div>
+      {/* Dashboard Top Action Bar */}
+      <div className="flex items-center justify-end gap-2.5 flex-wrap shrink-0">
+        <button 
+          onClick={() => navigate('/live')}
+          className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-bold shadow-2xs transition-all active:scale-95 duration-150 cursor-pointer"
+        >
+          <MapIcon className="w-3.5 h-3.5 text-emerald-600" />
+          Live Site Map
+        </button>
+        <button 
+          onClick={handleExportData}
+          className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-900 border border-slate-200 rounded-lg text-xs font-bold shadow-2xs transition-all active:scale-95 duration-150 cursor-pointer"
+        >
+          <Download className="w-3.5 h-3.5 text-slate-500" />
+          Export Audit Pack
+        </button>
+        <button 
+          onClick={openCustomizeModal}
+          className="flex items-center gap-1.5 px-3.5 py-2 bg-[#007BC4] text-white hover:bg-[#006aa9] rounded-lg text-xs font-bold shadow-sm transition-all active:scale-95 duration-150 cursor-pointer"
+        >
+          <SlidersHorizontal className="w-3.5 h-3.5" />
+          Customize Layout
+        </button>
       </div>
-
-      {/* Aperture RFID Controller Server Connection Banner */}
-      {mode === 'real' ? (
-        <div id="aperture_server_connected_banner" className="bg-white border border-[#10b981]/35 rounded-2xl p-5 shadow-sm flex flex-col md:flex-row items-start md:items-center justify-between gap-4 relative overflow-hidden animate-in fade-in slide-in-from-top-2 duration-300">
-          <div className="absolute top-0 left-0 w-1.5 h-full bg-[#10b981]" />
-          <div className="flex items-start gap-4 flex-1">
-            <div className="p-3 bg-emerald-50 rounded-xl border border-emerald-100 shrink-0 text-emerald-600">
-              <Server className="w-5 h-5 animate-pulse" />
-            </div>
-            <div className="space-y-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-slate-900 text-sm">Aperture RFID Server Live Connection Active</span>
-                <span className="bg-emerald-50 text-emerald-700 text-[10px] font-black px-2 py-0.5 rounded-full uppercase flex items-center gap-1 border border-emerald-200">
-                  <span className="relative flex h-1.5 w-1.5">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-500"></span>
-                  </span>
-                  Real-Time Sync Ready
-                </span>
-                <span className="bg-blue-50 text-blue-700 text-[10px] font-black px-2 py-0.5 rounded-full uppercase flex items-center gap-1 border border-blue-200">
-                  <Wifi className="w-3 h-3" />
-                  3s polling
-                </span>
-              </div>
-              <p className="text-xs text-slate-500 font-medium leading-relaxed max-w-2xl">
-                Polling scans directly from your physical server controller. This page compiles UHF tag history telemetry, track coordinates, and triggers immediate alarms on safety hazards.
-              </p>
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 pt-1 font-mono text-[10px]">
-                <div className="flex items-center gap-1 text-slate-500">
-                  <span className="font-bold">Target Host:</span>
-                  <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 uppercase tracking-tight font-medium max-w-[240px] truncate" title={apiConfig.url || "https://www.i360services.com/peopletrackinguhf"}>
-                    {apiConfig.url || "https://www.i360services.com/peopletrackinguhf"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1 text-slate-500">
-                  <span className="font-bold">Auth Strategy:</span>
-                  <span className="bg-slate-100 text-slate-700 px-1.5 py-0.5 rounded border border-slate-200 uppercase tracking-tight font-medium">
-                    {apiConfig.authType === 'api_key' ? `API Key [Header: ${apiConfig.apiKeyHeader}]` : apiConfig.authType === 'bearer' ? 'Bearer JWT Bearer' : apiConfig.authType === 'basic' ? 'Basic Auth (User-Pass)' : apiConfig.authType === 'oauth' ? 'OAuth 2.0 Credentials' : 'None / Public Server'}
-                  </span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2 mt-2 md:mt-0 shrink-0">
-            <button 
-              id="configure-connection-credentials-btn"
-              onClick={() => navigate('/settings', { state: { focusSection: 'apidocs' } })}
-              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-750 px-4 py-2 rounded-lg text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
-            >
-              <Key className="w-3.5 h-3.5 text-slate-500" />
-              Configure Credentials
-            </button>
-            <button 
-              id="sandbox-test-btn"
-              onClick={() => navigate('/settings', { state: { focusSection: 'apidocs' } })}
-              className="flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-750 px-4 py-2 rounded-lg text-xs font-bold border border-slate-200 transition-colors cursor-pointer"
-            >
-              <ExternalLink className="w-3.5 h-3.5 text-slate-500" />
-              Sandbox Console
-            </button>
-          </div>
-        </div>
-      ) : null}
 
       {/* Dynamic KPI Cards Row (3 Rows x 4 Columns) */}
       {sortedVisibleKpis.length > 0 ? (

@@ -14,6 +14,7 @@ import webSocketService, { WSConnectionStatus } from '../lib/webSocketService';
 import StreamDiagnostics from './StreamDiagnostics';
 import mqttStreamService, { MqttMetrics } from '../lib/mqttService';
 import { globalSseClient } from '../lib/realtimeClients';
+import { useTerminology, useTracking } from '../context/TrackingContext';
 
 export interface DeviceItem {
   id: string;
@@ -49,6 +50,18 @@ export interface DeviceItem {
 
 export default function DevicesTab() {
   const navigate = useNavigate();
+  const { zones } = useTracking();
+  const {
+    personnelSingular,
+    personnelPlural,
+    idBadgeLabel,
+    roleLabel,
+    zoneLabel,
+    siteLabel,
+    organizationType,
+    subcontractors,
+    config
+  } = useTerminology();
 
   // State
   const [devices, setDevices] = useState<DeviceItem[]>([]);
@@ -197,11 +210,19 @@ export default function DevicesTab() {
       console.warn('MongoDB devices listener error:', err);
     });
 
-    const unsubPeople = onSnapshot(collection(db, 'registered_people'), async (snapshot) => {
+    let regPeopleMap = new Map<string, any>();
+    let peopleMap = new Map<string, any>();
+
+    const updateWorkerTags = () => {
+      const mergedMap = new Map<string, any>();
+      regPeopleMap.forEach((v, k) => mergedMap.set(k, v));
+      peopleMap.forEach((v, k) => {
+        if (!mergedMap.has(k)) mergedMap.set(k, v);
+      });
+
       workerTagsList = [];
-      snapshot.forEach(d => {
-        const p = d.data();
-        const tagId = p.hardhatTagId || p.tagId || d.id || p.id;
+      mergedMap.forEach((p, dId) => {
+        const tagId = p.hardhatTagId || p.tagId || dId || p.id;
         workerTagsList.push({
           id: tagId,
           name: `${p.name || 'Worker'} (Hardhat Tag)`,
@@ -234,12 +255,31 @@ export default function DevicesTab() {
         });
       });
       mergeAndSet();
+    };
+
+    const unsubRegPeople = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
+      regPeopleMap = new Map();
+      snapshot.forEach(d => {
+        regPeopleMap.set(d.id, { id: d.id, ...d.data() });
+      });
+      updateWorkerTags();
+    }, (err) => {
+      console.warn('MongoDB registered_people tag listener error:', err);
+    });
+
+    const unsubPeople = onSnapshot(collection(db, 'people'), (snapshot) => {
+      peopleMap = new Map();
+      snapshot.forEach(d => {
+        peopleMap.set(d.id, { id: d.id, ...d.data() });
+      });
+      updateWorkerTags();
     }, (err) => {
       console.warn('MongoDB people tag listener error:', err);
     });
 
     return () => {
       unsubDevices();
+      unsubRegPeople();
       unsubPeople();
     };
   }, []);
@@ -673,7 +713,9 @@ export default function DevicesTab() {
       case 'ble':
         return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-indigo-50 text-indigo-700 border border-indigo-200"><Radio size={12} /> Fixed Gateway</span>;
       case 'rfid_tag':
-        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300"><HardHat size={12} className="text-amber-700" /> Worker Tag</span>;
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300"><Tag size={12} className="text-amber-700" /> {personnelSingular} {idBadgeLabel}</span>;
+      default:
+        return <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-slate-100 text-slate-700 border border-slate-200"><CircleDot size={12} /> Hardware</span>;
     }
   };
 
@@ -1017,7 +1059,7 @@ export default function DevicesTab() {
               </span>
               {[
                 { id: 'all', label: 'All Hardware' },
-                { id: 'rfid_tag', label: 'Worker Wearable Badges' },
+                { id: 'rfid_tag', label: `${personnelSingular} ${idBadgeLabel}s` },
                 { id: 'rfid', label: 'RFID Readers' },
                 { id: 'ble', label: 'Fixed Gateways' }
               ].map(cat => (
@@ -2069,24 +2111,24 @@ export default function DevicesTab() {
 
             {/* Registration & Edit Form */}
             {(actionModalType === 'add' || actionModalType === 'edit') && (
-              <div className="space-y-3 text-xs">
+              <div className="space-y-3.5 text-xs">
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Device ID / MAC</label>
+                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Device ID / MAC *</label>
                     <input
                       type="text"
                       placeholder="e.g. GW-RDR-09"
                       value={editForm.id || ''}
                       disabled={actionModalType === 'edit'}
                       onChange={e => setEditForm({ ...editForm, id: e.target.value })}
-                      className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                      className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono text-[#007BC4] font-bold"
                     />
                   </div>
                   <div>
-                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Display Name</label>
+                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Display Name *</label>
                     <input
                       type="text"
-                      placeholder="e.g. Scaffold Level 4 Gate"
+                      placeholder={`e.g. Primary ${zoneLabel} Gateway`}
                       value={editForm.name || ''}
                       onChange={e => setEditForm({ ...editForm, name: e.target.value })}
                       className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
@@ -2096,25 +2138,45 @@ export default function DevicesTab() {
 
                 <div className="grid grid-cols-2 gap-2">
                   <div>
-                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Category</label>
+                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Device Category</label>
                     <select
                       value={editForm.category || 'rfid'}
                       onChange={e => setEditForm({ ...editForm, category: e.target.value as any })}
                       className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
                     >
-                      <option value="rfid">UHF RFID Reader</option>
-                      <option value="ble">Fixed RFID Gateway</option>
-                      <option value="rfid_tag">RFID Tag</option>
+                      <option value="rfid">UHF RFID Reader / Portal</option>
+                      <option value="ble">Fixed RFID Gateway / Antenna</option>
+                      <option value="rfid_tag">{personnelSingular} {idBadgeLabel} / Tag</option>
                     </select>
                   </div>
                   <div>
-                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Location Zone</label>
-                    <input
-                      type="text"
-                      value={editForm.location || ''}
-                      onChange={e => setEditForm({ ...editForm, location: e.target.value })}
-                      className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
-                    />
+                    <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Location {zoneLabel}</label>
+                    {zones && zones.length > 0 ? (
+                      <select
+                        value={editForm.location || (zones[0]?.name || 'Site Entrance')}
+                        onChange={e => {
+                          const selectedZ = zones.find(z => z.name === e.target.value);
+                          setEditForm({ 
+                            ...editForm, 
+                            location: e.target.value,
+                            zoneId: selectedZ ? selectedZ.id : editForm.zoneId
+                          });
+                        }}
+                        className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                      >
+                        {zones.map(z => (
+                          <option key={z.id} value={z.name}>{z.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        type="text"
+                        placeholder="e.g. Main Entrance Gate"
+                        value={editForm.location || ''}
+                        onChange={e => setEditForm({ ...editForm, location: e.target.value })}
+                        className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -2123,18 +2185,20 @@ export default function DevicesTab() {
                     <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">IP Address</label>
                     <input
                       type="text"
+                      placeholder="192.168.10.150"
                       value={editForm.ip || ''}
                       onChange={e => setEditForm({ ...editForm, ip: e.target.value })}
-                      className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                      className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono"
                     />
                   </div>
                   <div>
                     <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">MAC Address</label>
                     <input
                       type="text"
+                      placeholder="00:1A:2B:88:99:AA"
                       value={editForm.mac || ''}
                       onChange={e => setEditForm({ ...editForm, mac: e.target.value })}
-                      className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                      className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono"
                     />
                   </div>
                 </div>
@@ -2172,15 +2236,15 @@ export default function DevicesTab() {
                   <p className="text-[10px] text-slate-500 mt-1">Comma-separated list of integration protocols (e.g., MQTT, LLRP, HTTP REST).</p>
                 </div>
 
-                <div className="flex justify-end gap-2 pt-2">
-                  <button onClick={() => setActionModalType(null)} className="px-4 py-2 bg-slate-100 text-slate-700 font-bold rounded-xl">
+                <div className="flex justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                  <button onClick={() => setActionModalType(null)} className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold rounded-xl">
                     Cancel
                   </button>
                   <button
                     onClick={actionModalType === 'add' ? handleSaveNewDevice : handleSaveEditDevice}
-                    className="px-4 py-2 bg-[#007BC4] text-white font-bold rounded-xl shadow hover:bg-blue-700 transition"
+                    className="px-4 py-2 bg-[#007BC4] text-white font-bold rounded-xl shadow hover:bg-blue-700 transition flex items-center gap-1.5"
                   >
-                    Save to MongoDB
+                    <Save size={14} /> Save Device to MongoDB
                   </button>
                 </div>
               </div>

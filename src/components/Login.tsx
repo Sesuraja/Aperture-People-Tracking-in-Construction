@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { db, doc, setDoc } from '../lib/db';
-import { ShieldAlert, PlayCircle, Loader2, Mail, Lock, User, Shield, LogIn, UserPlus } from 'lucide-react';
+import { ShieldAlert, PlayCircle, Loader2, Mail, Lock, User, Shield, LogIn, UserPlus, Building2 } from 'lucide-react';
 import ApertureLogo, { ApertureLogoMark } from './ApertureLogo';
+import { safeStorage } from '../lib/safeStorage';
 
 interface LoginProps {
   onLoginSuccess: (mode: 'real' | 'demo') => void;
@@ -10,6 +11,10 @@ interface LoginProps {
 export default function Login({ onLoginSuccess }: LoginProps) {
   const [isSignUp, setIsSignUp] = useState(false);
   const [fullName, setFullName] = useState('');
+<<<<<<< HEAD
+=======
+  const [organizationName, setOrganizationName] = useState('');
+>>>>>>> 02af2d7 (chore: ensure hardware/gao-native route is deployed)
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'admin' | 'manager' | 'operator'>('admin');
@@ -17,7 +22,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const [isLoading, setIsLoading] = useState(false);
 
   const handleDemoAccess = () => {
-    localStorage.setItem('gao_app_mode', 'demo');
+    safeStorage.setItem('gao_app_mode', 'demo');
     onLoginSuccess('demo');
   };
 
@@ -35,14 +40,34 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         const apiRes = await fetch('/api/auth/register', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, password, name: fullName, role })
+          body: JSON.stringify({
+            email,
+            password,
+            name: fullName.trim() || email.split('@')[0],
+            role,
+            organizationName: organizationName.trim() || `${fullName || 'Org'}'s Team`
+          })
         });
         const apiData = await apiRes.json();
         if (!apiRes.ok || !apiData.token) {
           throw new Error(apiData.error || 'Registration failed');
         }
 
-        localStorage.setItem('gao_jwt_token', apiData.token);
+        // Clear any previous organization cached demo entities from safeStorage
+        const keysToClear = [
+          'gao_db_assets', 'gao_db_vehicles', 'gao_db_cameras', 'gao_db_sensors',
+          'gao_db_infrastructure', 'gao_db_zones', 'gao_custom_floorplan',
+          'gao_custom_svg_source', 'gao_custom_sites_v2', 'gao_custom_map_sites',
+          'gao_project_properties'
+        ];
+        keysToClear.forEach(k => safeStorage.removeItem(k));
+
+        safeStorage.setItem('gao_jwt_token', apiData.token);
+        const orgId = apiData.user?.organizationId || apiData.organization?.id || 'demo';
+        safeStorage.setItem('gao_active_organization', orgId);
+        safeStorage.setItem('gao_active_project', orgId);
+        safeStorage.setItem('gao_app_mode', 'real');
+
         const userId = apiData.user?.id || `usr_${Date.now()}`;
 
         // Store user role and metadata in MongoDB settings collection
@@ -51,6 +76,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           email: email,
           displayName: fullName.trim() || (email || "").split('@')[0],
           role: role,
+          organizationId: orgId,
           createdAt: new Date().toISOString()
         }, { merge: true });
 
@@ -65,7 +91,20 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           throw new Error(apiData.error || 'Invalid email or password');
         }
 
-        localStorage.setItem('gao_jwt_token', apiData.token);
+        // Clear old cached entity data on fresh login to sync from MongoDB
+        const keysToClear = [
+          'gao_db_assets', 'gao_db_vehicles', 'gao_db_cameras', 'gao_db_sensors',
+          'gao_db_infrastructure', 'gao_db_zones', 'gao_custom_floorplan',
+          'gao_custom_svg_source', 'gao_custom_sites_v2', 'gao_custom_map_sites',
+          'gao_project_properties'
+        ];
+        keysToClear.forEach(k => safeStorage.removeItem(k));
+
+        safeStorage.setItem('gao_jwt_token', apiData.token);
+        const orgId = apiData.user?.organizationId || apiData.organization?.id || 'demo';
+        safeStorage.setItem('gao_active_organization', orgId);
+        safeStorage.setItem('gao_active_project', orgId);
+        safeStorage.setItem('gao_app_mode', 'real');
       }
       onLoginSuccess('real');
     } catch (err: any) {
@@ -98,15 +137,20 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
   {/* Product Title */}
   <h2 className="relative text-lg font-extrabold text-white tracking-tight">
-    People Tracking in Construction
+    {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config')
+      ? JSON.parse(localStorage.getItem('gao_industry_config') || '{}').appTitle || 'Aperture People Tracking'
+      : 'Aperture People Tracking'}
   </h2>
 
   {/* Tagline */}
   <p className="relative mt-1 text-xs text-sky-200/80 max-w-xs mx-auto leading-relaxed">
-    Enterprise RFID Workforce Tracking, Live Location Monitoring & AI Safety Telemetry
+    {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config')
+      ? JSON.parse(localStorage.getItem('gao_industry_config') || '{}').appSubtitle || 'Enterprise RFID Workforce Tracking, Live Location Monitoring & AI Safety Telemetry'
+      : 'Enterprise RFID Workforce Tracking, Live Location Monitoring & AI Safety Telemetry'}
   </p>
 
 </div>
+
 
         {/* Tab Switcher */}
         <div className="flex border-b border-slate-200 bg-slate-50">
@@ -141,22 +185,40 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           <form onSubmit={handleAuth} className="space-y-4">
             
             {isSignUp && (
-              <div>
-                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                  Full Name
-                </label>
-                <div className="relative">
-                  <User className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                  <input 
-                    type="text" 
-                    required={isSignUp}
-                    value={fullName}
-                    onChange={e => setFullName(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition"
-                    placeholder="John Doe"
-                  />
+              <>
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+                    Company / Organization Name
+                  </label>
+                  <div className="relative">
+                    <Building2 className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input 
+                      type="text" 
+                      value={organizationName}
+                      onChange={e => setOrganizationName(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition"
+                      placeholder="e.g. Apex Construction Group"
+                    />
+                  </div>
                 </div>
-              </div>
+
+                <div>
+                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+                    Full Name
+                  </label>
+                  <div className="relative">
+                    <User className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input 
+                      type="text" 
+                      required={isSignUp}
+                      value={fullName}
+                      onChange={e => setFullName(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition"
+                      placeholder="John Doe"
+                    />
+                  </div>
+                </div>
+              </>
             )}
 
             <div>

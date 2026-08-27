@@ -47,20 +47,21 @@ import {
 } from "lucide-react";
 import RealTimeConnectionsTab from "./RealTimeConnectionsTab";
 import WebhookInspector from "./WebhookInspector";
-import HardwareIntegrationForm from "./HardwareIntegrationForm";
 import { RfidApiConfiguration } from "./RfidApiConfiguration";
 import DeveloperApiTab from "./DeveloperApiTab";
 import ThirdPartyApiIntegrationSection from "./ThirdPartyApiIntegrationSection";
 import DirectHardwareIntegrationSection from "./DirectHardwareIntegrationSection";
 import MongoDbConfigurationSection from "./MongoDbConfigurationSection";
+import IndustryConfigurationSection from "./IndustryConfigurationSection";
 import { gaoApi, DEFAULT_HOST } from "../lib/gaoApi";
-import { doc, getDoc, setDoc, isMongoActive, db } from "../lib/db";
+import { doc, getDoc, setDoc, onSnapshot, isMongoActive, db } from "../lib/db";
 import { AppModeContext } from "../App";
 
 export default function SettingsTab() {
   const { mode } = React.useContext(AppModeContext);
   const location = useLocation();
-  const [activeSection, setActiveSection] = useState("general");
+  const [activeSection, setActiveSection] = useState("industry");
+
 
   useEffect(() => {
     if (location.state && (location.state as any).focusSection) {
@@ -76,13 +77,66 @@ export default function SettingsTab() {
   const [saveSuccessNotice, setSaveSuccessNotice] = useState<string | null>(null);
 
   // 1. General Settings States
-  const [companyName, setCompanyName] = useState("Aperture System Administration");
+  const [companyName, setCompanyName] = useState("Aperture Construction Systems");
   const [systemTimezone, setSystemTimezone] = useState("UTC (Coordinated Universal Time)");
   const [dataRetentionDays, setDataRetentionDays] = useState(90);
   const [currencySymbol, setCurrencySymbol] = useState("$ USD");
-  const [siteLocation, setSiteLocation] = useState("Building A - Headquarters Facility");
+  const [siteLocation, setSiteLocation] = useState("Tower 1 - Metro Commercial Build");
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [systemLanguage, setSystemLanguage] = useState("English (US)");
+
+  // Real-time listener for global settings stored in MongoDB Atlas
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "settings", "global"), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.companyName) setCompanyName(data.companyName);
+        if (data.systemTimezone) setSystemTimezone(data.systemTimezone);
+        if (data.dataRetentionDays !== undefined) setDataRetentionDays(data.dataRetentionDays);
+        if (data.currencySymbol) setCurrencySymbol(data.currencySymbol);
+        if (data.siteLocation) setSiteLocation(data.siteLocation);
+        if (data.maintenanceMode !== undefined) setMaintenanceMode(data.maintenanceMode);
+        if (data.systemLanguage) setSystemLanguage(data.systemLanguage);
+        if (data.apiUrl) setApiUrl(data.apiUrl);
+        if (data.demoMode !== undefined) setApiDemoMode(data.demoMode);
+        if (data.loiteringThreshold !== undefined) setLoiteringThreshold(data.loiteringThreshold);
+        if (data.idleAlertThreshold !== undefined) setIdleAlertThreshold(data.idleAlertThreshold);
+        if (data.occupancyThresholds) setOccupancyThresholds(data.occupancyThresholds);
+        if (data.rfidSensitivity) setRfidSensitivity(data.rfidSensitivity);
+        if (data.autoExclusionZones !== undefined) setAutoExclusionZones(data.autoExclusionZones);
+        if (data.uncardedPersonnelAlarm) setUncardedPersonnelAlarm(data.uncardedPersonnelAlarm);
+        if (data.geofenceProximityEnabled !== undefined) setGeofenceProximityEnabled(data.geofenceProximityEnabled);
+        if (data.geofenceProximityBufferMeters !== undefined) setGeofenceProximityBufferMeters(data.geofenceProximityBufferMeters);
+        if (data.geofenceStayDurationThresholdSec !== undefined) setGeofenceStayDurationThresholdSec(data.geofenceStayDurationThresholdSec);
+        if (data.geofenceNotificationMethods) setGeofenceNotificationMethods(data.geofenceNotificationMethods);
+        if (data.geofenceSeverityPolicies) setGeofenceSeverityPolicies(data.geofenceSeverityPolicies);
+        if (data.antennaPower !== undefined) setAntennaPower(data.antennaPower);
+        if (data.scanFrequency !== undefined) setScanFrequency(data.scanFrequency);
+        if (data.turnstileAutoLock !== undefined) setTurnstileAutoLock(data.turnstileAutoLock);
+        if (data.gatewayProtocol) setGatewayProtocol(data.gatewayProtocol);
+        if (data.readerPort !== undefined) setReaderPort(data.readerPort);
+        if (data.heartbeatInterval !== undefined) setHeartbeatInterval(data.heartbeatInterval);
+        if (data.aiModel) setAiModel(data.aiModel);
+        if (data.anomalyScanSensitivity) setAnomalyScanSensitivity(data.anomalyScanSensitivity);
+        if (data.aiPromptCustomizer) setAiPromptCustomizer(data.aiPromptCustomizer);
+        if (data.autoAnalyzeIncidents !== undefined) setAutoAnalyzeIncidents(data.autoAnalyzeIncidents);
+        if (data.aiThreatThreshold !== undefined) setAiThreatThreshold(data.aiThreatThreshold);
+        if (data.auditRetentionDays !== undefined) setAuditRetentionDays(data.auditRetentionDays);
+        if (data.cryptoHashing !== undefined) setCryptoHashing(data.cryptoHashing);
+        if (data.complianceFrameworks) setComplianceFrameworks(data.complianceFrameworks);
+        if (data.autoGenerateReports !== undefined) setAutoGenerateReports(data.autoGenerateReports);
+        if (data.reportRecipientEmail) setReportRecipientEmail(data.reportRecipientEmail);
+        if (data.emailAlerts !== undefined) setEmailAlerts(data.emailAlerts);
+        if (data.emailRecipients) setEmailRecipients(data.emailRecipients);
+        if (data.smsAlerts !== undefined) setSmsAlerts(data.smsAlerts);
+        if (data.smsRecipients) setSmsRecipients(data.smsRecipients);
+        if (data.slackWebhookUrl) setSlackWebhookUrl(data.slackWebhookUrl);
+        if (data.systemSounds !== undefined) setSystemSounds(data.systemSounds);
+        if (data.mqttBrokerUrl) setMqttBrokerUrl(data.mqttBrokerUrl);
+      }
+    });
+    return () => unsub();
+  }, []);
 
   // 2. Security & Tracking States
   const [loiteringThreshold, setLoiteringThreshold] = useState(300);
@@ -147,7 +201,7 @@ export default function SettingsTab() {
     gamp5: true,
   });
   const [autoGenerateReports, setAutoGenerateReports] = useState(true);
-  const [reportRecipientEmail, setReportRecipientEmail] = useState("compliance@gaostaff.com");
+  const [reportRecipientEmail, setReportRecipientEmail] = useState("compliance@aperture-construction.com");
 
   // Custom API Authentication states
   const [authType, setAuthType] = useState("none");
@@ -188,7 +242,7 @@ export default function SettingsTab() {
   // Notification settings
   const [emailAlerts, setEmailAlerts] = useState(true);
   const [emailRecipients, setEmailRecipients] = useState(
-    "admin@gaostaff.com, security@gaostaff.com"
+    "admin@aperture-construction.com, safety@aperture-construction.com"
   );
   const [smsAlerts, setSmsAlerts] = useState(false);
   const [smsRecipients, setSmsRecipients] = useState("+1-800-555-0199");
@@ -317,7 +371,7 @@ export default function SettingsTab() {
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
   // Aperture RFID Integration States
-  const [apertureHost, setApertureHost] = useState("https://www.i360services.com/peopletrackinguhf");
+  const [apertureHost, setApertureHost] = useState("https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io");
   const [apertureApiKeyInput, setApertureApiKeyInput] = useState("");
   const [apertureApiKeyMasked, setApertureApiKeyMasked] = useState("••••••••••••");
   const [apertureApiKeyConfigured, setApertureApiKeyConfigured] = useState(false);
@@ -471,20 +525,20 @@ export default function SettingsTab() {
         setUsers([
           {
             uid: "demo_user_1",
-            email: "operator_demo@gaostaff.com",
-            displayName: "Jane Doe (Demo Operator)",
+            email: "operator@aperture-construction.com",
+            displayName: "Jane Doe (Site Operator)",
             role: "operator",
           },
           {
             uid: "demo_user_2",
-            email: "manager_demo@gaostaff.com",
-            displayName: "John Smith (Demo Manager)",
+            email: "manager@aperture-construction.com",
+            displayName: "John Smith (Site Manager)",
             role: "manager",
           },
           {
             uid: "demo_user_3",
-            email: "sigmund.t.d@gaostaff.com",
-            displayName: "Sigmund T.D (Demo Admin)",
+            email: "admin@aperture-construction.com",
+            displayName: "Marcus Vance (System Admin)",
             role: "admin",
           },
         ]);
@@ -511,7 +565,7 @@ export default function SettingsTab() {
           console.warn("Could not fetch user list from backend admin endpoint:", fetchErr);
         }
 
-        // 2. Load role_permissions document from Firestore
+        // 2. Load role_permissions document from MongoDB
         try {
           const roleDoc = await getDoc(doc(db, "settings", "role_permissions"));
           if (roleDoc.exists()) {
@@ -527,7 +581,7 @@ export default function SettingsTab() {
           setRolePermissions(DEFAULT_ROLE_PERMISSIONS);
         }
 
-        // 3. Load custom_roles document from Firestore
+        // 3. Load custom_roles document from MongoDB
         try {
           const customRolesDoc = await getDoc(doc(db, "settings", "custom_roles"));
           if (customRolesDoc.exists() && customRolesDoc.data().roles) {
@@ -597,27 +651,27 @@ export default function SettingsTab() {
           id: "audit_demo_1",
           timestamp: new Date(Date.now() - 3600000 * 2).toISOString(),
           userId: "demo_user_3",
-          userEmail: "sigmund.t.d@gaostaff.com",
+          userEmail: "admin@aperture-construction.com",
           action: "ADMIN_CHANGE_USER_ROLE",
           resource: "users",
-          details: { targetUser: "operator_demo@gaostaff.com", prevRole: "viewer", newRole: "operator" },
+          details: { targetUser: "operator@aperture-construction.com", prevRole: "viewer", newRole: "operator" },
           ip: "192.168.1.100"
         },
         {
           id: "audit_demo_2",
           timestamp: new Date(Date.now() - 3600000 * 5).toISOString(),
           userId: "demo_user_3",
-          userEmail: "sigmund.t.d@gaostaff.com",
+          userEmail: "admin@aperture-construction.com",
           action: "ADMIN_CREATE_USER",
           resource: "users",
-          details: { targetEmail: "manager_demo@gaostaff.com", role: "manager" },
+          details: { targetEmail: "manager@aperture-construction.com", role: "manager" },
           ip: "192.168.1.100"
         },
         {
           id: "audit_demo_3",
           timestamp: new Date(Date.now() - 3600000 * 24).toISOString(),
           userId: "demo_user_3",
-          userEmail: "sigmund.t.d@gaostaff.com",
+          userEmail: "admin@aperture-construction.com",
           action: "ADMIN_UPDATE_PERMISSIONS",
           resource: "role_permissions",
           details: { updatedRoles: ["operator", "security"] },
@@ -795,7 +849,7 @@ export default function SettingsTab() {
         console.warn("Backend permissions proxy save non-fatal:", proxyErr);
       }
 
-      setActionSuccessMessage("Successfully saved role page permissions matrix to Firestore and MongoDB!");
+      setActionSuccessMessage("Successfully saved role page permissions matrix to MongoDB database!");
       window.dispatchEvent(new CustomEvent("gao-refresh-claims"));
     } catch (err: any) {
       setActionErrorMessage("Failed to save permissions matrix: " + err.message);
@@ -1448,7 +1502,7 @@ export default function SettingsTab() {
           doc(db, "settings", `user_settings_default`),
           {
             userId: "default",
-            email: "sigmund.t.d@gaostaff.com",
+            email: "admin@aperture-construction.com",
             legacyGaoApiKey,
             updatedAt: new Date().toISOString(),
           },
@@ -1615,6 +1669,18 @@ export default function SettingsTab() {
 
         <nav className="flex flex-col gap-1">
           <button
+            onClick={() => setActiveSection("industry")}
+            id="settings_industry_tab"
+            className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
+              activeSection === "industry" || activeSection === "usecase" || activeSection === "presets"
+                ? "bg-[#007BC4] text-white shadow-sm"
+                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+            }`}
+          >
+            <Sparkles className="w-4 h-4 text-amber-400" /> Industry & Use-Case Customizer
+          </button>
+
+          <button
             onClick={() => setActiveSection("third_party_api")}
             id="settings_third_party_api_tab"
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
@@ -1625,6 +1691,7 @@ export default function SettingsTab() {
           >
             <Radio className="w-4 h-4 text-cyan-400" /> Option 1: Third-Party API Integration
           </button>
+
 
           <button
             onClick={() => setActiveSection("direct_hardware")}
@@ -1730,11 +1797,19 @@ export default function SettingsTab() {
             </div>
           )}
 
+          {/* SECTION 0: INDUSTRY & DOMAIN CUSTOMIZER */}
+          {(activeSection === "industry" || activeSection === "usecase" || activeSection === "presets") && (
+            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
+              <IndustryConfigurationSection />
+            </div>
+          )}
+
           {/* SECTION 1: GENERAL PREFERENCES */}
           {activeSection === "general" && (
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
               <div>
                 <h3 className="text-xl font-bold text-slate-900">General Preferences</h3>
+
                 <p className="text-slate-500 text-xs font-medium mt-1">
                   Configure corporate system information, timezone, currency, and global default policies.
                 </p>
@@ -2738,7 +2813,7 @@ export default function SettingsTab() {
                     <ShieldCheck className="w-6 h-6 text-[#007BC4]" /> Access Control, Custom Roles & Page Permissions Matrix
                   </h3>
                   <p className="text-slate-500 text-xs font-medium mt-1">
-                    Manage role-based page visibility, provision custom staff roles, and configure individual page access overrides. All matrix configurations sync directly to MongoDB & Firestore.
+                    Manage role-based page visibility, provision custom staff roles, and configure individual page access overrides. All matrix configurations sync directly to MongoDB database.
                   </p>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">

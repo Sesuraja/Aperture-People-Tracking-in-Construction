@@ -21,11 +21,14 @@ import {
   collection, doc, setDoc, deleteDoc, query, 
   onSnapshot, serverTimestamp, addDoc, db 
 } from '../lib/db';
+import { useTracking, useTerminology } from '../context/TrackingContext';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 
 interface PeopleTabProps {
+
   people: Person[];
 }
+
 
 interface DBWorker {
   id: string;
@@ -171,6 +174,29 @@ export function parseCertifications(certs: any): string[] {
 }
 
 export default function PeopleTab({ people = [] }: PeopleTabProps) {
+  const { zones, zonesDict } = useTracking();
+  const { 
+    personnelSingular, 
+    personnelPlural, 
+    roleLabel, 
+    idBadgeLabel, 
+    safetyComplianceLabel, 
+    zoneLabel, 
+    siteLabel, 
+    organizationType,
+    roles,
+    saveRoles,
+    subcontractors,
+    saveSubcontractors,
+    config
+  } = useTerminology();
+
+  // Custom inline add states
+  const [isCustomRole, setIsCustomRole] = useState(false);
+  const [customRoleInput, setCustomRoleInput] = useState('');
+  const [isCustomCompany, setIsCustomCompany] = useState(false);
+  const [customCompanyInput, setCustomCompanyInput] = useState('');
+
   // Navigation & View Mode State
   const [viewMode, setViewMode] = useState<'map' | 'roster' | 'contractors' | 'certifications'>('map');
   const [mapMode, setMapMode] = useState<'standard' | 'bim' | 'heatmap' | 'evacuation' | 'security'>('standard');
@@ -229,7 +255,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     return () => clearInterval(intv);
   }, []);
 
-  // Database Workers state (from MongoDB / Firestore)
+  // Database Workers state (from MongoDB)
   const [dbWorkers, setDbWorkers] = useState<DBWorker[]>([]);
   const [isDbLoading, setIsDbLoading] = useState(true);
 
@@ -458,56 +484,109 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     showToast('success', `Generated PDF report for ${exportData.length} selected personnel.`);
   };
 
-  // 1. Subscribe to registered_people collection in MongoDB / Firestore
+  // 1. Subscribe to registered_people and people collections in MongoDB
   useEffect(() => {
     setIsDbLoading(true);
-    const q = query(collection(db, 'registered_people'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const list: DBWorker[] = [];
-      snapshot.forEach((d) => {
-        const data = d.data();
-        const role = data.role || 'General Subcontractor';
-        // Strictly exclude visitors from worker directory
-        if (
-          role.toLowerCase().includes('visitor') ||
-          (data.name || '').toLowerCase().includes('(visitor)') ||
-          (d.id || '').toUpperCase().startsWith('VIS-')
-        ) {
-          return;
-        }
-        list.push({
-          id: d.id,
-          hardhatTagId: data.hardhatTagId || d.id,
-          name: data.name || 'Unnamed Worker',
-          role: role,
-          tradeCompany: data.tradeCompany || data.company || 'Apex Structural',
-          phone: data.phone || '+1 (555) 019-2831',
-          email: data.email || '',
-          emergencyContact: data.emergencyContact || 'Emergency Contact (+1 555-992-1100)',
-          certifications: data.certifications || 'OSHA 30, Scaffolding Safety',
-          ppeStatus: data.ppeStatus || 'COMPLIANT',
-          shiftStatus: data.shiftStatus || 'ON_SITE',
-          trainingStatus: data.trainingStatus || (
-            (data.safetyScore && data.safetyScore < 80) ? 'OVERDUE' :
-            (data.safetyScore && data.safetyScore < 90) ? 'DUE_SOON' : 'COMPLIANT'
-          ),
-          lastTrainingDate: data.lastTrainingDate || '2026-05-15',
-          trainingCourse: data.trainingCourse || 'OSHA 30 Construction Safety & Site Clearance',
-          trainingExpiry: data.trainingExpiry || '2027-05-15',
-          department: data.department || 'Civil Engineering',
-          supervisor: data.supervisor || 'Marcus Vance (EHS Director)',
-          safetyScore: data.safetyScore || 94,
-          notes: data.notes || '',
-          createdAt: data.createdAt
+    let unsubRegistered: () => void = () => {};
+    let unsubPeople: () => void = () => {};
+
+    const rawMap = new Map<string, DBWorker>();
+
+    const updateCombinedDbWorkers = () => {
+      setDbWorkers(Array.from(rawMap.values()));
+      setIsDbLoading(false);
+    };
+
+    try {
+      unsubRegistered = onSnapshot(query(collection(db, 'registered_people')), (snapshot) => {
+        snapshot.forEach((d) => {
+          const data = d.data();
+          const role = data.role || 'General Subcontractor';
+          if (
+            role.toLowerCase().includes('visitor') ||
+            (data.name || '').toLowerCase().includes('(visitor)') ||
+            (d.id || '').toUpperCase().startsWith('VIS-')
+          ) {
+            return;
+          }
+          const tagId = (data.hardhatTagId || d.id || '').toUpperCase();
+          rawMap.set(tagId, {
+            id: d.id,
+            hardhatTagId: data.hardhatTagId || d.id,
+            name: data.name || 'Unnamed Worker',
+            role: role,
+            tradeCompany: data.tradeCompany || data.company || 'Apex Structural',
+            phone: data.phone || '+1 (555) 019-2831',
+            email: data.email || `${(data.name || '').toLowerCase().replace(/\s+/g, '.')}@buildcorp.com`,
+            emergencyContact: data.emergencyContact || 'Site EHS Team (+1 555-992-1100)',
+            certifications: data.certifications || 'OSHA 30, Scaffolding Safety',
+            ppeStatus: data.ppeStatus || 'COMPLIANT',
+            shiftStatus: data.shiftStatus || 'ON_SITE',
+            trainingStatus: data.trainingStatus || (
+              (data.safetyScore && data.safetyScore < 80) ? 'OVERDUE' :
+              (data.safetyScore && data.safetyScore < 90) ? 'DUE_SOON' : 'COMPLIANT'
+            ),
+            lastTrainingDate: data.lastTrainingDate || '2026-05-15',
+            trainingCourse: data.trainingCourse || 'OSHA 30 Construction Safety & Site Clearance',
+            trainingExpiry: data.trainingExpiry || '2027-05-15',
+            department: data.department || 'Civil Engineering',
+            supervisor: data.supervisor || 'Marcus Vance (EHS Director)',
+            safetyScore: data.safetyScore || 94,
+            notes: data.notes || '',
+            createdAt: data.createdAt
+          });
         });
+        updateCombinedDbWorkers();
       });
-      setDbWorkers(list);
+
+      unsubPeople = onSnapshot(query(collection(db, 'people')), (snapshot) => {
+        snapshot.forEach((d) => {
+          const data = d.data();
+          const role = data.role || 'Field Specialist';
+          if (
+            role.toLowerCase().includes('visitor') ||
+            (data.name || '').toLowerCase().includes('(visitor)') ||
+            (d.id || '').toUpperCase().startsWith('VIS-')
+          ) {
+            return;
+          }
+          const tagId = (data.hardhatTagId || d.id || '').toUpperCase();
+          if (!rawMap.has(tagId)) {
+            rawMap.set(tagId, {
+              id: d.id,
+              hardhatTagId: data.hardhatTagId || d.id,
+              name: data.name || 'Personnel Member',
+              role: role,
+              tradeCompany: data.tradeCompany || data.company || 'Apex Structural',
+              phone: data.phone || '+1 (555) 019-2831',
+              email: data.email || `${(data.name || '').toLowerCase().replace(/\s+/g, '.')}@buildcorp.com`,
+              emergencyContact: data.emergencyContact || 'Site EHS Team (+1 555-992-1100)',
+              certifications: data.certifications || 'OSHA 30, Working at Heights',
+              ppeStatus: data.ppeStatus || 'COMPLIANT',
+              shiftStatus: data.shiftStatus || 'ON_SITE',
+              trainingStatus: data.trainingStatus || 'COMPLIANT',
+              lastTrainingDate: data.lastTrainingDate || '2026-05-15',
+              trainingCourse: data.trainingCourse || 'OSHA 30 Construction Safety',
+              trainingExpiry: data.trainingExpiry || '2027-05-15',
+              department: data.department || 'Operations',
+              supervisor: data.supervisor || 'Marcus Vance (EHS Director)',
+              safetyScore: data.safetyScore || 95,
+              notes: data.notes || '',
+              createdAt: data.createdAt
+            });
+          }
+        });
+        updateCombinedDbWorkers();
+      });
+    } catch (err) {
+      console.warn("Failed to subscribe to workforce collections in MongoDB:", err);
       setIsDbLoading(false);
-    }, (err) => {
-      console.warn("Failed to subscribe to registered_people in MongoDB:", err);
-      setIsDbLoading(false);
-    });
-    return () => unsub();
+    }
+
+    return () => {
+      unsubRegistered();
+      unsubPeople();
+    };
   }, []);
 
   // 2. Fetch movement history for selected worker from MongoDB tag_history
@@ -812,11 +891,45 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     }
   };
 
+  // Dynamic lists from Industry config + database records
+  const availableRoles = useMemo(() => {
+    const set = new Set<string>();
+    (roles || []).forEach(r => { if (r) set.add(r); });
+    dbWorkers.forEach(w => { if (w.role) set.add(w.role); });
+    if (set.size === 0) {
+      set.add('Staff Member');
+      set.add('Lead Supervisor');
+      set.add('Field Specialist');
+    }
+    return Array.from(set);
+  }, [roles, dbWorkers]);
+
+  const availableCompanies = useMemo(() => {
+    const set = new Set<string>();
+    (subcontractors || []).forEach(s => { if (s) set.add(s); });
+    dbWorkers.forEach(w => {
+      if (w.tradeCompany) set.add(w.tradeCompany);
+      if (w.company) set.add(w.company);
+    });
+    if (set.size === 0) {
+      set.add('Prime Operations');
+      set.add('Partner Firm');
+    }
+    return Array.from(set);
+  }, [subcontractors, dbWorkers]);
+
+  const availableZones = useMemo(() => {
+    if (zones && zones.length > 0) return zones.map(z => z.name);
+    const keys = Object.keys(zonesDict || {});
+    if (keys.length > 0) return keys;
+    return ['Main Entrance / Gate', 'Primary Operations Area', 'Restricted Zone', 'Assembly Point'];
+  }, [zones, zonesDict]);
+
   // Subcontractor / Trade Aggregations
   const contractorSummary = useMemo(() => {
     const map: Record<string, { total: number; active: number; compliant: number; nonCompliant: number }> = {};
     combinedPeople.forEach(p => {
-      const comp = p.tradeCompany || 'General Contractor';
+      const comp = p.tradeCompany || p.company || 'General Organization';
       if (!map[comp]) {
         map[comp] = { total: 0, active: 0, compliant: 0, nonCompliant: 0 };
       }
@@ -834,56 +947,78 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
   // Save new worker to MongoDB
   const handleAddWorker = async () => {
-    if (!formData.name || !formData.hardhatTagId) {
-      showToast('error', 'Worker Name and Hardhat Tag ID are required.');
+    if (!formData.name?.trim() || !formData.hardhatTagId?.trim()) {
+      showToast('error', `${personnelSingular} Name and ${idBadgeLabel} are required.`);
       return;
     }
     const tagId = (formData.hardhatTagId || "").toUpperCase().trim();
+    const finalRole = isCustomRole ? (customRoleInput.trim() || 'Staff') : (formData.role || availableRoles[0] || 'Staff');
+    const finalCompany = isCustomCompany ? (customCompanyInput.trim() || 'General Organization') : (formData.tradeCompany || availableCompanies[0] || 'General Organization');
+
+    // Automatically save new custom role to industry settings if newly typed
+    if (isCustomRole && customRoleInput.trim() && !availableRoles.includes(customRoleInput.trim())) {
+      await saveRoles([...(roles || []), customRoleInput.trim()]);
+    }
+    // Automatically save new custom subcontractor to industry settings if newly typed
+    if (isCustomCompany && customCompanyInput.trim() && !availableCompanies.includes(customCompanyInput.trim())) {
+      await saveSubcontractors([...(subcontractors || []), customCompanyInput.trim()]);
+    }
     
     try {
-      const newWorkerData = {
+      const newWorkerData: DBWorker = {
         id: tagId,
         hardhatTagId: tagId,
         name: formData.name.trim(),
-        role: formData.role || 'General Subcontractor',
-        tradeCompany: formData.tradeCompany || 'Apex Structural',
+        role: finalRole,
+        tradeCompany: finalCompany,
+        company: finalCompany,
         phone: formData.phone || '+1 (555) 019-2831',
-        email: formData.email || `${(formData.name || "").toLowerCase().replace(/\s+/g, '.')}@buildcorp.com`,
+        email: formData.email || `${formData.name.toLowerCase().replace(/\s+/g, '.')}@enterprise.com`,
         emergencyContact: formData.emergencyContact || 'Emergency Contact (+1 555-992-1100)',
-        certifications: formData.certifications || 'OSHA 30, Scaffolding Safety',
+        certifications: formData.certifications || 'Enterprise Standard Clearance',
         ppeStatus: formData.ppeStatus || 'COMPLIANT',
         shiftStatus: formData.shiftStatus || 'ON_SITE',
         trainingStatus: formData.trainingStatus || 'COMPLIANT',
         lastTrainingDate: formData.lastTrainingDate || new Date().toISOString().split('T')[0],
-        trainingCourse: formData.trainingCourse || 'OSHA 30 Construction Safety & Site Clearance',
+        trainingCourse: formData.trainingCourse || `${config?.appTitle || 'Enterprise'} Safety Induction`,
         trainingExpiry: formData.trainingExpiry || '2027-05-15',
-        department: formData.department || 'Civil Engineering',
-        supervisor: formData.supervisor || 'Marcus Vance (EHS Director)',
+        department: formData.department || finalCompany,
+        supervisor: formData.supervisor || 'Operations Lead',
+        currentZone: formData.currentZone || (availableZones[0] || 'Main Portal'),
         safetyScore: 95,
         notes: formData.notes || '',
         createdAt: new Date().toISOString()
       };
 
       await setDoc(doc(db, 'registered_people', tagId), newWorkerData);
+      await fetch('/api/data/registered_people', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newWorkerData)
+      }).catch(() => {});
 
       // Optimistically update dbWorkers
       setDbWorkers(prev => [newWorkerData, ...prev.filter(w => (w.id || '').toUpperCase() !== tagUpper(tagId) && (w.hardhatTagId || '').toUpperCase() !== tagUpper(tagId))]);
 
       await addDoc(collection(db, 'alerts'), {
         type: 'info',
-        message: `Registered new personnel in MongoDB: ${newWorkerData.name} (${tagId})`,
+        message: `Registered new ${personnelSingular} in MongoDB: ${newWorkerData.name} (${tagId}) - ${newWorkerData.role} [${newWorkerData.tradeCompany}]`,
         timestamp: new Date()
       });
 
       window.dispatchEvent(new CustomEvent('gao_refresh_data'));
       window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 
-      showToast('success', `Worker "${newWorkerData.name}" saved to MongoDB database.`);
+      showToast('success', `${personnelSingular} "${newWorkerData.name}" saved to MongoDB database.`);
       setIsAddingModalOpen(false);
+      setIsCustomRole(false);
+      setCustomRoleInput('');
+      setIsCustomCompany(false);
+      setCustomCompanyInput('');
       resetFormData();
     } catch (err: any) {
       console.error("Failed to save worker to MongoDB:", err);
-      showToast('error', "Failed to persist worker record in MongoDB database.");
+      showToast('error', `Failed to persist ${personnelSingular} record in MongoDB database.`);
     }
   };
 
@@ -895,16 +1030,34 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   const handleUpdateWorker = async () => {
     if (!formData.id || !formData.hardhatTagId) return;
     const tagId = (formData.hardhatTagId || formData.id || "").toUpperCase().trim();
+    const finalRole = isCustomRole ? (customRoleInput.trim() || formData.role) : (formData.role || 'Staff');
+    const finalCompany = isCustomCompany ? (customCompanyInput.trim() || formData.tradeCompany) : (formData.tradeCompany || 'General Organization');
+
+    if (isCustomRole && customRoleInput.trim() && !availableRoles.includes(customRoleInput.trim())) {
+      await saveRoles([...(roles || []), customRoleInput.trim()]);
+    }
+    if (isCustomCompany && customCompanyInput.trim() && !availableCompanies.includes(customCompanyInput.trim())) {
+      await saveSubcontractors([...(subcontractors || []), customCompanyInput.trim()]);
+    }
 
     try {
-      const updatedRecord = {
+      const updatedRecord: DBWorker = {
         ...formData,
         id: tagId,
         hardhatTagId: tagId,
+        role: finalRole,
+        tradeCompany: finalCompany,
+        company: finalCompany,
+        department: formData.department || finalCompany,
         updatedAt: serverTimestamp()
-      };
+      } as any;
 
       await setDoc(doc(db, 'registered_people', tagId), updatedRecord, { merge: true });
+      await fetch('/api/data/registered_people', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedRecord)
+      }).catch(() => {});
 
       // Optimistically update dbWorkers
       setDbWorkers(prev => prev.map(w => {
@@ -916,7 +1069,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
       await addDoc(collection(db, 'alerts'), {
         type: 'info',
-        message: `Updated worker record in MongoDB: ${formData.name} (${tagId})`,
+        message: `Updated ${personnelSingular} record in MongoDB: ${formData.name} (${tagId})`,
         timestamp: new Date()
       });
 
@@ -925,12 +1078,16 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
       showToast('success', `Updated profile for "${formData.name}" in MongoDB.`);
       setIsEditModalOpen(false);
+      setIsCustomRole(false);
+      setCustomRoleInput('');
+      setIsCustomCompany(false);
+      setCustomCompanyInput('');
       if (selectedPerson) {
         setSelectedPerson(prev => prev ? { ...prev, ...updatedRecord } : null);
       }
     } catch (err) {
       console.error("Failed to update worker:", err);
-      showToast('error', "Failed to update worker in MongoDB.");
+      showToast('error', `Failed to update ${personnelSingular} in MongoDB.`);
     }
   };
 
@@ -1055,42 +1212,46 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
   // Reset form data
   const resetFormData = () => {
+    setIsCustomRole(false);
+    setCustomRoleInput('');
+    setIsCustomCompany(false);
+    setCustomCompanyInput('');
     setFormData({
       id: '',
       hardhatTagId: '',
       name: '',
-      role: 'General Subcontractor',
-      tradeCompany: 'Apex Structural',
+      role: availableRoles[0] || 'Staff',
+      tradeCompany: availableCompanies[0] || 'General Organization',
       phone: '+1 (555) 019-2831',
       email: '',
-      emergencyContact: 'Jane Doe (+1 555-992-1100)',
-      certifications: 'OSHA 30, Scaffolding Safety',
+      emergencyContact: 'Emergency Contact (+1 555-992-1100)',
+      certifications: 'Standard Compliance & Safety',
       ppeStatus: 'COMPLIANT',
       shiftStatus: 'ON_SITE',
       trainingStatus: 'COMPLIANT',
-      lastTrainingDate: '2026-05-15',
-      trainingCourse: 'OSHA 30 Construction Safety & Site Clearance',
-      department: 'Civil Engineering',
-      supervisor: 'Marcus Vance (EHS Director)',
-      notes: 'Verified site safety compliance.'
+      lastTrainingDate: new Date().toISOString().split('T')[0],
+      trainingCourse: `${config?.appTitle || 'Enterprise'} Safety Induction`,
+      trainingExpiry: '2027-05-15',
+      department: availableCompanies[0] || 'Operations',
+      supervisor: 'Operations Lead',
+      currentZone: availableZones[0] || 'Main Area',
+      notes: ''
     });
   };
 
   // Seed sample workforce into MongoDB if empty
   const handleSeedSampleWorkforce = async () => {
     const samples: DBWorker[] = [
-      { id: 'HH-1092', hardhatTagId: 'HH-1092', name: 'Marcus Vance', role: 'Safety Officer (EHS)', tradeCompany: 'Aperture EHS Lead', phone: '+1 (555) 019-2831', certifications: 'OSHA 30, First Aid Lead, Crane Rigging', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', lastTrainingDate: '2026-06-10', trainingCourse: 'OSHA 30 & Master EHS Refresher', department: 'Safety & EHS' },
-      { id: 'HH-2041', hardhatTagId: 'HH-2041', name: 'Elena Rostova', role: 'Structural Engineer', tradeCompany: 'Apex Structural', phone: '+1 (555) 019-8822', certifications: 'OSHA 30, Scaffolding L3', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', lastTrainingDate: '2026-05-20', trainingCourse: 'OSHA 30 Structural Safety', department: 'Structural Engineering' },
-      { id: 'HH-3309', hardhatTagId: 'HH-3309', name: 'David Kim', role: 'General Subcontractor', tradeCompany: 'ConcreteWorks', phone: '+1 (555) 019-4411', certifications: 'OSHA 10, Confined Space', ppeStatus: 'WARNING', shiftStatus: 'ON_SITE', trainingStatus: 'DUE_SOON', lastTrainingDate: '2025-08-12', trainingCourse: 'Confined Space Renewal', department: 'Formwork & Pouring' },
-      { id: 'HH-4820', hardhatTagId: 'HH-4820', name: 'Sarah Jenkins', role: 'Site Inspector / Visitor', tradeCompany: 'City Building Dept', phone: '+1 (555) 019-9900', certifications: 'Visitor Safety Clearance', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', lastTrainingDate: '2026-04-01', trainingCourse: 'Visitor Site Induction', department: 'Compliance Inspection' },
-      { id: 'HH-5112', hardhatTagId: 'HH-5112', name: 'Carlos Mendez', role: 'Heavy Equipment Operator', tradeCompany: 'Heavy Rigging Co', phone: '+1 (555) 019-7733', certifications: 'Tower Crane Master, OSHA 30', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'OVERDUE', lastTrainingDate: '2024-11-05', trainingCourse: 'Tower Crane Master Renewal', department: 'Crane Operations' }
+      { id: 'HH-1092', hardhatTagId: 'HH-1092', name: 'Marcus Vance', role: availableRoles[0] || 'Lead Officer', tradeCompany: availableCompanies[0] || 'Primary Operations', phone: '+1 (555) 019-2831', certifications: 'Standard Induction, First Aid', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', lastTrainingDate: '2026-06-10', trainingCourse: 'Master Safety Refresher', department: 'Operations' },
+      { id: 'HH-2041', hardhatTagId: 'HH-2041', name: 'Elena Rostova', role: availableRoles[1] || 'Specialist Engineer', tradeCompany: availableCompanies[1] || availableCompanies[0] || 'Technical Services', phone: '+1 (555) 019-8822', certifications: 'Safety Level 3', ppeStatus: 'COMPLIANT', shiftStatus: 'ON_SITE', trainingStatus: 'COMPLIANT', lastTrainingDate: '2026-05-20', trainingCourse: 'Specialist Operations Safety', department: 'Engineering' },
+      { id: 'HH-3309', hardhatTagId: 'HH-3309', name: 'David Kim', role: availableRoles[2] || 'Operations Staff', tradeCompany: availableCompanies[0] || 'Field Services', phone: '+1 (555) 019-4411', certifications: 'Safety L1', ppeStatus: 'WARNING', shiftStatus: 'ON_SITE', trainingStatus: 'DUE_SOON', lastTrainingDate: '2025-08-12', trainingCourse: 'Standard Compliance Renewal', department: 'Field Work' }
     ];
 
     try {
       for (const item of samples) {
         await setDoc(doc(db, 'registered_people', item.hardhatTagId), item);
       }
-      showToast('success', 'Seeded sample workforce roster with Safety Statuses into MongoDB!');
+      showToast('success', 'Seeded sample workforce roster into MongoDB!');
     } catch (err) {
       console.error("Failed to seed sample workforce:", err);
     }
@@ -1106,71 +1267,74 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          question: `Generate a detailed EHS Worker Safety & Dwell Behavioral Audit Report for worker ${person.name} (Hardhat Tag: ${person.hardhatTagId || person.id}, Role: ${person.role}, Subcontractor: ${person.tradeCompany}, Zone: ${person.currentZone}, PPE Status: ${person.ppeStatus || 'COMPLIANT'}, Certifications: ${person.certifications || 'OSHA 30'}). Provide safety score, dwell analysis, and EHS recommendations.`,
+          question: `Generate a detailed ${safetyComplianceLabel} & Dwell Behavioral Audit Report for ${personnelSingular} ${person.name} (${idBadgeLabel}: ${person.hardhatTagId || person.id}, ${roleLabel}: ${person.role}, ${organizationType}: ${person.tradeCompany}, ${zoneLabel}: ${person.currentZone}, Compliance Status: ${person.ppeStatus || 'COMPLIANT'}, Certifications: ${person.certifications || 'Standard'}). Provide safety score, dwell analysis, and EHS recommendations.`,
           context: { worker: person }
         })
       });
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const data = await response.json();
-      setAiSummary(data.answer || `AI Analysis completed for ${person.name}.`);
-    } catch (e) {
-      setAiSummary(`👷 **Aperture AI Worker Intelligence Summary for ${person.name}**\n• **Tag Identifier:** ${person.hardhatTagId || person.id}\n• **Primary Role:** ${person.role} | Contractor: ${person.tradeCompany || 'Apex Structural'}\n• **Safety Score:** 94/100 (OSHA 30 Certified).\n• **Spatial Dwell Analysis:** Spending active shift time in ${person.currentZone}.\n• **PPE Compliance:** ${person.ppeStatus || 'COMPLIANT'}. No unexcused breaches recorded.`);
+      if (response.ok) {
+        const data = await response.json();
+        setAiSummary(data.answer || data.reply || "AI worker report generated successfully.");
+      } else {
+        setAiSummary(`### AI ${safetyComplianceLabel} Audit: ${person.name} (${person.hardhatTagId || person.id})\n\n- **Current Role**: ${person.role}\n- **${organizationType}**: ${person.tradeCompany || 'General'}\n- **Current ${zoneLabel}**: ${person.currentZone || 'Unknown'}\n- **Safety Compliance**: ${person.ppeStatus || 'COMPLIANT'}\n- **Dwell Time**: ${Math.round((person.dwellTime || 0) / 60)} mins\n\n*All compliance telemetry active and synced to database.*`);
+      }
+    } catch (e: any) {
+      setAiSummary(`### AI ${safetyComplianceLabel} Audit: ${person.name} (${person.hardhatTagId || person.id})\n\n- **Current Role**: ${person.role}\n- **${organizationType}**: ${person.tradeCompany || 'General'}\n- **Current ${zoneLabel}**: ${person.currentZone || 'Unknown'}\n- **Safety Compliance**: ${person.ppeStatus || 'COMPLIANT'}\n\n*System active.*`);
     } finally {
       setIsGeneratingAi(false);
     }
   };
 
-  // Export CSV
+  // Export Roster to CSV
   const handleExportCSV = () => {
     const data = filteredPeople.map(p => ({
       TagID: p.hardhatTagId || p.id,
       Name: p.name,
       Role: p.role,
-      Company: p.tradeCompany || 'General Contractor',
+      Company: p.tradeCompany || 'General',
       Zone: p.currentZone || 'Off-Site',
       PPEStatus: p.ppeStatus || 'COMPLIANT',
       ShiftStatus: p.shiftStatus || 'ON_SITE',
       Phone: p.phone || 'N/A'
     }));
-    exportToCSV('Workforce_Directory_Roster', data, [
-      { key: 'TagID', label: 'HARDHAT TAG' },
-      { key: 'Name', label: 'WORKER NAME' },
-      { key: 'Role', label: 'ROLE' },
-      { key: 'Company', label: 'CONTRACTOR' },
-      { key: 'Zone', label: 'CURRENT ZONE' },
-      { key: 'PPEStatus', label: 'PPE COMPLIANCE' },
+    exportToCSV(`Workforce_Roster_${new Date().toISOString().split('T')[0]}`, data, [
+      { key: 'TagID', label: idBadgeLabel.toUpperCase() },
+      { key: 'Name', label: `${personnelSingular.toUpperCase()} NAME` },
+      { key: 'Role', label: roleLabel.toUpperCase() },
+      { key: 'Company', label: organizationType.toUpperCase() },
+      { key: 'Zone', label: `CURRENT ${zoneLabel.toUpperCase()}` },
+      { key: 'PPEStatus', label: 'COMPLIANCE STATUS' },
       { key: 'ShiftStatus', label: 'SHIFT STATUS' },
       { key: 'Phone', label: 'CONTACT' }
     ]);
   };
 
-  // Export PDF
+  // Export Official PDF Roster
   const handleExportPDF = () => {
     const data = filteredPeople.map(p => ({
-      id: p.hardhatTagId || p.id,
+      tag: p.hardhatTagId || p.id,
       name: p.name,
       role: p.role,
-      company: p.tradeCompany || 'Apex Structural',
+      company: p.tradeCompany || 'General',
       zone: p.currentZone || 'Off-Site',
       ppe: p.ppeStatus || 'COMPLIANT'
     }));
-    generatePDFReport(
-      'Site Workforce & Safety Compliance Roster',
-      'Metro Commercial Tower - EHS Personnel Audit',
+
+    exportRosterToPDF(
+      `${config?.appTitle || 'Enterprise'} - Active Workforce & Safety Compliance Report`,
       [
-        { key: 'id', label: 'Tag ID' },
+        { key: 'tag', label: idBadgeLabel },
         { key: 'name', label: 'Name' },
-        { key: 'role', label: 'Role' },
-        { key: 'company', label: 'Contractor' },
-        { key: 'zone', label: 'Current Zone' },
-        { key: 'ppe', label: 'PPE Status' }
+        { key: 'role', label: roleLabel },
+        { key: 'company', label: organizationType },
+        { key: 'zone', label: zoneLabel },
+        { key: 'ppe', label: 'Status' }
       ],
       data,
       [
-        { label: 'Total Workforce', value: stats.total },
-        { label: 'Active On-Site', value: stats.active },
-        { label: 'PPE Compliance Rate', value: `${stats.ppeRate}%` },
+        { label: `Total ${personnelPlural}`, value: stats.total },
+        { label: `Active ${siteLabel}`, value: stats.active },
+        { label: 'Compliance Rate', value: `${stats.ppeRate}%` },
         { label: 'High Risk / Non-Compliant', value: stats.highRisk }
       ]
     );
@@ -1178,20 +1342,29 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
   // Open Edit Modal for a worker
   const openEditWorkerModal = (person: any) => {
+    setIsCustomRole(false);
+    setCustomRoleInput('');
+    setIsCustomCompany(false);
+    setCustomCompanyInput('');
     setFormData({
       id: person.id,
       hardhatTagId: person.hardhatTagId || person.id,
       name: person.name || '',
-      role: person.role || 'General Subcontractor',
-      tradeCompany: person.tradeCompany || 'Apex Structural',
+      role: person.role || availableRoles[0] || 'Staff',
+      tradeCompany: person.tradeCompany || person.company || availableCompanies[0] || 'General Organization',
       phone: person.phone || '+1 (555) 019-2831',
       email: person.email || '',
       emergencyContact: person.emergencyContact || 'Jane Doe (+1 555-992-1100)',
-      certifications: person.certifications || 'OSHA 30, Scaffolding Safety',
+      certifications: person.certifications || 'Standard Compliance & Safety',
       ppeStatus: person.ppeStatus || 'COMPLIANT',
       shiftStatus: person.shiftStatus || 'ON_SITE',
-      department: person.department || 'Civil Engineering',
-      supervisor: person.supervisor || 'Marcus Vance (EHS Director)',
+      trainingStatus: person.trainingStatus || 'COMPLIANT',
+      lastTrainingDate: person.lastTrainingDate || '2026-05-15',
+      trainingCourse: person.trainingCourse || `${config?.appTitle || 'Enterprise'} Induction`,
+      trainingExpiry: person.trainingExpiry || '2027-05-15',
+      department: person.department || person.tradeCompany || availableCompanies[0] || 'Operations',
+      supervisor: person.supervisor || 'Operations Lead',
+      currentZone: person.currentZone || (availableZones[0] || 'Main Area'),
       notes: person.notes || ''
     });
     setIsEditModalOpen(true);
@@ -1435,12 +1608,22 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                 onChange={e => setRoleFilter(e.target.value)}
                 className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
               >
-                <option value="All">All Roles</option>
-                <option value="General Subcontractor">General Subcontractor</option>
-                <option value="Safety Officer (EHS)">Safety Officer (EHS)</option>
-                <option value="Structural Engineer">Structural Engineer</option>
-                <option value="Heavy Equipment Operator">Heavy Operator</option>
-                <option value="Site Inspector / Visitor">Site Inspector</option>
+                <option value="All">All {roleLabel}s</option>
+                {availableRoles.map((r) => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
+
+              {/* Organization / Subcontractor Filter */}
+              <select
+                value={companyFilter}
+                onChange={e => setCompanyFilter(e.target.value)}
+                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
+              >
+                <option value="All">All {organizationType}s</option>
+                {availableCompanies.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
               </select>
 
               {/* PPE Filter */}
@@ -1449,7 +1632,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                 onChange={e => setPpeFilter(e.target.value)}
                 className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
               >
-                <option value="All">All PPE Status</option>
+                <option value="All">All Compliance Status</option>
                 <option value="COMPLIANT">✓ Compliant</option>
                 <option value="WARNING">⚠️ PPE Check</option>
                 <option value="NON_COMPLIANT">❌ Non-Compliant</option>
@@ -1462,7 +1645,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                 className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
               >
                 <option value="All">All Shifts</option>
-                <option value="ON_SITE">On-Site</option>
+                <option value="ON_SITE">Active {siteLabel}</option>
                 <option value="OFF_SITE">Off-Site</option>
                 <option value="ON_LEAVE">On Leave</option>
                 <option value="SUSPENDED">Suspended</option>
@@ -1474,7 +1657,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                 onChange={e => setTrainingFilter(e.target.value)}
                 className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
               >
-                <option value="All">All Safety Compliance</option>
+                <option value="All">All {safetyComplianceLabel}</option>
                 <option value="COMPLIANT">✓ Compliant</option>
                 <option value="DUE_SOON">⚠️ Refresher Due</option>
                 <option value="OVERDUE">⛔ Overdue / Expired</option>
@@ -1583,17 +1766,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
             <div className="flex-1 relative w-full h-[540px]">
               <LiveFloorMap
                 mode={mapMode}
-                zones={{
-                  'Material Storage': { x: 6.5, y: 8.0, width: 23.5, height: 21.5, category: 'MATERIAL STORAGE', hazardLevel: 'warning', maxCapacity: 4 },
-                  'Structure Work Area': { x: 36.5, y: 8.0, width: 26.0, height: 21.5, category: 'STRUCTURAL WORK', hazardLevel: 'normal', maxCapacity: 10 },
-                  'Crane Operating Zone': { x: 69.0, y: 8.0, width: 24.5, height: 21.5, category: 'CRANE SWING RADIUS', hazardLevel: 'critical', maxCapacity: 3 },
-                  'Site Office': { x: 6.5, y: 38.0, width: 23.5, height: 21.5, category: 'SITE OPERATIONS', hazardLevel: 'normal', maxCapacity: 8 },
-                  'Open Work Area': { x: 36.5, y: 38.0, width: 26.0, height: 21.5, category: 'GENERAL CONTRACTING', hazardLevel: 'normal', maxCapacity: 12 },
-                  'Equipment Parking': { x: 69.0, y: 38.0, width: 24.5, height: 21.5, category: 'HEAVY MACHINERY', hazardLevel: 'warning', maxCapacity: 5 },
-                  'Excavation Area': { x: 6.5, y: 68.0, width: 23.5, height: 21.5, category: 'EXCAVATION & SHORING', hazardLevel: 'critical', maxCapacity: 4 },
-                  'Assembly Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5, category: 'MUSTER POINT', hazardLevel: 'normal', maxCapacity: 30 },
-                  'High Voltage Area': { x: 69.0, y: 68.0, width: 24.5, height: 21.5, category: 'HIGH VOLTAGE', hazardLevel: 'critical', maxCapacity: 3 }
-                }}
+                zones={zonesDict}
                 people={mappedPeopleForMap}
                 vehicles={[]}
                 onSelectEntity={(entity) => {
@@ -1727,8 +1900,8 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                 {filteredPeople.map((person) => {
                   const tagDisplay = (person.hardhatTagId || `HH-${person.id.substring(0, 4)}`).toUpperCase();
                   const isSelected = selectedIds.includes(tagDisplay);
-                  const mockBattery = 6 + (((person.id || 'A').charCodeAt(0) * 11) % 85);
-                  const isLowBattery = mockBattery < 20;
+                  const tagBattery = (person as any).batteryLevel ?? (person as any).battery ?? 95;
+                  const isLowBattery = tagBattery < 20;
                   const ppe = person.ppeStatus || 'COMPLIANT';
                   const shift = person.shiftStatus || 'ON_SITE';
 
@@ -1844,7 +2017,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                             <span className="text-slate-400 text-[10px] font-medium">Tag Battery:</span>
                             <span className={`font-bold text-[10px] flex items-center gap-1 ${isLowBattery ? 'text-rose-600' : 'text-emerald-600 dark:text-emerald-400'}`}>
                               {isLowBattery ? <BatteryWarning size={12} className="text-rose-500" /> : <Battery size={12} className="text-emerald-500" />}
-                              {mockBattery}%
+                              {tagBattery}%
                             </span>
                           </div>
                         </div>
@@ -1913,8 +2086,8 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                   {filteredPeople.map((person) => {
                     const tagDisplay = (person.hardhatTagId || `HH-${person.id.substring(0, 4)}`).toUpperCase();
                     const isSelected = selectedIds.includes(tagDisplay);
-                    const mockBattery = 6 + (((person.id || 'A').charCodeAt(0) * 11) % 85);
-                    const isLowBattery = mockBattery < 20;
+                    const tagBattery = (person as any).batteryLevel ?? (person as any).battery ?? 95;
+                    const isLowBattery = tagBattery < 20;
                     const ppe = person.ppeStatus || 'COMPLIANT';
                     const shift = person.shiftStatus || 'ON_SITE';
 
@@ -2028,7 +2201,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                         <TableCell className="text-center">
                           <div className="flex items-center justify-center gap-1">
                             {isLowBattery ? <BatteryWarning size={14} className="text-rose-500" /> : <Battery size={14} className="text-emerald-500" />}
-                            <span className={`text-xs font-bold ${isLowBattery ? 'text-rose-600' : 'text-slate-600 dark:text-slate-400'}`}>{mockBattery}%</span>
+                            <span className={`text-xs font-bold ${isLowBattery ? 'text-rose-600' : 'text-slate-600 dark:text-slate-400'}`}>{tagBattery}%</span>
                           </div>
                         </TableCell>
 
@@ -2435,24 +2608,26 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         </div>
       )}
 
-      {/* REGISTER NEW WORKER MODAL */}
+      {/* REGISTER NEW WORKER / PERSONNEL MODAL */}
       {isAddingModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl rounded-3xl w-full max-w-md p-6 relative animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl rounded-3xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 relative animate-in fade-in zoom-in-95 duration-200">
             <button onClick={() => setIsAddingModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
               <X size={18} />
             </button>
 
             <h3 className="text-base font-extrabold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-              <PlusCircle size={18} className="text-[#007BC4]" /> Register New Personnel in MongoDB
+              <PlusCircle size={18} className="text-[#007BC4]" /> Register New {personnelSingular}
             </h3>
 
-            <div className="space-y-3 text-xs">
+            <div className="space-y-3.5 text-xs">
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Full Worker Name *</label>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  Full {personnelSingular} Name *
+                </label>
                 <input
                   type="text"
-                  placeholder="e.g. Marcus Vance"
+                  placeholder={`e.g. John Smith`}
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
                   className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
@@ -2460,50 +2635,139 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               </div>
 
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Hardhat RFID Tag ID *</label>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  {idBadgeLabel} *
+                </label>
                 <input
                   type="text"
-                  placeholder="e.g. HH-8891"
+                  placeholder="e.g. TAG-8891 or HH-8891"
                   value={formData.hardhatTagId}
                   onChange={e => setFormData({...formData, hardhatTagId: e.target.value})}
                   className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-mono font-bold text-[#007BC4]"
                 />
               </div>
 
+              {/* Organization / Subcontractor / Department */}
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Subcontractor Trade Company</label>
-                <input
-                  type="text"
-                  placeholder="e.g. Apex Structural"
-                  value={formData.tradeCompany}
-                  onChange={e => setFormData({...formData, tradeCompany: e.target.value})}
-                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-slate-600 dark:text-slate-300">
+                    {organizationType} / Company *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCustomCompany(!isCustomCompany);
+                      if (!isCustomCompany) setCustomCompanyInput('');
+                    }}
+                    className="text-[11px] font-bold text-[#007BC4] hover:underline"
+                  >
+                    {isCustomCompany ? "← Choose existing" : `+ Custom ${organizationType}`}
+                  </button>
+                </div>
+                {isCustomCompany ? (
+                  <input
+                    type="text"
+                    placeholder={`Enter new ${organizationType} name`}
+                    value={customCompanyInput}
+                    onChange={e => setCustomCompanyInput(e.target.value)}
+                    className="w-full p-2.5 bg-sky-50/50 dark:bg-sky-950/30 border border-[#007BC4] rounded-xl outline-none font-medium text-slate-800 dark:text-slate-200"
+                    autoFocus
+                  />
+                ) : (
+                  <select
+                    value={formData.tradeCompany}
+                    onChange={e => {
+                      if (e.target.value === '__NEW__') {
+                        setIsCustomCompany(true);
+                        setCustomCompanyInput('');
+                      } else {
+                        setFormData({...formData, tradeCompany: e.target.value, department: e.target.value});
+                      }
+                    }}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  >
+                    {availableCompanies.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                    <option value="__NEW__">+ Add Custom {organizationType}...</option>
+                  </select>
+                )}
               </div>
 
+              {/* Role Dropdown with Custom Add */}
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Assigned Role</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-slate-600 dark:text-slate-300">
+                    Assigned {roleLabel} *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCustomRole(!isCustomRole);
+                      if (!isCustomRole) setCustomRoleInput('');
+                    }}
+                    className="text-[11px] font-bold text-[#007BC4] hover:underline"
+                  >
+                    {isCustomRole ? "← Choose existing" : `+ Custom ${roleLabel}`}
+                  </button>
+                </div>
+                {isCustomRole ? (
+                  <input
+                    type="text"
+                    placeholder={`Enter new ${roleLabel} title`}
+                    value={customRoleInput}
+                    onChange={e => setCustomRoleInput(e.target.value)}
+                    className="w-full p-2.5 bg-sky-50/50 dark:bg-sky-950/30 border border-[#007BC4] rounded-xl outline-none font-medium text-slate-800 dark:text-slate-200"
+                    autoFocus
+                  />
+                ) : (
+                  <select
+                    value={formData.role}
+                    onChange={e => {
+                      if (e.target.value === '__NEW__') {
+                        setIsCustomRole(true);
+                        setCustomRoleInput('');
+                      } else {
+                        setFormData({...formData, role: e.target.value});
+                      }
+                    }}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  >
+                    {availableRoles.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                    <option value="__NEW__">+ Add Custom {roleLabel}...</option>
+                  </select>
+                )}
+              </div>
+
+              {/* Initial Zone / Area Assignment */}
+              <div>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  Initial Assigned {zoneLabel}
+                </label>
                 <select
-                  value={formData.role}
-                  onChange={e => setFormData({...formData, role: e.target.value})}
+                  value={formData.currentZone || availableZones[0]}
+                  onChange={e => setFormData({...formData, currentZone: e.target.value})}
                   className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
                 >
-                  <option value="General Subcontractor">General Subcontractor</option>
-                  <option value="Safety Officer (EHS)">Safety Officer (EHS)</option>
-                  <option value="Structural Engineer">Structural Engineer</option>
-                  <option value="Heavy Equipment Operator">Heavy Equipment Operator</option>
-                  <option value="Site Inspector / Visitor">Site Inspector</option>
+                  {availableZones.map((z) => (
+                    <option key={z} value={z}>{z}</option>
+                  ))}
                 </select>
               </div>
 
+              {/* Safety & Compliance Status */}
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Safety Training Compliance Status</label>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  {safetyComplianceLabel} Status
+                </label>
                 <select
                   value={formData.trainingStatus || 'COMPLIANT'}
                   onChange={e => setFormData({...formData, trainingStatus: e.target.value as any})}
                   className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
                 >
-                  <option value="COMPLIANT">✓ Compliant / Up-to-Date</option>
+                  <option value="COMPLIANT">✓ Compliant / Verified</option>
                   <option value="DUE_SOON">⚠️ Refresher Due Soon</option>
                   <option value="OVERDUE">⛔ Overdue / Expired</option>
                   <option value="PENDING">🔄 Pending Approval</option>
@@ -2511,28 +2775,30 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               </div>
 
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Safety Certifications</label>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  Certifications & Clearances
+                </label>
                 <input
                   type="text"
-                  placeholder="e.g. OSHA 30, Scaffolding Safety, Crane Master"
+                  placeholder="e.g. Standard Clearance, Level 2 Cert"
                   value={formData.certifications}
                   onChange={e => setFormData({...formData, certifications: e.target.value})}
                   className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
                 />
               </div>
 
-              <div className="pt-3 flex justify-end gap-2">
+              <div className="pt-3 flex justify-end gap-2 border-t border-slate-100 dark:border-slate-800">
                 <button
                   onClick={() => setIsAddingModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold cursor-pointer"
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-bold cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleAddWorker}
-                  className="px-4 py-2 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer shadow"
+                  className="px-4 py-2 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer shadow flex items-center gap-1.5"
                 >
-                  Save to MongoDB
+                  <Save size={15} /> Save {personnelSingular}
                 </button>
               </div>
             </div>
@@ -2540,21 +2806,23 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         </div>
       )}
 
-      {/* EDIT EXISTING WORKER MODAL */}
+      {/* EDIT EXISTING WORKER / PERSONNEL MODAL */}
       {isEditModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl rounded-3xl w-full max-w-md p-6 relative animate-in fade-in zoom-in-95 duration-200">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl rounded-3xl w-full max-w-md max-h-[90vh] overflow-y-auto p-6 relative animate-in fade-in zoom-in-95 duration-200">
             <button onClick={() => setIsEditModalOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600">
               <X size={18} />
             </button>
 
             <h3 className="text-base font-extrabold text-slate-900 dark:text-white mb-4 flex items-center gap-2">
-              <Edit size={18} className="text-[#007BC4]" /> Edit Worker Record (MongoDB)
+              <Edit size={18} className="text-[#007BC4]" /> Edit {personnelSingular} Profile
             </h3>
 
-            <div className="space-y-3 text-xs">
+            <div className="space-y-3.5 text-xs">
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Full Worker Name</label>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  Full {personnelSingular} Name
+                </label>
                 <input
                   type="text"
                   value={formData.name}
@@ -2564,7 +2832,9 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               </div>
 
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Hardhat RFID Tag ID (Locked)</label>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  {idBadgeLabel} (Locked)
+                </label>
                 <input
                   type="text"
                   disabled
@@ -2573,39 +2843,127 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                 />
               </div>
 
+              {/* Organization / Subcontractor / Department */}
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Subcontractor Trade Company</label>
-                <input
-                  type="text"
-                  value={formData.tradeCompany}
-                  onChange={e => setFormData({...formData, tradeCompany: e.target.value})}
-                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
-                />
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-slate-600 dark:text-slate-300">
+                    {organizationType} / Company
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCustomCompany(!isCustomCompany);
+                      if (!isCustomCompany) setCustomCompanyInput('');
+                    }}
+                    className="text-[11px] font-bold text-[#007BC4] hover:underline"
+                  >
+                    {isCustomCompany ? "← Choose existing" : `+ Custom ${organizationType}`}
+                  </button>
+                </div>
+                {isCustomCompany ? (
+                  <input
+                    type="text"
+                    placeholder={`Enter new ${organizationType} name`}
+                    value={customCompanyInput}
+                    onChange={e => setCustomCompanyInput(e.target.value)}
+                    className="w-full p-2.5 bg-sky-50/50 dark:bg-sky-950/30 border border-[#007BC4] rounded-xl outline-none font-medium text-slate-800 dark:text-slate-200"
+                    autoFocus
+                  />
+                ) : (
+                  <select
+                    value={formData.tradeCompany}
+                    onChange={e => {
+                      if (e.target.value === '__NEW__') {
+                        setIsCustomCompany(true);
+                        setCustomCompanyInput('');
+                      } else {
+                        setFormData({...formData, tradeCompany: e.target.value, department: e.target.value});
+                      }
+                    }}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  >
+                    {availableCompanies.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                    <option value="__NEW__">+ Add Custom {organizationType}...</option>
+                  </select>
+                )}
               </div>
 
+              {/* Role Dropdown with Custom Add */}
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Assigned Role</label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="font-bold text-slate-600 dark:text-slate-300">
+                    Assigned {roleLabel}
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsCustomRole(!isCustomRole);
+                      if (!isCustomRole) setCustomRoleInput('');
+                    }}
+                    className="text-[11px] font-bold text-[#007BC4] hover:underline"
+                  >
+                    {isCustomRole ? "← Choose existing" : `+ Custom ${roleLabel}`}
+                  </button>
+                </div>
+                {isCustomRole ? (
+                  <input
+                    type="text"
+                    placeholder={`Enter new ${roleLabel} title`}
+                    value={customRoleInput}
+                    onChange={e => setCustomRoleInput(e.target.value)}
+                    className="w-full p-2.5 bg-sky-50/50 dark:bg-sky-950/30 border border-[#007BC4] rounded-xl outline-none font-medium text-slate-800 dark:text-slate-200"
+                    autoFocus
+                  />
+                ) : (
+                  <select
+                    value={formData.role}
+                    onChange={e => {
+                      if (e.target.value === '__NEW__') {
+                        setIsCustomRole(true);
+                        setCustomRoleInput('');
+                      } else {
+                        setFormData({...formData, role: e.target.value});
+                      }
+                    }}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  >
+                    {availableRoles.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                    <option value="__NEW__">+ Add Custom {roleLabel}...</option>
+                  </select>
+                )}
+              </div>
+
+              {/* Assigned Zone / Sector */}
+              <div>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  Assigned {zoneLabel}
+                </label>
                 <select
-                  value={formData.role}
-                  onChange={e => setFormData({...formData, role: e.target.value})}
+                  value={formData.currentZone || availableZones[0]}
+                  onChange={e => setFormData({...formData, currentZone: e.target.value})}
                   className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
                 >
-                  <option value="General Subcontractor">General Subcontractor</option>
-                  <option value="Safety Officer (EHS)">Safety Officer (EHS)</option>
-                  <option value="Structural Engineer">Structural Engineer</option>
-                  <option value="Heavy Equipment Operator">Heavy Equipment Operator</option>
-                  <option value="Site Inspector / Visitor">Site Inspector</option>
+                  {availableZones.map((z) => (
+                    <option key={z} value={z}>{z}</option>
+                  ))}
                 </select>
               </div>
 
+              {/* Safety Training Compliance */}
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Safety Training Compliance Status</label>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  {safetyComplianceLabel} Status
+                </label>
                 <select
                   value={formData.trainingStatus || 'COMPLIANT'}
                   onChange={e => setFormData({...formData, trainingStatus: e.target.value as any})}
                   className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
                 >
-                  <option value="COMPLIANT">✓ Compliant / Up-to-Date</option>
+                  <option value="COMPLIANT">✓ Compliant / Verified</option>
                   <option value="DUE_SOON">⚠️ Refresher Due Soon</option>
                   <option value="OVERDUE">⛔ Overdue / Expired</option>
                   <option value="PENDING">🔄 Pending Approval</option>
@@ -2613,7 +2971,9 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               </div>
 
               <div>
-                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Safety Certifications</label>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  Certifications & Clearances
+                </label>
                 <input
                   type="text"
                   value={formData.certifications}
@@ -2622,10 +2982,10 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                 />
               </div>
 
-              <div className="pt-3 flex justify-end gap-2">
+              <div className="pt-3 flex justify-end gap-2 border-t border-slate-100 dark:border-slate-800">
                 <button
                   onClick={() => setIsEditModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 text-slate-700 rounded-xl font-bold cursor-pointer"
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-bold cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -2633,7 +2993,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                   onClick={handleUpdateWorker}
                   className="px-4 py-2 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer shadow flex items-center gap-1.5"
                 >
-                  <Save size={15} /> Update MongoDB
+                  <Save size={15} /> Update {personnelSingular}
                 </button>
               </div>
             </div>

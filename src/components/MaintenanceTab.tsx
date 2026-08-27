@@ -67,192 +67,6 @@ export interface ScheduleRule {
   active: boolean;
 }
 
-// Initial Default Data (Seeded into MongoDB if empty)
-const DEFAULT_NODES: MaintenanceNode[] = [
-  {
-    id: 'R-07',
-    name: 'Gate 1 Access Turnstile Gateway',
-    type: 'UHF RFID Reader',
-    location: 'Gate 1 Access Turnstile (Zone A)',
-    zoneId: 'zone-a',
-    signal: 45,
-    battery: null,
-    health: 65,
-    prediction: 'RF Impedance Drift - Antenna Re-alignment Required in 14 Days',
-    status: 'Warning',
-    lastServiceDate: '2026-06-15',
-    nextServiceDue: '2026-08-20',
-    temperatureC: 44.2,
-    vibrationMmS: 1.8,
-    technicianAssigned: 'Tech-01 (David Vance)',
-    notes: 'Primary worker access turnstile node'
-  },
-  {
-    id: 'R-12',
-    name: 'Confined Shaft & Tunnel Anchor',
-    type: 'UHF Fixed Reader',
-    location: 'Sub-Basement Shaft B2 (Zone B)',
-    zoneId: 'zone-b',
-    signal: 98,
-    battery: 85,
-    health: 99,
-    prediction: 'Nominal Operation - All Telemetry Healthy',
-    status: 'Healthy',
-    lastServiceDate: '2026-07-28',
-    nextServiceDue: '2026-10-28',
-    temperatureC: 32.5,
-    vibrationMmS: 0.4,
-    notes: 'Monitors tunneling crew RFID tags'
-  },
-  {
-    id: 'R-44',
-    name: 'Material Laydown & Crane Node',
-    type: 'LoRaWAN Field Node',
-    location: 'Laydown Yard & Crane Depot',
-    zoneId: 'zone-d',
-    signal: 22,
-    battery: 15,
-    health: 30,
-    prediction: 'Battery Depletion Imminent in 3 Days',
-    status: 'Critical',
-    lastServiceDate: '2026-04-10',
-    nextServiceDue: '2026-08-10',
-    temperatureC: 51.0,
-    vibrationMmS: 4.2,
-    technicianAssigned: 'Tech-02 (Elena Rostova)',
-    notes: 'Solar backup panel dirty, battery running low'
-  },
-  {
-    id: 'R-01',
-    name: 'Main Construction Site Gate Portal',
-    type: 'High-Speed RFID Reader',
-    location: 'Main Site Entrance Gate',
-    zoneId: 'zone-a',
-    signal: 95,
-    battery: null,
-    health: 98,
-    prediction: 'Nominal Operation - Optical lens clean',
-    status: 'Healthy',
-    lastServiceDate: '2026-07-01',
-    nextServiceDue: '2026-10-01',
-    temperatureC: 36.8,
-    vibrationMmS: 0.8,
-    notes: 'High throughput main access portal'
-  },
-  {
-    id: 'R-19',
-    name: 'Scaffold Tower Alpha Gateway',
-    type: 'UHF Portal Repeater',
-    location: 'Tower Alpha Floor 14',
-    zoneId: 'zone-c',
-    signal: 78,
-    battery: 62,
-    health: 84,
-    prediction: 'Minor RF Noise Floor Rise - Schedule Check in 30 Days',
-    status: 'Healthy',
-    lastServiceDate: '2026-05-20',
-    nextServiceDue: '2026-09-01',
-    temperatureC: 39.1,
-    vibrationMmS: 1.1,
-    notes: 'High elevation wind exposure node'
-  },
-  {
-    id: 'R-33',
-    name: 'Excavation Sector AI Vision Cam',
-    type: 'Edge AI Edge Processor',
-    location: 'Excavation Sector Trench',
-    zoneId: 'zone-e',
-    signal: 88,
-    battery: null,
-    health: 72,
-    prediction: 'Dust Accumulation on Lens Sensor - Cleaning Recommended',
-    status: 'Warning',
-    lastServiceDate: '2026-06-30',
-    nextServiceDue: '2026-08-15',
-    temperatureC: 48.5,
-    vibrationMmS: 2.9,
-    technicianAssigned: 'Tech-03 (Marcus Brody)',
-    notes: 'Dusty environment near heavy excavation machinery'
-  }
-];
-
-const DEFAULT_WORK_ORDERS: WorkOrder[] = [
-  {
-    id: 'WO-2026-089',
-    nodeId: 'R-44',
-    nodeName: 'Material Laydown & Crane Node',
-    title: 'Emergency Battery & Solar Panel Servicing',
-    category: 'Battery Replacement',
-    priority: 'P1 - Critical',
-    status: 'In Progress',
-    assignedTech: 'Tech-02 (Elena Rostova)',
-    createdDate: '2026-08-06',
-    dueDate: '2026-08-08',
-    estimatedHours: 2.5,
-    description: 'Replace Li-Ion battery pack and clean solar glass cover. Test charge controller voltage.',
-    partsRequired: 'Li-Ion Battery Pack 12V 20Ah, Solar Glass Wipes, Contact Cleaner'
-  },
-  {
-    id: 'WO-2026-074',
-    nodeId: 'R-07',
-    nodeName: 'Gate 1 Access Turnstile Gateway',
-    title: 'UHF Antenna Phase & VSWR Calibration',
-    category: 'Antenna Re-alignment',
-    priority: 'P2 - High',
-    status: 'Open',
-    assignedTech: 'Tech-01 (David Vance)',
-    createdDate: '2026-08-05',
-    dueDate: '2026-08-12',
-    estimatedHours: 1.5,
-    description: 'Re-align directional antenna panel to 45 deg angle and re-tune RF power to 28 dBm.',
-    partsRequired: 'Antenna Mounting Bracket, Coaxial Jumper Cables'
-  },
-  {
-    id: 'WO-2026-062',
-    nodeId: 'R-33',
-    nodeName: 'Excavation Sector AI Vision Cam',
-    title: 'Optical Enclosure Cleaning & Fan Filter Swap',
-    category: 'Cleaning & Calibration',
-    priority: 'P3 - Medium',
-    status: 'Pending Parts',
-    assignedTech: 'Tech-03 (Marcus Brody)',
-    createdDate: '2026-08-02',
-    dueDate: '2026-08-10',
-    estimatedHours: 1.0,
-    description: 'Wipe camera optics dome with isopropyl solution and replace dusty intake filter mesh.',
-    partsRequired: 'HEPA Micro Filter Mesh (Qty 2), Anti-static wipes'
-  },
-  {
-    id: 'WO-2026-041',
-    nodeId: 'R-01',
-    nodeName: 'Main Construction Site Gate Portal',
-    title: 'Quarterly Firmware & Security Patch Rollout',
-    category: 'Firmware Reflash',
-    priority: 'P4 - Low',
-    status: 'Completed',
-    assignedTech: 'Tech-01 (David Vance)',
-    createdDate: '2026-07-28',
-    dueDate: '2026-07-30',
-    estimatedHours: 0.8,
-    description: 'Applied firmware v3.8.2 patch for enhanced TLS 1.3 socket security.',
-    resolutionNotes: 'Updated via remote OTA without site downtime. All test tags validated 100%.',
-    completedDate: '2026-07-29'
-  }
-];
-
-const DEFAULT_TECHNICIANS: Technician[] = [
-  { id: 'tech-1', name: 'David Vance', role: 'Senior RF & Hardware Specialist', status: 'Available', phone: '+1 (555) 234-5678', specialization: 'RFID / Antenna Tuning / Gate Portals', activeWorkOrders: 1 },
-  { id: 'tech-2', name: 'Elena Rostova', role: 'Field Electronics Technician', status: 'On-site Repair', phone: '+1 (555) 876-5432', specialization: 'Batteries / Solar Power / IoT Nodes', activeWorkOrders: 1 },
-  { id: 'tech-3', name: 'Marcus Brody', role: 'Vision & Systems Specialist', status: 'Available', phone: '+1 (555) 345-6789', specialization: 'AI Cameras / Optical Sensors / Network', activeWorkOrders: 1 },
-  { id: 'tech-4', name: 'Aisha Patel', role: 'Telemetry & Safety Engineer', status: 'In Transit', phone: '+1 (555) 987-6543', specialization: 'Gas Sensors / UHF Portals / Confined Space', activeWorkOrders: 0 }
-];
-
-const DEFAULT_SCHEDULES: ScheduleRule[] = [
-  { id: 'SCH-01', title: 'Monthly Antenna Signal Sweep & Impedance Check', targetNodeCategory: 'UHF RFID Reader', frequencyDays: 30, lastRun: '2026-07-10', nextRun: '2026-08-10', assignedTech: 'David Vance', active: true },
-  { id: 'SCH-02', title: 'Quarterly Battery Health & Solar Charge Controller Inspection', targetNodeCategory: 'LoRaWAN Field Node', frequencyDays: 90, lastRun: '2026-05-15', nextRun: '2026-08-15', assignedTech: 'Elena Rostova', active: true },
-  { id: 'SCH-03', title: 'Bi-Weekly AI Optical Camera Lens Cleaning', targetNodeCategory: 'Edge AI Edge Processor', frequencyDays: 14, lastRun: '2026-07-25', nextRun: '2026-08-08', assignedTech: 'Marcus Brody', active: true }
-];
-
 export default function MaintenanceTab() {
   // Main State
   const [nodes, setNodes] = useState<MaintenanceNode[]>([]);
@@ -314,7 +128,7 @@ export default function MaintenanceTab() {
     return () => clearInterval(intv);
   }, []);
 
-  // Load and Sync with MongoDB via Firestore Abstraction Layer (`db.ts`)
+  // Load and Sync with MongoDB via db.ts client
   useEffect(() => {
     setLoading(true);
 
@@ -426,10 +240,10 @@ export default function MaintenanceTab() {
     });
   }, [workOrders, woStatusFilter, woPriorityFilter, searchTerm]);
 
-  // Aggregate Metrics
+  // Aggregate Metrics from live MongoDB state
   const metrics = useMemo(() => {
     const totalNodes = nodes.length;
-    const avgHealth = totalNodes > 0 ? (nodes.reduce((acc, n) => acc + n.health, 0) / totalNodes).toFixed(1) : '94.2';
+    const avgHealth = totalNodes > 0 ? (nodes.reduce((acc, n) => acc + n.health, 0) / totalNodes).toFixed(1) : '0.0';
     const warningNodes = nodes.filter(n => n.status === 'Warning').length;
     const criticalNodes = nodes.filter(n => n.status === 'Critical').length;
     
@@ -709,7 +523,9 @@ export default function MaintenanceTab() {
           <div className="text-[10px] font-bold text-slate-400 uppercase">Avg Fleet Health</div>
           <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">{metrics.avgHealth}%</div>
           <div className="text-[10px] font-semibold text-emerald-600 flex items-center gap-0.5 mt-0.5">
-            <TrendingUp size={10} /> +1.4% VS Last Month
+            {metrics.totalNodes > 0 
+              ? (metrics.criticalNodes === 0 && metrics.warningNodes === 0 ? 'All Hardware Optimal' : `${metrics.warningNodes + metrics.criticalNodes} Alerts Detected`)
+              : 'Synced with MongoDB'}
           </div>
         </div>
 
@@ -1123,30 +939,36 @@ export default function MaintenanceTab() {
               <div>
                 <div className="flex justify-between text-xs font-bold mb-1">
                   <span>P1 Critical Hardware Repair SLA (&lt; 4h)</span>
-                  <span className="text-emerald-600">98.4% On-Time</span>
+                  <span className="text-emerald-600 font-mono font-bold">
+                    {metrics.criticalWos === 0 ? (workOrders.length > 0 ? '100% On-Time' : 'N/A (0 Tickets)') : `${Math.round(((workOrders.filter(w => w.priority.includes('P1') && w.status === 'Completed').length) / Math.max(1, metrics.criticalWos)) * 100)}% On-Time`}
+                  </span>
                 </div>
                 <div className="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: '98.4%' }} />
+                  <div className="bg-emerald-500 h-full rounded-full" style={{ width: `${metrics.criticalWos === 0 ? (workOrders.length > 0 ? 100 : 0) : Math.min(100, Math.round(((workOrders.filter(w => w.priority.includes('P1') && w.status === 'Completed').length) / Math.max(1, metrics.criticalWos)) * 100))}%` }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between text-xs font-bold mb-1">
                   <span>P2 High Priority Hardware Calibration (&lt; 24h)</span>
-                  <span className="text-blue-600">95.2% On-Time</span>
+                  <span className="text-blue-600 font-mono font-bold">
+                    {workOrders.length > 0 ? `${Math.round((workOrders.filter(w => w.status === 'Completed' || w.status === 'In Progress').length / workOrders.length) * 100)}% On-Time` : 'N/A (0 Tickets)'}
+                  </span>
                 </div>
                 <div className="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                  <div className="bg-blue-500 h-full rounded-full" style={{ width: '95.2%' }} />
+                  <div className="bg-blue-500 h-full rounded-full" style={{ width: `${workOrders.length > 0 ? Math.round((workOrders.filter(w => w.status === 'Completed' || w.status === 'In Progress').length / workOrders.length) * 100) : 0}%` }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between text-xs font-bold mb-1">
                   <span>Preventive Maintenance Compliance Index</span>
-                  <span className="text-purple-600">100% Compliant</span>
+                  <span className="text-purple-600 font-mono font-bold">
+                    {nodes.length > 0 ? `${Math.round(((nodes.length - metrics.criticalNodes) / nodes.length) * 100)}% Compliant` : 'N/A (0 Nodes)'}
+                  </span>
                 </div>
                 <div className="w-full bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                  <div className="bg-purple-500 h-full rounded-full" style={{ width: '100%' }} />
+                  <div className="bg-purple-500 h-full rounded-full" style={{ width: `${nodes.length > 0 ? Math.round(((nodes.length - metrics.criticalNodes) / nodes.length) * 100) : 0}%` }} />
                 </div>
               </div>
             </div>
@@ -1154,23 +976,33 @@ export default function MaintenanceTab() {
 
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-4">
             <h3 className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
-              <Activity className="text-emerald-500" size={18} /> Preventive VS Reactive Maintenance Ratio
+              <Activity className="text-emerald-500" size={18} /> Preventive VS Reactive Maintenance Ratio (MongoDB)
             </h3>
 
-            <div className="flex items-center justify-around py-4">
-              <div className="text-center">
-                <div className="text-3xl font-black text-emerald-600">82%</div>
-                <div className="text-xs font-bold text-slate-500 uppercase mt-1">Preventive AI</div>
-              </div>
-              <div className="h-12 w-px bg-slate-200 dark:bg-slate-700" />
-              <div className="text-center">
-                <div className="text-3xl font-black text-amber-600">18%</div>
-                <div className="text-xs font-bold text-slate-500 uppercase mt-1">Reactive Breakdown</div>
-              </div>
-            </div>
+            {(() => {
+              const prevCount = workOrders.filter(w => w.category === 'Antenna Re-alignment' || w.category === 'Cleaning & Calibration' || w.category === 'General Inspection').length;
+              const reactCount = workOrders.filter(w => w.category === 'Battery Replacement' || w.category === 'Firmware Reflash' || w.category === 'Hardware Swap').length;
+              const total = prevCount + reactCount;
+              const prevPct = total > 0 ? Math.round((prevCount / total) * 100) : 0;
+              const reactPct = total > 0 ? 100 - prevPct : 0;
+
+              return (
+                <div className="flex items-center justify-around py-4">
+                  <div className="text-center">
+                    <div className="text-3xl font-black text-emerald-600 font-mono">{prevPct}%</div>
+                    <div className="text-xs font-bold text-slate-500 uppercase mt-1">Preventive AI ({prevCount} Tickets)</div>
+                  </div>
+                  <div className="h-12 w-px bg-slate-200 dark:bg-slate-700" />
+                  <div className="text-center">
+                    <div className="text-3xl font-black text-amber-600 font-mono">{reactPct}%</div>
+                    <div className="text-xs font-bold text-slate-500 uppercase mt-1">Reactive Breakdown ({reactCount} Tickets)</div>
+                  </div>
+                </div>
+              );
+            })()}
 
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              GAO AI predictive early-warning algorithms prevented 14 potential reader battery depletions and antenna misalignments this month before site operations were impacted.
+              GAO AI predictive early-warning algorithms continuously analyze real-time vibration harmonics, antenna RSSI attenuation, and battery discharge rates to generate preventive work orders before hardware failure.
             </p>
           </div>
         </div>

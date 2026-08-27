@@ -15,12 +15,19 @@ import { processTelemetryWithAI } from '../services/aiPipeline.js';
 
 export const apiIntegrationsRouter = Router();
 
+function getReqOrgId(req: Request): string {
+  return (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
+}
+
 // GET /api/integrations/third-party
 apiIntegrationsRouter.get('/third-party', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
-    await bootstrapDefaultThirdPartyApis();
-    const apis = await getCollectionDocs('third_party_apis');
-    return res.json({ success: true, count: apis.length, apis });
+    if (orgId === 'demo') {
+      await bootstrapDefaultThirdPartyApis();
+    }
+    const apis = await getCollectionDocs('third_party_apis', undefined, orgId);
+    return res.json({ success: true, count: apis.length, apis, organizationId: orgId });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message || 'Failed to list third-party APIs' });
   }
@@ -28,6 +35,7 @@ apiIntegrationsRouter.get('/third-party', async (req: Request, res: Response) =>
 
 // POST /api/integrations/third-party
 apiIntegrationsRouter.post('/third-party', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
     const config: Partial<ThirdPartyApiConfig> = req.body || {};
     if (!config.name || !config.endpointUrl) {
@@ -58,8 +66,8 @@ apiIntegrationsRouter.post('/third-party', async (req: Request, res: Response) =
       updatedAt: nowIso
     };
 
-    await upsertDoc('third_party_apis', savedConfig);
-    return res.json({ success: true, message: 'API integration configuration saved in MongoDB', api: savedConfig });
+    await upsertDoc('third_party_apis', savedConfig, orgId);
+    return res.json({ success: true, message: 'API integration configuration saved in MongoDB', api: savedConfig, organizationId: orgId });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message || 'Failed to save API integration' });
   }
@@ -67,9 +75,10 @@ apiIntegrationsRouter.post('/third-party', async (req: Request, res: Response) =
 
 // DELETE /api/integrations/third-party/:id
 apiIntegrationsRouter.delete('/third-party/:id', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
     const { id } = req.params;
-    const deleted = await deleteDocById('third_party_apis', id);
+    const deleted = await deleteDocById('third_party_apis', id, orgId);
     return res.json({ success: deleted, message: deleted ? 'API integration removed' : 'API integration not found' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -109,19 +118,21 @@ apiIntegrationsRouter.post('/third-party/sync', async (req: Request, res: Respon
 
 // POST /api/integrations/third-party/webhook/:id (Incoming external push webhook)
 apiIntegrationsRouter.post('/third-party/webhook/:id', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
     const { id } = req.params;
-    const apis = await getCollectionDocs('third_party_apis');
+    const apis = await getCollectionDocs('third_party_apis', undefined, orgId);
     const matched = apis.find((a: any) => a.id === id);
 
     const payload = req.body;
     const telemetry = extractTelemetryFromPayload(payload, matched?.dataMapping);
     
     // Pass into AI pipeline and store in MongoDB
-    const aiResult = await processTelemetryWithAI(telemetry, `Webhook API: ${matched?.name || id}`);
+    const aiResult = await processTelemetryWithAI(telemetry, `Webhook API: ${matched?.name || id}`, orgId);
 
     return res.json({
       success: true,
+      organizationId: orgId,
       receivedRecords: telemetry.length,
       aiProcessed: aiResult.processedCount,
       timestamp: new Date().toISOString()

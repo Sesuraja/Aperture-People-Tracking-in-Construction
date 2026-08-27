@@ -56,7 +56,7 @@ globalWsClient.onStatus((status, _msg) => {
 export function startGaoSync() {
   if (isSyncing) return;
   isSyncing = true;
-  console.log('Started GAO to Firestore Sync Service');
+  console.log('Started GAO to MongoDB Sync Service');
 
   // Ensure WebSocket connection is active
   globalWsClient.connect();
@@ -84,7 +84,7 @@ export function startGaoSync() {
 
       await Promise.allSettled(batchPromises);
     } catch (e) {
-      console.error('Error syncing GAO data to Firestore:', e);
+      console.error('Error syncing GAO data to MongoDB:', e);
     }
   }, 3000); // Poll every 3 seconds
 }
@@ -95,6 +95,6 @@ export function stopGaoSync() {
     syncInterval = null;
   }
   isSyncing = false;
-  console.log('Stopped GAO to Firestore Sync Service');
+  console.log('Stopped GAO to MongoDB Sync Service');
 }
 

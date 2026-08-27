@@ -14,6 +14,16 @@ export default defineConfig(() => {
     build: {
       outDir: 'dist',
       emptyOutDir: true,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+            'vendor-charts': ['recharts'],
+            'vendor-icons': ['lucide-react'],
+            'vendor-motion': ['motion']
+          }
+        }
+      }
     },
     server: {
       hmr: process.env.DISABLE_HMR !== 'true',

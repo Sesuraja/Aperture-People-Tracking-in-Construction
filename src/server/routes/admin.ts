@@ -19,10 +19,10 @@ export const adminRouter = Router();
 // Apply auth middleware to all admin routes
 adminRouter.use(requireAuth);
 
-async function findUserByIdOrUid(userId: string) {
-  const user = await getDocById('users', userId);
+async function findUserByIdOrUid(userId: string, organizationId?: string) {
+  const user = await getDocById('users', userId, organizationId);
   if (user) return user;
-  const users = await getCollectionDocs('users');
+  const users = await getCollectionDocs('users', undefined, organizationId);
   return users.find((u: any) => u.id === userId || u.uid === userId || (u.id && userId && u.id.toString() === userId.toString())) || null;
 }
 
@@ -55,10 +55,11 @@ const updatePermissionsSchema = z.object({
 
 // GET /api/admin/users
 adminRouter.get('/users', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'demo';
   try {
-    const users = await getCollectionDocs('users');
+    const users = await getCollectionDocs('users', undefined, orgId);
     const sanitized = users.map(u => sanitizeUser(u));
-    return res.json({ users: sanitized });
+    return res.json({ users: sanitized, organizationId: orgId });
   } catch (err: any) {
     console.error('[Admin Route] Get users error:', err);
     return res.status(500).json({ error: 'Failed to fetch users' });
@@ -78,11 +79,12 @@ adminRouter.post('/create-user', requirePermission('settings'), async (req: Auth
   const { email, password, name, displayName, role } = parseResult.data;
   const lowerEmail = email.toLowerCase();
   const resolvedName = displayName || name || lowerEmail.split('@')[0];
+  const orgId = req.user?.organizationId || 'demo';
 
   try {
-    const users = await getCollectionDocs('users');
+    const users = await getCollectionDocs('users', undefined, orgId);
     if (users.some((u: any) => u.email?.toLowerCase() === lowerEmail)) {
-      return res.status(400).json({ error: 'User with this email already exists' });
+      return res.status(400).json({ error: 'User with this email already exists in your organization' });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
@@ -92,20 +94,22 @@ adminRouter.post('/create-user', requirePermission('settings'), async (req: Auth
       name: resolvedName,
       displayName: resolvedName,
       role: role || 'operator',
+      organizationId: orgId,
       passwordHash,
       createdAt: new Date().toISOString(),
       invited: true,
       hasLoggedIn: false
     };
 
-    await upsertDoc('users', newUser);
+    await upsertDoc('users', newUser, orgId);
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'ADMIN_CREATE_USER',
       resource: 'users',
-      details: { targetEmail: lowerEmail, role },
+      details: { targetEmail: lowerEmail, role, organizationId: orgId },
       ip: req.ip
     });
 
@@ -131,27 +135,29 @@ adminRouter.post(['/set-user-role', '/set-role'], requirePermission('settings'),
 
   const { userId, uid, email, role } = parseResult.data;
   const targetId = userId || uid;
+  const orgId = req.user?.organizationId || 'demo';
 
   try {
-    const users = await getCollectionDocs('users');
+    const users = await getCollectionDocs('users', undefined, orgId);
     const user = users.find((u: any) =>
       (targetId && u.id === targetId) || (email && u.email?.toLowerCase() === email.toLowerCase())
     );
 
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found in your organization' });
     }
 
     const prevRole = user.role;
     user.role = role;
-    await upsertDoc('users', user);
+    await upsertDoc('users', user, orgId);
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'ADMIN_CHANGE_USER_ROLE',
       resource: 'users',
-      details: { targetUser: user.email, prevRole, newRole: role },
+      details: { targetUser: user.email, prevRole, newRole: role, organizationId: orgId },
       ip: req.ip
     });
 
@@ -172,23 +178,26 @@ adminRouter.post('/bulk-set-role', requirePermission('settings'), async (req: Au
     return res.status(400).json({ error: 'userIds array and role string are required' });
   }
   const { userIds, role } = parseResult.data;
+  const orgId = req.user?.organizationId || 'demo';
+
   try {
-    const users = await getCollectionDocs('users');
+    const users = await getCollectionDocs('users', undefined, orgId);
     let updatedCount = 0;
 
     for (const user of users) {
       if (userIds.includes(user.id) || userIds.includes(user.uid)) {
         const prevRole = user.role;
         user.role = role;
-        await upsertDoc('users', user);
+        await upsertDoc('users', user, orgId);
         updatedCount++;
 
         await logAuditEvent({
           userId: req.user?.id,
           userEmail: req.user?.email,
+          organizationId: orgId,
           action: 'ADMIN_CHANGE_USER_ROLE_BULK',
           resource: 'users',
-          details: { targetUser: user.email, prevRole, newRole: role },
+          details: { targetUser: user.email, prevRole, newRole: role, organizationId: orgId },
           ip: req.ip
         });
       }
@@ -207,25 +216,27 @@ adminRouter.post('/bulk-set-role', requirePermission('settings'), async (req: Au
 // DELETE /api/admin/users/:id
 adminRouter.delete('/users/:id', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
   const userId = req.params.id;
+  const orgId = req.user?.organizationId || 'demo';
 
   try {
-    const user = await findUserByIdOrUid(userId);
+    const user = await findUserByIdOrUid(userId, orgId);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found in your organization' });
     }
 
     if (user.email?.toLowerCase() === req.user?.email?.toLowerCase()) {
       return res.status(400).json({ error: 'Cannot delete your own admin account' });
     }
 
-    await deleteDocById('users', user.id);
+    await deleteDocById('users', user.id, orgId);
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'ADMIN_DELETE_USER',
       resource: 'users',
-      details: { targetUser: user.email, targetId: userId },
+      details: { targetUser: user.email, targetId: userId, organizationId: orgId },
       ip: req.ip
     });
 
@@ -238,8 +249,9 @@ adminRouter.delete('/users/:id', requirePermission('settings'), async (req: Auth
 
 // GET /api/admin/permissions
 adminRouter.get('/permissions', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'demo';
   try {
-    const rolePermissions = await getCollectionDocs('role_permissions');
+    const rolePermissions = await getCollectionDocs('role_permissions', undefined, orgId);
     if (!rolePermissions || rolePermissions.length === 0) {
       return res.json({ rolePermissions: DEFAULT_ROLE_PERMISSIONS });
     }
@@ -260,21 +272,25 @@ adminRouter.post('/permissions', requirePermission('settings'), async (req: Auth
     });
   }
 
+  const orgId = req.user?.organizationId || 'demo';
+
   try {
     for (const item of parseResult.data.rolePermissions) {
       await upsertDoc('role_permissions', {
         id: item.role,
         role: item.role,
-        permissions: item.permissions
-      });
+        permissions: item.permissions,
+        organizationId: orgId
+      }, orgId);
     }
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'ADMIN_UPDATE_PERMISSIONS',
       resource: 'role_permissions',
-      details: { updatedRoles: parseResult.data.rolePermissions.map(r => r.role) },
+      details: { updatedRoles: parseResult.data.rolePermissions.map(r => r.role), organizationId: orgId },
       ip: req.ip
     });
 
@@ -287,8 +303,9 @@ adminRouter.post('/permissions', requirePermission('settings'), async (req: Auth
 
 // GET /api/admin/audit-logs
 adminRouter.get('/audit-logs', requirePermission('audit'), async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'demo';
   try {
-    const logs = await getAuditLogs(200);
+    const logs = await getAuditLogs(200, orgId);
     return res.json({ logs });
   } catch (err: any) {
     console.error('[Admin Route] Get audit logs error:', err);
@@ -298,8 +315,9 @@ adminRouter.get('/audit-logs', requirePermission('audit'), async (req: AuthReque
 
 // GET /api/admin/user-activity-logs
 adminRouter.get('/user-activity-logs', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'demo';
   try {
-    const logs = await getAuditLogs(500);
+    const logs = await getAuditLogs(500, orgId);
     const userLogs = logs.filter(log => {
       const act = (log.action || '').toUpperCase();
       const resName = (log.resource || '').toUpperCase();
@@ -324,21 +342,24 @@ adminRouter.get('/user-activity-logs', requirePermission('settings'), async (req
 // POST /api/admin/users/:id/revoke-sessions
 adminRouter.post('/users/:id/revoke-sessions', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
+  const orgId = req.user?.organizationId || 'demo';
+
   try {
-    const userDoc = await findUserByIdOrUid(id);
+    const userDoc = await findUserByIdOrUid(id, orgId);
     if (!userDoc) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found in your organization' });
     }
 
     userDoc.tokenVersion = (userDoc.tokenVersion || 1) + 1;
-    await upsertDoc('users', userDoc);
+    await upsertDoc('users', userDoc, orgId);
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'ADMIN_REVOKED_USER_SESSIONS',
       resource: 'users',
-      details: { targetUserId: id, targetEmail: userDoc.email, newVersion: userDoc.tokenVersion },
+      details: { targetUserId: id, targetEmail: userDoc.email, newVersion: userDoc.tokenVersion, organizationId: orgId },
       ip: req.ip
     });
 
@@ -354,28 +375,30 @@ adminRouter.post('/users/:id/update-name', requirePermission('settings'), async 
   const userId = req.params.id;
   const { name, displayName } = req.body || {};
   const newName = name || displayName;
+  const orgId = req.user?.organizationId || 'demo';
 
   if (!newName || typeof newName !== 'string' || !newName.trim()) {
     return res.status(400).json({ error: 'Name is required' });
   }
 
   try {
-    const user = await findUserByIdOrUid(userId);
+    const user = await findUserByIdOrUid(userId, orgId);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found in your organization' });
     }
 
     const prevName = user.name || user.displayName;
     user.name = newName.trim();
     user.displayName = newName.trim();
-    await upsertDoc('users', user);
+    await upsertDoc('users', user, orgId);
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'ADMIN_UPDATE_USER_NAME',
       resource: 'users',
-      details: { targetUserId: userId, targetUser: user.email, prevName, newName: newName.trim() },
+      details: { targetUserId: userId, targetUser: user.email, prevName, newName: newName.trim(), organizationId: orgId },
       ip: req.ip
     });
 
@@ -393,29 +416,31 @@ adminRouter.post('/users/:id/update-name', requirePermission('settings'), async 
 adminRouter.post('/users/:id/reset-password', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
   const userId = req.params.id;
   const { password } = req.body || {};
+  const orgId = req.user?.organizationId || 'demo';
 
   if (!password || typeof password !== 'string' || password.length < 6) {
     return res.status(400).json({ error: 'Password must be at least 6 characters long' });
   }
 
   try {
-    const user = await findUserByIdOrUid(userId);
+    const user = await findUserByIdOrUid(userId, orgId);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found in your organization' });
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
     user.passwordHash = passwordHash;
     // Revoke any active sessions too
     user.tokenVersion = (user.tokenVersion || 1) + 1;
-    await upsertDoc('users', user);
+    await upsertDoc('users', user, orgId);
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'ADMIN_RESET_USER_PASSWORD',
       resource: 'users',
-      details: { targetUserId: userId, targetUser: user.email },
+      details: { targetUserId: userId, targetUser: user.email, organizationId: orgId },
       ip: req.ip
     });
 
@@ -432,19 +457,21 @@ adminRouter.post('/users/:id/reset-password', requirePermission('settings'), asy
 // POST /api/admin/users/:id/resend-invite
 adminRouter.post('/users/:id/resend-invite', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
   const userId = req.params.id;
+  const orgId = req.user?.organizationId || 'demo';
 
   try {
-    const user = await findUserByIdOrUid(userId);
+    const user = await findUserByIdOrUid(userId, orgId);
     if (!user) {
-      return res.status(404).json({ error: 'User not found' });
+      return res.status(404).json({ error: 'User not found in your organization' });
     }
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'ADMIN_RESEND_INVITE_EMAIL',
       resource: 'users',
-      details: { targetUserId: userId, targetUser: user.email },
+      details: { targetUserId: userId, targetUser: user.email, organizationId: orgId },
       ip: req.ip
     });
 
@@ -460,10 +487,12 @@ adminRouter.post('/users/:id/resend-invite', requirePermission('settings'), asyn
 
 // GET /api/admin/data-retention
 adminRouter.get('/data-retention', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'demo';
   try {
-    const retentionDoc = await getDocById('settings', 'retention_policy');
+    const retentionDoc = await getDocById('settings', 'retention_policy', orgId);
     const defaultPolicy = {
       id: 'retention_policy',
+      organizationId: orgId,
       tagHistoryRetentionDays: 60,
       staleLiveTagHours: 24,
       auditLogRetentionDays: 180,
@@ -490,23 +519,27 @@ adminRouter.post('/data-retention', requirePermission('settings'), async (req: A
     return res.status(400).json({ error: 'Invalid retention policy inputs', details: parseResult.error.issues });
   }
 
+  const orgId = req.user?.organizationId || 'demo';
+
   try {
-    const existing = await getDocById('settings', 'retention_policy');
+    const existing = await getDocById('settings', 'retention_policy', orgId);
     const policyDoc = {
       id: 'retention_policy',
+      organizationId: orgId,
       ...parseResult.data,
       lastExecuted: existing?.lastExecuted || null,
       updatedAt: new Date().toISOString()
     };
 
-    await upsertDoc('settings', policyDoc);
+    await upsertDoc('settings', policyDoc, orgId);
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'ADMIN_UPDATE_RETENTION_POLICY',
       resource: 'settings',
-      details: parseResult.data,
+      details: { ...parseResult.data, organizationId: orgId },
       ip: req.ip
     });
 
@@ -519,8 +552,9 @@ adminRouter.post('/data-retention', requirePermission('settings'), async (req: A
 
 // POST /api/admin/data-retention/execute
 adminRouter.post('/data-retention/execute', requirePermission('settings'), async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'demo';
   try {
-    const retentionDoc = await getDocById('settings', 'retention_policy');
+    const retentionDoc = await getDocById('settings', 'retention_policy', orgId);
     const tagHistoryRetentionDays = retentionDoc?.tagHistoryRetentionDays || 60;
     const staleLiveTagHours = retentionDoc?.staleLiveTagHours || 24;
 
@@ -528,34 +562,38 @@ adminRouter.post('/data-retention/execute', requirePermission('settings'), async
     const historyCutoff = new Date(now - tagHistoryRetentionDays * 24 * 60 * 60 * 1000).toISOString();
     const liveTagCutoff = new Date(now - staleLiveTagHours * 60 * 60 * 1000).toISOString();
 
-    // Purge old history records
+    // Purge old history records within tenant
     const purgedHistoryCount = await deleteDocsByFilter('tag_history', (doc: any) => {
-      if (!doc.timestamp) return false;
-      return new Date(doc.timestamp).toISOString() < historyCutoff;
-    });
+      if (!doc.timestamp && !doc.EnterTime) return false;
+      const t = doc.timestamp || doc.EnterTime;
+      return new Date(t).toISOString() < historyCutoff;
+    }, orgId);
 
-    // Purge stale live tags
+    // Purge stale live tags within tenant
     const purgedLiveTagsCount = await deleteDocsByFilter('live_tags', (doc: any) => {
-      if (!doc.lastSeen) return false;
-      return new Date(doc.lastSeen).toISOString() < liveTagCutoff;
-    });
+      if (!doc.lastSeen && !doc.lastSyncAt) return false;
+      const t = doc.lastSeen || doc.lastSyncAt;
+      return new Date(t).toISOString() < liveTagCutoff;
+    }, orgId);
 
     const executionTimestamp = new Date().toISOString();
     const updatedPolicy = {
       ...(retentionDoc || { id: 'retention_policy', tagHistoryRetentionDays, staleLiveTagHours }),
       id: 'retention_policy',
+      organizationId: orgId,
       lastExecuted: executionTimestamp,
       lastPurgedCounts: { history: purgedHistoryCount, liveTags: purgedLiveTagsCount }
     };
 
-    await upsertDoc('settings', updatedPolicy);
+    await upsertDoc('settings', updatedPolicy, orgId);
 
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
+      organizationId: orgId,
       action: 'DATA_RETENTION_CLEANUP_EXECUTED',
       resource: 'data_retention',
-      details: { purgedHistoryCount, purgedLiveTagsCount, historyCutoff, liveTagCutoff },
+      details: { purgedHistoryCount, purgedLiveTagsCount, historyCutoff, liveTagCutoff, organizationId: orgId },
       ip: req.ip
     });
 

@@ -117,7 +117,7 @@ export default function VisitorsTab() {
     riskLevel: 'HIGH' as 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
   });
 
-  // Firestore Subscription
+  // MongoDB Subscription
   useEffect(() => {
 
     const unsubVisitors = onSnapshot(collection(db, 'visitors'), (snap) => {
@@ -1049,49 +1049,70 @@ export default function VisitorsTab() {
       {activeTab === 'analytics' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-3">
-            <h4 className="font-bold text-slate-900 dark:text-white text-sm">Peak Visitor Arrival Hours</h4>
+            <h4 className="font-bold text-slate-900 dark:text-white text-sm">Visitor Status Distribution</h4>
             <div className="space-y-2 text-xs">
               <div>
                 <div className="flex justify-between font-semibold mb-1">
-                  <span>08:00 AM - 10:00 AM (Morning Peak)</span>
-                  <span className="font-bold text-[#007BC4]">58%</span>
+                  <span>Active On-Site ({stats.active})</span>
+                  <span className="font-bold text-emerald-600">{stats.total > 0 ? Math.round((stats.active / stats.total) * 100) : 0}%</span>
                 </div>
-                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="bg-[#007BC4] h-full" style={{ width: '58%' }} />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex justify-between font-semibold mb-1">
-                  <span>10:00 AM - 01:00 PM (Midday Audits)</span>
-                  <span className="font-bold text-[#007BC4]">28%</span>
-                </div>
-                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="bg-[#007BC4] h-full" style={{ width: '28%' }} />
+                <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
+                  <div className="bg-emerald-500 h-full" style={{ width: `${stats.total > 0 ? (stats.active / stats.total) * 100 : 0}%` }} />
                 </div>
               </div>
 
               <div>
                 <div className="flex justify-between font-semibold mb-1">
-                  <span>01:00 PM - 05:00 PM (Afternoon Deliveries)</span>
-                  <span className="font-bold text-[#007BC4]">14%</span>
+                  <span>Pre-Registered & Approved ({stats.preRegistered})</span>
+                  <span className="font-bold text-[#007BC4]">{stats.total > 0 ? Math.round((stats.preRegistered / stats.total) * 100) : 0}%</span>
                 </div>
-                <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                  <div className="bg-[#007BC4] h-full" style={{ width: '14%' }} />
+                <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
+                  <div className="bg-[#007BC4] h-full" style={{ width: `${stats.total > 0 ? (stats.preRegistered / stats.total) * 100 : 0}%` }} />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between font-semibold mb-1">
+                  <span>Pending Host Approval ({stats.pendingApproval})</span>
+                  <span className="font-bold text-amber-600">{stats.total > 0 ? Math.round((stats.pendingApproval / stats.total) * 100) : 0}%</span>
+                </div>
+                <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
+                  <div className="bg-amber-500 h-full" style={{ width: `${stats.total > 0 ? (stats.pendingApproval / stats.total) * 100 : 0}%` }} />
+                </div>
+              </div>
+
+              <div>
+                <div className="flex justify-between font-semibold mb-1">
+                  <span>Overstayed / Security Flag ({stats.overstayed})</span>
+                  <span className="font-bold text-rose-600">{stats.total > 0 ? Math.round((stats.overstayed / stats.total) * 100) : 0}%</span>
+                </div>
+                <div className="w-full h-2 bg-slate-100 dark:bg-slate-900 rounded-full overflow-hidden">
+                  <div className="bg-rose-500 h-full" style={{ width: `${stats.total > 0 ? (stats.overstayed / stats.total) * 100 : 0}%` }} />
                 </div>
               </div>
             </div>
           </div>
 
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-3">
-            <h4 className="font-bold text-slate-900 dark:text-white text-sm">Top Visitor Organizations</h4>
+            <h4 className="font-bold text-slate-900 dark:text-white text-sm">Top Visitor Organizations (from MongoDB)</h4>
             <div className="space-y-2 text-xs">
-              {['City Structural Audit Dept', 'Apex Scaffold Solutions', 'VoltCraft Electrical', 'Geotechnical Soil Testing'].map((org, i) => (
-                <div key={org} className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-900 rounded-xl">
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">{org}</span>
-                  <span className="font-bold text-[#007BC4]">{12 - i * 2} Visits</span>
-                </div>
-              ))}
+              {(() => {
+                const orgMap: Record<string, number> = {};
+                visitors.forEach(v => {
+                  const comp = v.company || 'General Visitor';
+                  orgMap[comp] = (orgMap[comp] || 0) + 1;
+                });
+                const topList = Object.entries(orgMap).sort((a, b) => b[1] - a[1]).slice(0, 5);
+                if (topList.length === 0) {
+                  return <div className="text-slate-400 py-4 text-center">No visitor records stored in MongoDB yet.</div>;
+                }
+                return topList.map(([org, count]) => (
+                  <div key={org} className="flex items-center justify-between p-2.5 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-100 dark:border-slate-800">
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">{org}</span>
+                    <span className="font-bold text-[#007BC4] bg-[#007BC4]/10 px-2 py-0.5 rounded-md">{count} {count === 1 ? 'Visit' : 'Visits'}</span>
+                  </div>
+                ));
+              })()}
             </div>
           </div>
         </div>

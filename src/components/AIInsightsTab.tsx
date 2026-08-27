@@ -62,10 +62,12 @@ import {
 } from '../lib/db';
 import { generatePDFReport, exportToCSV } from '../lib/exportUtils';
 import { useWebSocket } from '../lib/useWebSocket';
+import { useTerminology, useTracking } from '../context/TrackingContext';
 
 interface AIInsightsTabProps {
   people?: Person[];
 }
+
 
 interface GeminiAnomaly {
   tagId: string;
@@ -235,23 +237,44 @@ const FormattedMessageText = ({ text }: { text: string }) => {
 };
 
 export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
+  const { config, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+  const { zones = [] } = useTracking();
+  // MongoDB Real-time Data States
+  const [mongoPeople, setMongoPeople] = useState<any[]>([]);
+
+  const [mongoReaders, setMongoReaders] = useState<any[]>([]);
+
   // 1. Ingestion Data Feeds & WebSocket Subscriptions
   const { tags: rawLiveTags, isLoading: isLiveTagsLoading } = useGaoRealtime(2500);
   const { records: historyRecords } = useGaoHistory(0, 50);
   const { isConnected: isWsConnected, lastMessage } = useWebSocket();
 
-  // Combine props people and live RFID tags for maximum fidelity
-  const liveTags = rawLiveTags && rawLiveTags.length > 0 ? rawLiveTags : people.map(p => ({
-    TagID: p.id,
-    Timestamp: new Date().toISOString(),
-    Location: p.currentZone || 'Tower Core Structure',
-    LocationName: p.currentZone || 'Tower Core Structure',
-    personName: p.name,
-    personId: p.id,
-    zoneName: p.currentZone || 'Tower Core Structure',
-    rssi: p.rssi || -58,
-    readerId: p.lastReader || 'Aperture-Reader-01'
-  }));
+  // Combine live RFID tags, MongoDB registered personnel, and props for full fidelity
+  const liveTags = rawLiveTags && rawLiveTags.length > 0 
+    ? rawLiveTags 
+    : mongoPeople.length > 0 
+    ? mongoPeople.map(p => ({
+        TagID: p.rfidTag || p.tagId || p.id || 'E200001A89',
+        Timestamp: new Date().toISOString(),
+        Location: p.currentZone || p.zone || 'Tower Core Structure',
+        LocationName: p.currentZone || p.zone || 'Tower Core Structure',
+        personName: p.name || 'Worker',
+        personId: p.id,
+        zoneName: p.currentZone || p.zone || 'Tower Core Structure',
+        rssi: p.rssi || -52,
+        readerId: p.lastReader || 'GAO-UHF-PORTAL-01'
+      }))
+    : people.map(p => ({
+        TagID: p.id,
+        Timestamp: new Date().toISOString(),
+        Location: p.currentZone || 'Tower Core Structure',
+        LocationName: p.currentZone || 'Tower Core Structure',
+        personName: p.name,
+        personId: p.id,
+        zoneName: p.currentZone || 'Tower Core Structure',
+        rssi: p.rssi || -58,
+        readerId: p.lastReader || 'Aperture-Reader-01'
+      }));
 
   // 2. Active Tab Sub-view
   const [activeSection, setActiveSection] = useState<
@@ -316,8 +339,8 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
   const [currentBiResult, setCurrentBiResult] = useState<BiSynthesisResult | null>(null);
   const [savedBiSyntheses, setSavedBiSyntheses] = useState<BiSynthesisResult[]>([]);
 
-  // 8. MongoDB / Firestore Recommendations & Incident State
-  const [savedDirectives, setSavedDirectives] = useState<{ id: string; title: string; category: string; description: string; impact: string }[]>([]);
+  // 8. MongoDB Recommendations & Incident State
+  const [savedDirectives, setSavedDirectives] = useState<{ id: string; title: string; category: string; description: string; impact: string; actionableSteps?: string; createdAt?: string }[]>([]);
   const [loggedIncidents, setLoggedIncidents] = useState<{ id: string; title: string; severity: string; zone: string; timestamp: string; description?: string }[]>([]);
   const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
 
@@ -356,8 +379,18 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     }
   }, [actionSuccessMsg]);
 
-  // Firestore Real-Time Subscriptions for Directives, Copilot Sessions, RCA, Hazard Sim & BI
+  // MongoDB Real-Time Subscriptions for Personnel, Readers, Directives, Copilot Sessions, RCA, Hazard Sim & BI
   useEffect(() => {
+    const unsubPeople = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
+      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setMongoPeople(items);
+    }, () => {});
+
+    const unsubReaders = onSnapshot(collection(db, 'hardware_readers'), (snapshot) => {
+      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setMongoReaders(items);
+    }, () => {});
+
     const unsubRecs = onSnapshot(collection(db, 'ai_recommendations'), (snapshot) => {
       const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
       setSavedDirectives(items);
@@ -389,6 +422,8 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     }, () => {});
 
     return () => {
+      unsubPeople();
+      unsubReaders();
       unsubRecs();
       unsubIncidents();
       unsubCopilot();
@@ -515,7 +550,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     }
   };
 
-  // Save Copilot Chat Session to Firestore
+  // Save Copilot Chat Session to MongoDB
   const handleSaveCopilotSession = async () => {
     try {
       const title = `Construction Safety Consultation - ${new Date().toLocaleDateString()} (${chatHistory.length} msgs)`;
@@ -847,7 +882,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
           <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between">
             <span className="text-[10px] font-bold uppercase text-slate-500">Connected Readers</span>
             <div className="text-base font-black text-slate-900 dark:text-white mt-1 flex items-center justify-between">
-              <span>4 Portals (UHF)</span>
+              <span>{mongoReaders.length > 0 ? `${mongoReaders.length} Portals` : '4 Portals (UHF)'}</span>
               <RadioTower size={16} className="text-emerald-500" />
             </div>
           </div>
@@ -918,7 +953,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
             <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
               <div>
                 <span className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider">
-                  OSHA 1926 Safety Index
+                  OSHA Safety Index
                 </span>
                 <h3 className="text-base font-bold text-slate-900 dark:text-white mt-1">
                   Site Personnel Compliance
@@ -927,22 +962,24 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
 
               <div className="my-6 text-center">
                 <div className="text-5xl font-black text-emerald-600 dark:text-emerald-400">
-                  {report?.safetyComplianceScore || 94}%
+                  {report?.safetyComplianceScore ?? (mongoPeople.length > 0 ? 100 : 0)}%
                 </div>
                 <p className="text-xs font-semibold text-slate-500 mt-2">
-                  Zero Lost-Time Incidents in Current Shift
+                  {mongoPeople.length > 0 ? "Zero Lost-Time Incidents in Current Shift" : "No Active Personnel Logged"}
                 </p>
                 <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full mt-3 overflow-hidden">
                   <div 
                     className="bg-emerald-500 h-full rounded-full transition-all duration-700" 
-                    style={{ width: `${report?.safetyComplianceScore || 94}%` }}
+                    style={{ width: `${report?.safetyComplianceScore ?? (mongoPeople.length > 0 ? 100 : 0)}%` }}
                   />
                 </div>
               </div>
 
               <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between text-xs text-slate-500 font-bold">
-                <span>Hardhat Tag Rate: 100%</span>
-                <span className="text-emerald-600">Optimal</span>
+                <span>Active Tagged Personnel: {mongoPeople.length}</span>
+                <span className={mongoPeople.length > 0 ? "text-emerald-600" : "text-slate-400"}>
+                  {mongoPeople.length > 0 ? "Optimal" : "Idle"}
+                </span>
               </div>
             </div>
 
@@ -960,24 +997,32 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
                 </div>
 
                 <p className="text-xs lg:text-sm text-slate-700 dark:text-slate-300 leading-relaxed font-medium mt-4">
-                  {report?.executiveSummary || 
-                    "Active UHF hardhat RFID personnel scans show high site compliance (94.2%) across Metro Commercial Tower. Real-time telemetry detected an unauthorized subcontractor entry near the Heavy Crane Swing Exclusion Radius and scaffolding density approaching threshold on Tier 3. Lone worker safety timers in underground shafts remain fully verified."
-                  }
+                  {report?.executiveSummary || (
+                    mongoPeople.length > 0
+                      ? `Active hardware RFID telemetry is tracking ${mongoPeople.length} personnel across configured site zones. Click "Analyze Ingestion Feed" to synthesize real-time Gemini AI safety compliance, dwell times, and anomaly assessments.`
+                      : "No personnel or zones currently registered in MongoDB. Register hardware and site personnel to begin automated AI safety monitoring."
+                  )}
                 </p>
               </div>
 
               <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div className="p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Crane Radius</span>
-                  <span className="text-xs font-black text-rose-600">1 Incursion Flagged</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Anomalies Detected</span>
+                  <span className={`text-xs font-black ${(report?.anomalies?.length || 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+                    {(report?.anomalies?.length || 0)} Flagged
+                  </span>
                 </div>
                 <div className="p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Scaffolding Density</span>
-                  <span className="text-xs font-black text-amber-600">Tier 3 at 92% Cap</span>
+                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Monitored Zones</span>
+                  <span className="text-xs font-black text-indigo-600">
+                    {zones.length} Active Zones
+                  </span>
                 </div>
                 <div className="p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
                   <span className="text-[10px] font-bold text-slate-400 uppercase block">Muster Roll Call</span>
-                  <span className="text-xs font-black text-emerald-600">100% Gate Verified</span>
+                  <span className="text-xs font-black text-emerald-600">
+                    {mongoPeople.length > 0 ? '100% Gate Verified' : '0 Logged'}
+                  </span>
                 </div>
               </div>
             </div>
@@ -991,63 +1036,62 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
                 <span className="text-[10px] font-black uppercase text-amber-500 tracking-wider">Predictive Telemetry</span>
                 <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
                   <Gauge className="w-5 h-5 text-amber-500" />
-                  <span>Active Construction Zone Hazard Probabilities</span>
+                  <span>Active Zone Hazard Probabilities</span>
                 </h3>
               </div>
               <span className="text-xs font-bold text-slate-400">Live Calculated via RSSI & Dwell Time</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {(report?.riskForecasts || [
-                {
-                  zone: "Heavy Crane Swing Radius",
-                  riskScore: 78,
-                  trend: "Increasing",
-                  mainFactor: "Steel truss hoisting operations in progress"
-                },
-                {
-                  zone: "Scaffolding Tiers 3 & 4",
-                  riskScore: 64,
-                  trend: "Stable",
-                  mainFactor: "Perimeter wind shear tie-off enforcement"
-                },
-                {
-                  zone: "Excavation Pit & Shoring",
-                  riskScore: 42,
-                  trend: "Decreasing",
-                  mainFactor: "Verified gas monitoring & lone worker checks"
-                },
-                {
-                  zone: "High Voltage Substation",
-                  riskScore: 35,
-                  trend: "Stable",
-                  mainFactor: "Restricted to certified electrical trades"
-                }
-              ]).map((rf, idx) => (
-                <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-3">
-                  <div className="flex items-center justify-between">
-                    <span className="font-bold text-xs text-slate-900 dark:text-white">{rf.zone}</span>
-                    <Badge className={`text-[10px] font-black shrink-0 ${
-                      rf.riskScore > 75 
-                        ? 'bg-rose-600 text-white' 
-                        : rf.riskScore > 50 
-                        ? 'bg-amber-500 text-white' 
-                        : 'bg-emerald-600 text-white'
-                    }`}>
-                      {rf.riskScore}%
-                    </Badge>
+              {(report?.riskForecasts && report.riskForecasts.length > 0) ? (
+                report.riskForecasts.map((rf, idx) => (
+                  <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-slate-900 dark:text-white">{rf.zone}</span>
+                      <Badge className={`text-[10px] font-black shrink-0 ${
+                        rf.riskScore > 75 
+                          ? 'bg-rose-600 text-white' 
+                          : rf.riskScore > 50 
+                          ? 'bg-amber-500 text-white' 
+                          : 'bg-emerald-600 text-white'
+                      }`}>
+                        {rf.riskScore}%
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
+                      {rf.mainFactor}
+                    </p>
+                    <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700 flex justify-between items-center text-[10px] font-bold text-slate-500">
+                      <span>Trend</span>
+                      <span className={rf.trend === 'Increasing' ? 'text-rose-500' : 'text-emerald-500'}>
+                        {rf.trend}
+                      </span>
+                    </div>
                   </div>
-                  <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
-                    {rf.mainFactor}
-                  </p>
-                  <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700 flex justify-between items-center text-[10px] font-bold text-slate-500">
-                    <span>Trend</span>
-                    <span className={rf.trend === 'Increasing' ? 'text-rose-500' : 'text-emerald-500'}>
-                      {rf.trend}
-                    </span>
+                ))
+              ) : (Array.isArray(zones) && zones.length > 0) ? (
+                zones.slice(0, 4).map((z, idx) => (
+                  <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-xs text-slate-900 dark:text-white">{z.name}</span>
+                      <Badge className="bg-emerald-600 text-white text-[10px] font-black shrink-0">
+                        Normal
+                      </Badge>
+                    </div>
+                    <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
+                      Real-time telemetry within normal safety operating parameters.
+                    </p>
+                    <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700 flex justify-between items-center text-[10px] font-bold text-slate-500">
+                      <span>Telemetry</span>
+                      <span className="text-emerald-500 font-bold">Connected</span>
+                    </div>
                   </div>
+                ))
+              ) : (
+                <div className="col-span-full py-8 text-center text-xs text-slate-400 font-semibold border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
+                  No zones configured yet in MongoDB. Create zones on the Map to view predictive hazard analytics.
                 </div>
-              ))}
+              )}
             </div>
           </div>
 
@@ -1158,6 +1202,39 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
                     </div>
                   </div>
                 ))}
+
+                {/* Saved MongoDB Directives */}
+                {savedDirectives.length > 0 && (
+                  <div className="pt-3 border-t border-slate-200 dark:border-slate-700 space-y-2">
+                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400">
+                      <span className="flex items-center gap-1.5">
+                        <Database size={12} className="text-emerald-500" />
+                        Persisted Directives in MongoDB ({savedDirectives.length})
+                      </span>
+                    </div>
+                    {savedDirectives.map((sd) => (
+                      <div key={sd.id} className="p-3 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/50 rounded-xl flex items-center justify-between gap-2 text-xs">
+                        <div>
+                          <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                            <span>{sd.title}</span>
+                            <Badge className="bg-emerald-600 text-white text-[9px] font-black">{sd.impact || 'OPTIMIZATION'}</Badge>
+                          </div>
+                          <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">{sd.description}</p>
+                        </div>
+                        <button
+                          onClick={async () => {
+                            if (sd.id) await deleteDoc(doc(db, 'ai_recommendations', sd.id));
+                            setActionSuccessMsg('Directive removed from MongoDB');
+                          }}
+                          className="text-slate-400 hover:text-rose-500 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer shrink-0"
+                          title="Delete Directive from MongoDB"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1170,61 +1247,58 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
                 <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider">Trade Telemetry</span>
                 <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
                   <Users className="w-5 h-5 text-indigo-500" />
-                  <span>Construction Trade Activity & Dwell Classification</span>
+                  <span>Personnel Activity & Dwell Classification</span>
                 </h3>
               </div>
               <span className="text-xs font-bold text-slate-400">Classified from Real-Time Movements</span>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {(report?.personnelEfficiency || [
-                {
-                  tagId: "E200001A89",
-                  name: "Alice Smith",
-                  inferredActivity: "EHS Site Inspection & Safety Audit",
-                  efficiencyScore: 96,
-                  dwellTimeInfo: "140 min across 4 safety zones"
-                },
-                {
-                  tagId: "E200001B92",
-                  name: "Bob Johnson",
-                  inferredActivity: "Structural Steel Rigging & Assembly",
-                  efficiencyScore: 91,
-                  dwellTimeInfo: "210 min at Tower Core (L2)"
-                },
-                {
-                  tagId: "E200001C44",
-                  name: "Charlie Davis",
-                  inferredActivity: "Scaffolding Erection & Tie-Off Inspection",
-                  efficiencyScore: 89,
-                  dwellTimeInfo: "185 min at Tier 3 Perimeter"
-                },
-                {
-                  tagId: "E200001D55",
-                  name: "David Miller",
-                  inferredActivity: "Concrete Placement & Formwork Shoring",
-                  efficiencyScore: 93,
-                  dwellTimeInfo: "160 min at Excavation Pit"
-                }
-              ]).map((worker, idx) => (
-                <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-2">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <h4 className="font-bold text-xs text-slate-900 dark:text-white">{worker.name}</h4>
-                      <span className="text-[10px] font-mono text-slate-400">{worker.tagId}</span>
+              {(report?.personnelEfficiency && report.personnelEfficiency.length > 0) ? (
+                report.personnelEfficiency.map((worker, idx) => (
+                  <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-2">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-bold text-xs text-slate-900 dark:text-white">{worker.name}</h4>
+                        <span className="text-[10px] font-mono text-slate-400">{worker.tagId}</span>
+                      </div>
+                      <Badge className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-bold text-[9px]">
+                        {worker.efficiencyScore}% Efficiency
+                      </Badge>
                     </div>
-                    <Badge className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-bold text-[9px]">
-                      {worker.efficiencyScore}% Tool-Time
-                    </Badge>
+                    <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                      ⚡ {worker.inferredActivity}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-semibold pt-1 border-t border-slate-200/60 dark:border-slate-700">
+                      ⏱️ {worker.dwellTimeInfo}
+                    </div>
                   </div>
-                  <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
-                    🔨 {worker.inferredActivity}
+                ))
+              ) : mongoPeople.length > 0 ? (
+                mongoPeople.slice(0, 4).map((p, idx) => (
+                  <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-2">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <h4 className="font-bold text-xs text-slate-900 dark:text-white">{p.name}</h4>
+                        <span className="text-[10px] font-mono text-slate-400">{p.tagId || p.rfid || p.id}</span>
+                      </div>
+                      <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-bold text-[9px]">
+                        Active Tag
+                      </Badge>
+                    </div>
+                    <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
+                      ⚡ Role: {p.role || p.trade || 'Site Personnel'}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-semibold pt-1 border-t border-slate-200/60 dark:border-slate-700">
+                      📍 Zone: {p.zone || 'General Site'}
+                    </div>
                   </div>
-                  <div className="text-[10px] text-slate-400 font-semibold pt-1 border-t border-slate-200/60 dark:border-slate-700">
-                    ⏱️ {worker.dwellTimeInfo}
-                  </div>
+                ))
+              ) : (
+                <div className="col-span-full py-8 text-center text-xs text-slate-400 font-semibold border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
+                  No personnel registered yet. Register workers to generate live activity and dwell classification.
                 </div>
-              ))}
+              )}
             </div>
           </div>
 

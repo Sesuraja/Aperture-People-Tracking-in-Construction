@@ -17,27 +17,11 @@ import { ZoneBounds } from './MapEditorModal';
 import { HardwareDevice } from './HardwareConfigModal';
 import { generatePDFReport } from '../lib/exportUtils';
 import { useWebSocket } from '../lib/useWebSocket';
-import { useTracking } from '../context/TrackingContext';
+import { useTracking, useTerminology } from '../context/TrackingContext';
 
-// Mock additional entities for enterprise view
-const MOCK_READERS: ReaderDevice[] = [
-  { id: 'RDR-001', name: 'West Gate Reader', x: 5, y: 50, range: 12, health: 98, status: 'online' },
-  { id: 'RDR-002', name: 'Crane Area Reader', x: 85, y: 30, range: 15, health: 94, status: 'online' },
-  { id: 'RDR-003', name: 'Core Shaft Reader', x: 65, y: 50, range: 10, health: 82, status: 'online' },
-  { id: 'RDR-004', name: 'Storage Yard Reader', x: 30, y: 80, range: 20, health: 100, status: 'online' },
-];
 
-const MOCK_GATES: AccessGate[] = [
-  { id: 'GAT-01', name: 'Main Vehicle Entry', x: 2, y: 50, status: 'locked' },
-  { id: 'GAT-02', name: 'Staff Turnstile West', x: 2, y: 55, status: 'unlocked' },
-  { id: 'GAT-03', name: 'Staff Turnstile East', x: 98, y: 50, status: 'locked' },
-];
 
-const MOCK_MATERIALS: MaterialAsset[] = [
-  { id: 'MAT-101', name: 'Structural Steel Bundles', type: 'Steel', x: 25, y: 75 },
-  { id: 'MAT-102', name: 'Concrete Formwork', type: 'Wood', x: 45, y: 40 },
-  { id: 'MAT-103', name: 'Piping Assemblies', type: 'PVC/Copper', x: 15, y: 30 },
-];
+
 
 export interface ProjectProperties {
   id: string;
@@ -58,7 +42,7 @@ const INITIAL_PROJECT_PROPERTIES: Record<string, ProjectProperties> = {
     contractor: 'Apex Construction JV',
     sizeSqFt: 350000,
     dimensions: '250m x 180m',
-    floorplanUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&q=80&w=1200',
+    floorplanUrl: '',
     customZones: {}
   }
 };
@@ -123,11 +107,13 @@ export default function LiveTrackingTab({
     };
   }, [activeProject]);
   
+  const trackingCtx = useTracking();
+  const { personnelPlural, personnelSingular, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedEntity, setSelectedEntity] = useState<SelectedEntity>(null);
+  const [activeTab, setActiveTab] = useState<'people' | 'assets' | 'hardware' | 'zones'>('people');
   const [isWorkforceModalOpen, setIsWorkforceModalOpen] = useState(false);
   const [isEmergencyMode, setIsEmergencyMode] = useState(false);
-  const [activeTab, setActiveTab] = useState<'people' | 'assets' | 'hardware' | 'zones'>('people');
   const [mapMode, setMapMode] = useState<MapMode>('standard');
   const [activeFloor, setActiveFloor] = useState('ALL');
   const [timelineTime, setTimelineTime] = useState('NOW (Live)');
@@ -148,10 +134,12 @@ export default function LiveTrackingTab({
   const [isLayerMenuOpen, setIsLayerMenuOpen] = useState(false);
   
   const [dbPeople, setDbPeople] = useState<Person[]>([]);
+  const [registeredPeople, setRegisteredPeople] = useState<Person[]>([]);
   const [dbAssets, setDbAssets] = useState<Asset[]>([]);
   const [dbVehicles, setDbVehicles] = useState<Vehicle[]>([]);
   const [dbAlerts, setDbAlerts] = useState<any[]>([]);
   const [dbReaders, setDbReaders] = useState<any[]>([]);
+  const [dbDevices, setDbDevices] = useState<any[]>([]);
   const [cameras, setCameras] = useState<CameraDevice[]>([]);
   const [sensors, setSensors] = useState<EnvSensor[]>([]);
   const [projectMeta, setProjectMeta] = useState<any>(null);
@@ -177,15 +165,39 @@ export default function LiveTrackingTab({
     return () => clearInterval(interval);
   }, []);
 
-  const trackingCtx = useTracking();
+  // Unified workforce list directly from MongoDB (people + registered_people + live tracking context)
 
-  // Directly bind live real-time moving workers and visitors from TrackingContext
   const people = useMemo(() => {
-    if (trackingCtx?.people && trackingCtx.people.length > 0) {
-      return trackingCtx.people;
-    }
-    return propPeople || [];
-  }, [trackingCtx?.people, propPeople]);
+    const map = new Map<string, Person>();
+    const append = (arr: Person[] | undefined) => {
+      if (!arr) return;
+      arr.forEach(p => {
+        if (!p || !p.id) return;
+        if (!map.has(p.id)) {
+          map.set(p.id, p);
+        } else {
+          // Merge live telemetry coordinates if present
+          const existing = map.get(p.id)!;
+          map.set(p.id, {
+            ...existing,
+            ...p,
+            x: p.x !== undefined ? p.x : existing.x,
+            y: p.y !== undefined ? p.y : existing.y,
+            presenceState: p.presenceState || existing.presenceState,
+            currentZone: p.currentZone || existing.currentZone
+          });
+        }
+      });
+    };
+
+    append(propPeople);
+    append(dbPeople);
+    append(registeredPeople);
+    append(trackingCtx?.people);
+
+    const merged = Array.from(map.values());
+    return merged.length > 0 ? merged : (propPeople || []);
+  }, [propPeople, dbPeople, registeredPeople, trackingCtx?.people]);
 
   // Custom Geofences & Capacity Thresholds (3x3 Layout matching design)
   const [customZonesState, setCustomZonesState] = useState<Record<string, any>>(() => {
@@ -277,11 +289,11 @@ export default function LiveTrackingTab({
   const { isConnected: isWsConnected, triggerSafetyAlert: wsTriggerSafetyAlert, broadcastTagMovement } = useWebSocket(handleLiveTrackingWSMessage);
 
   const activeZones = useMemo(() => {
-    if (trackingCtx?.zonesDict) {
+    if (trackingCtx?.zonesDict && Object.keys(trackingCtx.zonesDict).length > 0) {
       return trackingCtx.zonesDict;
     }
-    return projectMeta?.customZones || localProjectProps?.customZones || {};
-  }, [trackingCtx?.zonesDict, projectMeta, localProjectProps]);
+    return projectMeta?.customZones || localProjectProps?.customZones || customZonesState;
+  }, [trackingCtx?.zonesDict, projectMeta, localProjectProps, customZonesState]);
 
   // Over Capacity Check
   const overCapacityZones = useMemo(() => {
@@ -300,11 +312,11 @@ export default function LiveTrackingTab({
       setMapMode('standard');
     } else {
       playEmergencyAudioAlarm(true);
-      const targetWorker: Person = people.find(p => p.ppeStatus === 'NON_COMPLIANT' || p.currentZone === 'Crane Swing Zone') || people[0] || {
+      const targetWorker: Person = people.find(p => p.ppeStatus === 'NON_COMPLIANT' || p.currentZone === 'Crane Operating Zone') || people[0] || {
         id: 'W-104',
-        name: 'John Smith',
-        role: 'Steelworker',
-        currentZone: 'Crane Swing Zone',
+        name: 'Active Personnel',
+        role: 'Field Tradesperson',
+        currentZone: 'Crane Operating Zone',
         presenceState: 'MOVING',
         dwellTime: 45,
         x: 82,
@@ -317,7 +329,7 @@ export default function LiveTrackingTab({
         active: true,
         workerId: targetWorker.id,
         workerName: targetWorker.name,
-        zone: targetWorker.currentZone || 'Crane Swing Zone',
+        zone: targetWorker.currentZone || 'Crane Operating Zone',
         timestamp: new Date().toLocaleTimeString(),
         x: targetWorker.x,
         y: targetWorker.y
@@ -378,7 +390,7 @@ export default function LiveTrackingTab({
     ];
 
     generatePDFReport(
-      "GAO RFID Shift Attendance & Zone Presence Report",
+      "Aperture RFID Shift Attendance & Zone Presence Report",
       `Project: ${currentProject.name} | Contractor: ${currentProject.contractor} | Date: ${new Date().toLocaleDateString()}`,
       pdfColumns,
       pdfRows,
@@ -386,64 +398,52 @@ export default function LiveTrackingTab({
     );
   };
 
-  const localAssets = useMemo(() => {
-    if (localProjectProps?.assets && Array.isArray(localProjectProps.assets)) {
-      return localProjectProps.assets;
-    }
-    return [];
-  }, [localProjectProps]);
-
-  const localVehicles = useMemo(() => {
-    if (localProjectProps?.vehicles && Array.isArray(localProjectProps.vehicles)) {
-      return localProjectProps.vehicles;
-    }
-    return [];
-  }, [localProjectProps]);
-
   const assets = useMemo(() => {
-    if (trackingCtx?.assets && trackingCtx.assets.length > 0) {
-      return trackingCtx.assets;
-    }
-    if (dbAssets && dbAssets.length > 0) {
-      return dbAssets;
-    }
-    return localAssets;
-  }, [trackingCtx?.assets, dbAssets, localAssets]);
+    if (trackingCtx?.assets && trackingCtx.assets.length > 0) return trackingCtx.assets;
+    if (dbAssets && dbAssets.length > 0) return dbAssets;
+    return propAssets || [];
+  }, [trackingCtx?.assets, dbAssets, propAssets]);
 
   const vehicles = useMemo(() => {
-    if (trackingCtx?.vehicles && trackingCtx.vehicles.length > 0) {
-      return trackingCtx.vehicles;
-    }
-    if (dbVehicles && dbVehicles.length > 0) {
-      return dbVehicles;
-    }
-    return localVehicles;
-  }, [trackingCtx?.vehicles, dbVehicles, localVehicles]);
+    if (trackingCtx?.vehicles && trackingCtx.vehicles.length > 0) return trackingCtx.vehicles;
+    if (dbVehicles && dbVehicles.length > 0) return dbVehicles;
+    return propVehicles || [];
+  }, [trackingCtx?.vehicles, dbVehicles, propVehicles]);
 
-  const localHardwareDevices = useMemo(() => {
-    if (localProjectProps?.hardwareDevices && Array.isArray(localProjectProps.hardwareDevices)) {
-      return localProjectProps.hardwareDevices;
+  // Real MongoDB-backed RFID Portal Readers
+  const readers: ReaderDevice[] = useMemo(() => {
+    if (dbReaders && dbReaders.length > 0) {
+      return dbReaders.map((r: any, idx: number) => ({
+        id: r.id || `RDR-${idx + 1}`,
+        name: r.name || r.location || `Gate Portal ${idx + 1}`,
+        x: r.x !== undefined ? r.x : ((idx * 28) % 85 + 8),
+        y: r.y !== undefined ? r.y : ((idx * 24) % 80 + 10),
+        range: r.range || (r.antennaGainDbi ? Math.max(8, r.antennaGainDbi * 1.5) : 12),
+        health: r.status === 'Online' || r.status === 'online' ? 98 : 0,
+        status: (r.status === 'Online' || r.status === 'online') ? 'online' : 'offline'
+      }));
     }
     return [];
-  }, [localProjectProps]);
+  }, [dbReaders]);
 
-  const readers = useMemo(() => {
-    const customDevs = (projectMeta?.hardwareDevices || localHardwareDevices || [])
-      .filter((d: any) => d && (d.type?.toLowerCase().includes('reader') || d.type?.toLowerCase().includes('rfid')))
-      .map((d: any) => ({
-        id: d.id,
-        name: d.name,
-        x: d.x,
-        y: d.y,
-        range: d.antennaGainDbi ? Math.max(8, d.antennaGainDbi * 1.5) : 12,
-        health: d.status === 'Online' ? 100 : d.status === 'Maintenance' ? 60 : 0,
-        status: d.status === 'Online' ? 'online' : 'offline',
-        ipAddress: d.ipAddress,
-        macAddress: d.macAddress
+  // Real Gate access points derived from readers/devices
+  const gates: AccessGate[] = useMemo(() => {
+    return [];
+  }, []);
+
+  // Real Materials & Assets derived from MongoDB
+  const materials: MaterialAsset[] = useMemo(() => {
+    if (assets.length > 0) {
+      return assets.slice(0, 5).map((a: any, idx: number) => ({
+        id: a.id || `MAT-${idx + 100}`,
+        name: a.name || 'Equipment Materials',
+        type: a.category || a.type || 'Supplies',
+        x: a.x !== undefined ? a.x : ((idx * 22) % 65 + 15),
+        y: a.y !== undefined ? a.y : ((idx * 30) % 60 + 20)
       }));
-
-    return customDevs.length > 0 ? customDevs : MOCK_READERS;
-  }, [projectMeta, localHardwareDevices]);
+    }
+    return [];
+  }, [assets]);
 
   useEffect(() => {
     const unsubProject = onSnapshot(doc(db, 'projects', activeProject), (snap: any) => {
@@ -466,50 +466,42 @@ export default function LiveTrackingTab({
       const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       setDbPeople(items.filter((p: any) => !p.projectId || p.projectId === activeProject));
     });
+
+    const unsubRegistered = onSnapshot(collection(db, 'registered_people'), (snap: any) => {
+      const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+      setRegisteredPeople(items);
+    });
+
     const unsubAssets = onSnapshot(collection(db, 'assets'), (snap: any) => {
       const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       setDbAssets(items.filter((a: any) => !a.projectId || a.projectId === activeProject));
     });
+
     const unsubVehicles = onSnapshot(collection(db, 'vehicles'), (snap: any) => {
       const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       setDbVehicles(items.filter((v: any) => !v.projectId || v.projectId === activeProject));
     });
+
     const unsubAlerts = onSnapshot(collection(db, 'alerts'), (snap: any) => {
       const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       setDbAlerts(items);
     });
+
     const unsubReaders = onSnapshot(collection(db, 'hardware_readers'), (snap: any) => {
       const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
       setDbReaders(items);
     });
+
+    const unsubDevices = onSnapshot(collection(db, 'devices'), (snap: any) => {
+      const items = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+      setDbDevices(items);
+    });
+
     const unsubCameras = onSnapshot(collection(db, 'cameras'), (snap: any) => setCameras(snap.docs.map((d: any) => ({ id: d.id, ...d.data() }))));
     const unsubSensors = onSnapshot(collection(db, 'sensors'), (snap: any) => setSensors(snap.docs.map((d: any) => ({ id: d.id, ...d.data() }))));
 
-    const handleRealTimeMapUpdate = () => {
-      try {
-        const savedProps = localStorage.getItem('gao_project_properties');
-        if (savedProps) {
-          const parsed = JSON.parse(savedProps);
-          if (parsed[activeProject]) {
-            setLocalProjectProps(parsed[activeProject]);
-          }
-        }
-        const savedAssets = localStorage.getItem('gao_db_assets');
-        if (savedAssets) setDbAssets(JSON.parse(savedAssets));
-        const savedVehicles = localStorage.getItem('gao_db_vehicles');
-        if (savedVehicles) setDbVehicles(JSON.parse(savedVehicles));
-      } catch {}
-    };
-
-    window.addEventListener('gao_map_data_updated', handleRealTimeMapUpdate);
-    window.addEventListener('gao_project_updated', handleRealTimeMapUpdate);
-    window.addEventListener('storage', handleRealTimeMapUpdate);
-
     return () => {
-      unsubProject(); unsubMapConfig(); unsubPeople(); unsubAssets(); unsubVehicles(); unsubAlerts(); unsubReaders(); unsubCameras(); unsubSensors();
-      window.removeEventListener('gao_map_data_updated', handleRealTimeMapUpdate);
-      window.removeEventListener('gao_project_updated', handleRealTimeMapUpdate);
-      window.removeEventListener('storage', handleRealTimeMapUpdate);
+      unsubProject(); unsubMapConfig(); unsubPeople(); unsubRegistered(); unsubAssets(); unsubVehicles(); unsubAlerts(); unsubReaders(); unsubDevices(); unsubCameras(); unsubSensors();
     };
   }, [activeProject]);
 
@@ -526,7 +518,7 @@ export default function LiveTrackingTab({
     return people.filter(p => 
       (p.name || "").toLowerCase().includes(q) || (p.id || "").toLowerCase().includes(q) || 
       (p.role || "").toLowerCase().includes(q) || (p.currentZone || "").toLowerCase().includes(q) ||
-      (p.hardhatTagId || "").toLowerCase().includes(q)
+      (p.hardhatTagId || "").toLowerCase().includes(q) || (p.tradeCompany || "").toLowerCase().includes(q)
     );
   }, [people, searchQuery]);
 
@@ -659,25 +651,15 @@ export default function LiveTrackingTab({
       
       {/* 1. TOP BAR DASHBOARD HEADER */}
       <div className="bg-white rounded-2xl p-4 md:px-5 md:py-3.5 shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4">
-        {/* Project Branding & Site Location */}
+        {/* Live Tracking Header */}
         <div className="flex items-center gap-3.5 xl:border-r xl:border-slate-200 xl:pr-6 shrink-0">
-          <div className="w-11 h-11 bg-[#007BC4] rounded-2xl text-white inline-flex items-center justify-center shrink-0 shadow-sm">
-            <Building2 className="w-5 h-5" />
+          <div className="w-10 h-10 bg-[#007BC4] rounded-xl text-white inline-flex items-center justify-center shrink-0 shadow-sm">
+            <Radio className="w-5 h-5" />
           </div>
           <div className="flex flex-col justify-center">
-            <div className="flex items-center gap-2">
-              <h1 className="text-base sm:text-lg font-black text-slate-900 dark:text-white tracking-tight leading-none whitespace-nowrap">
-                {projectMeta?.name || currentProject.name}
-              </h1>
-              <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-full whitespace-nowrap">
-                Live 2D Map
-              </span>
-            </div>
-            <div className="flex items-center gap-2 text-xs font-semibold text-slate-500 mt-1 whitespace-nowrap">
-               <span className="inline-flex items-center gap-1"><MapIcon className="w-3.5 h-3.5 text-[#007BC4]" /> Area A Sector 4</span>
-               <span className="text-slate-300">•</span>
-               <span className="inline-flex items-center gap-1 text-slate-600 font-medium"><Info className="w-3.5 h-3.5 text-slate-400" /> {currentProject.contractor}</span>
-            </div>
+            <h1 className="text-base sm:text-lg font-black text-slate-900 dark:text-white tracking-tight leading-none whitespace-nowrap">
+              Live Tracking
+            </h1>
           </div>
         </div>
 
@@ -974,9 +956,9 @@ export default function LiveTrackingTab({
                       <div className="space-y-1">
                         {[
                           { key: 'workers', label: 'Personnel & Workers', icon: Users, color: 'text-sky-600 bg-sky-50 border-sky-200', count: people.length },
-                          { key: 'assets', label: 'Equipment & Materials', icon: Box, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', count: assets.length + MOCK_MATERIALS.length },
+                          { key: 'assets', label: 'Equipment & Materials', icon: Box, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', count: assets.length },
                           { key: 'vehicles', label: 'Heavy Machinery', icon: Truck, color: 'text-amber-600 bg-amber-50 border-amber-200', count: vehicles.length },
-                           { key: 'readers', label: 'RFID Readers & Gates', icon: Radio, color: 'text-indigo-600 bg-indigo-50 border-indigo-200', count: readers.length + MOCK_GATES.length },
+                          { key: 'readers', label: 'RFID Readers & Gates', icon: Radio, color: 'text-indigo-600 bg-indigo-50 border-indigo-200', count: readers.length },
                           { key: 'zones', label: 'Geofenced Safety Zones', icon: Layout, color: 'text-sky-700 bg-sky-50 border-sky-200', count: Object.keys(defaultZones).length },
                           { key: 'cameras', label: 'AI CCTV Cameras', icon: Camera, color: 'text-purple-600 bg-purple-50 border-purple-200', count: cameras.length },
                           { key: 'sensors', label: 'EHS Environmental Sensors', icon: Thermometer, color: 'text-rose-600 bg-rose-50 border-rose-200', count: sensors.length },
@@ -1149,24 +1131,6 @@ export default function LiveTrackingTab({
           )}
 
           <div className="flex-1 relative bg-slate-100 flex flex-col xl:flex-row gap-4 items-stretch overflow-visible p-2">
-{/* Floating Search Overlay */}
-            <div className="absolute top-3 right-3 z-50 w-64" style={{boxShadow:'0 2px 8px rgba(0,0,0,0.1)'}}>
-              <div className="flex items-center bg-white bg-opacity-90 border border-slate-300 rounded-xl overflow-hidden focus-within:ring-2 focus-within:ring-sky-500/50">
-                <Search className="w-4 h-4 ml-2 text-slate-400" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  placeholder="Search Workers, Hardhats, Equipment, Vehicles..."
-                  className="flex-1 bg-transparent py-1 pl-2 pr-8 text-sm placeholder:text-slate-400 outline-none"
-                />
-                {searchQuery && (
-                  <button onClick={() => setSearchQuery('')} className="p-1 mr-1 text-slate-400 hover:text-slate-600">
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
             <div className="flex-1 relative h-full rounded-2xl overflow-hidden shadow-inner border border-slate-200 bg-white">
               <LiveFloorMap 
                 people={displayedPeople}
@@ -1175,13 +1139,13 @@ export default function LiveTrackingTab({
                 cameras={cameras}
                 envSensors={sensors}
                 readers={readers}
-                gates={MOCK_GATES}
-                materials={MOCK_MATERIALS}
+                gates={gates}
+                materials={materials}
                 zones={activeZones}
                 highlightedPersonId={selectedEntity?.type === 'person' ? selectedEntity.data.id : highlightedPersonId}
                 initialFocusZone={focusZone}
                 floorplanUrl={trackingCtx?.customFloorplan || localProjectProps?.floorplanUrl || projectMeta?.floorplanUrl || (typeof window !== 'undefined' ? localStorage.getItem('gao_custom_floorplan') : null) || currentProject.floorplanUrl}
-                svgSource={trackingCtx?.customSvgSource || localProjectProps?.svgSource || (typeof window !== 'undefined' ? localStorage.getItem('gao_custom_svg') : undefined) || undefined}
+                svgSource={trackingCtx?.customSvgSource || localProjectProps?.svgSource || (typeof window !== 'undefined' ? (localStorage.getItem('gao_custom_svg_source') || localStorage.getItem('gao_custom_svg')) : undefined) || undefined}
                 onSelectEntity={(entity) => setSelectedEntity(entity)}
                 customZones={activeZones}
                 projectId={projectMeta?.id || currentProject.id}

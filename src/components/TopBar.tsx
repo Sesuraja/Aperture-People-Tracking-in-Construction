@@ -1,9 +1,10 @@
-import { Download, Sun, Moon, Calendar, Bell, Search, Command, Database, ShieldCheck } from 'lucide-react';
+import { Download, Sun, Moon, Calendar, Bell, Search, Command, Database, ShieldCheck, Building2, Sparkles } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useContext } from 'react';
 import { AppModeContext } from '../App';
 import ExportReportModal from './ExportReportModal';
 import { ApertureLogoMark } from './ApertureLogo';
+import { useTerminology } from '../context/TrackingContext';
 
 interface TopBarProps {
   onOpenCommandPalette?: () => void;
@@ -23,7 +24,9 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
   const location = useLocation();
   const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
   const [isExportOpen, setIsExportOpen] = useState(false);
+  const [orgInfo, setOrgInfo] = useState<{ id: string; name: string } | null>(null);
   const { mode } = useContext(AppModeContext);
+  const { config, personnelPlural } = useTerminology();
 
   // Real-time MongoDB and Server Health state
   const [dbStatus, setDbStatus] = useState<MongoStatus>({
@@ -32,6 +35,7 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
     latencyMs: 24
   });
 
+
   useEffect(() => {
     if (isDark) {
       document.documentElement.classList.add('dark');
@@ -39,6 +43,25 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
       document.documentElement.classList.remove('dark');
     }
   }, [isDark]);
+
+  // Fetch organization info
+  useEffect(() => {
+    const fetchOrg = async () => {
+      try {
+        const token = localStorage.getItem('gao_jwt_token');
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        const res = await fetch('/api/auth/organization', { headers });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.organization) {
+            setOrgInfo(data.organization);
+          }
+        }
+      } catch {}
+    };
+    fetchOrg();
+  }, []);
 
   // Polling real system & MongoDB health from /api/mongodb/status
   const checkHealth = async () => {
@@ -93,11 +116,16 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
         </div>
 
         <div className="flex flex-col justify-center shrink-0">
-          <h1 className="text-base sm:text-lg lg:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight whitespace-nowrap">
-            Construction Worker Tracking
-          </h1>
+          <div className="flex items-center gap-2">
+            <h1 className="text-base sm:text-lg lg:text-xl font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight whitespace-nowrap">
+              {config?.appTitle || 'Aperture People Tracking'}
+            </h1>
+            <span className="hidden sm:inline-flex text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#007BC4]/10 text-[#007BC4] border border-[#007BC4]/20">
+              {config?.industryName || 'Multi-Industry'}
+            </span>
+          </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 tracking-normal mt-0.5 font-medium whitespace-nowrap">
-            Aperture RFID & AI Safety Tracking System
+            {config?.appSubtitle || 'Universal RFID & AI Telemetry System'}
           </p>
         </div>
       </div>
@@ -111,11 +139,12 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
           title="Open Command Palette (Cmd + K / Ctrl + K)"
         >
           <Search className="w-3.5 h-3.5 text-[#007BC4] shrink-0" />
-          <span className="text-xs font-medium">Quick Search</span>
+          <span className="text-xs font-medium">Search {personnelPlural || 'Workforce'}...</span>
           <kbd className="flex items-center gap-0.5 text-[10px] font-mono font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded shadow-2xs text-slate-600 dark:text-slate-300">
             <Command className="w-2.5 h-2.5 inline-block" />K
           </kbd>
         </button>
+
 
         {/* Export Data Action Card */}
         <button
@@ -163,6 +192,20 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
             </div>
           </div>
         </div>
+
+        {/* Organization Tenant Badge */}
+        {orgInfo && (
+          <div 
+            className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/60 text-xs shadow-2xs whitespace-nowrap shrink-0"
+            title={`Tenant Organization: ${orgInfo.name} (ID: ${orgInfo.id})`}
+          >
+            <Building2 className="w-3.5 h-3.5 text-[#007BC4] shrink-0" />
+            <div className="flex flex-col text-left whitespace-nowrap">
+              <span className="text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500 leading-none whitespace-nowrap">Organization</span>
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5 whitespace-nowrap max-w-[150px] truncate">{orgInfo.name}</span>
+            </div>
+          </div>
+        )}
 
         {/* Database Connection Pill Card */}
         <div 

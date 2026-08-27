@@ -51,37 +51,26 @@ export interface MapWorkerItem {
   floorId?: string;
 }
 
-export const INITIAL_MAP_WORKERS: MapWorkerItem[] = [
-  { id: 'W-101', name: 'Alice Smith', role: 'Steel Fixer Lead', company: 'Apex Structural', x: 55, y: 32, safetyStatus: 'COMPLIANT', ppeStatus: 'COMPLIANT', currentZone: 'Tower Core', hardhatTagId: 'HH-1092', certifications: ['Working at Heights', 'Ironworking L3'] },
-  { id: 'W-102', name: 'Marcus Vance', role: 'Scaffolder Lead', company: 'BuildCorp', x: 28, y: 22, safetyStatus: 'NON_COMPLIANT', ppeStatus: 'NON_COMPLIANT', currentZone: 'Scaffold Access Tower', hardhatTagId: 'HH-1088', certifications: ['Advanced Scaffolding (Expired)'] },
-  { id: 'W-103', name: 'Carlos Rodriguez', role: 'Rigging Specialist', company: 'Heavy Crane Ltd', x: 82, y: 15, safetyStatus: 'DUE_SOON', ppeStatus: 'COMPLIANT', currentZone: 'Crane Swing Zone', hardhatTagId: 'HH-2041', certifications: ['Crane Rigger Cert (Refresher Due)'] },
-  { id: 'W-104', name: 'David Kim', role: 'Concrete Pour Op', company: 'BuildCorp', x: 18, y: 35, safetyStatus: 'COMPLIANT', ppeStatus: 'COMPLIANT', currentZone: 'Excavation Shaft', hardhatTagId: 'HH-1055', certifications: ['Heavy Machinery Safety'] },
-  { id: 'W-105', name: 'Elena Rostova', role: 'EHS Safety Officer', company: 'Apex Structural', x: 12, y: 14, safetyStatus: 'COMPLIANT', ppeStatus: 'COMPLIANT', currentZone: 'Muster Point A', hardhatTagId: 'HH-3011', certifications: ['OSHA 30 Master', 'EHS Director'] },
-  { id: 'W-106', name: 'James Wilson', role: 'Electrician Lead', company: 'VoltTech Power', x: 48, y: 8, safetyStatus: 'NON_COMPLIANT', ppeStatus: 'NON_COMPLIANT', currentZone: 'High Voltage Area', hardhatTagId: 'HH-4012', certifications: ['Substation High Voltage (PPE Missing)'] },
-  { id: 'W-107', name: 'Robert Taylor', role: 'Excavator Operator', company: 'TerraEarth Excavation', x: 22, y: 48, safetyStatus: 'OVERDUE', ppeStatus: 'WARNING', currentZone: 'Excavation Shaft', hardhatTagId: 'HH-1022', certifications: ['Excavator Op (Induction Overdue)'] },
-  { id: 'W-108', name: 'Mateo Garcia', role: 'HVAC Technician', company: 'AirCool Solutions', x: 58, y: 38, safetyStatus: 'PENDING', ppeStatus: 'COMPLIANT', currentZone: 'Tower Core', hardhatTagId: 'HH-5001', certifications: ['HVAC Level 1 (Pending Approval)'] },
-  { id: 'W-109', name: 'Sarah Jenkins', role: 'Quality Surveyor', company: 'Client Representative', x: 62, y: 30, safetyStatus: 'COMPLIANT', ppeStatus: 'COMPLIANT', currentZone: 'Tower Core', hardhatTagId: 'HH-1002', certifications: ['Site Safety Visitor Pass'] },
-  { id: 'W-110', name: 'Liam O\'Connor', role: 'Welding Specialist', company: 'Apex Structural', x: 53, y: 34, safetyStatus: 'COMPLIANT', ppeStatus: 'COMPLIANT', currentZone: 'Tower Core', hardhatTagId: 'HH-1099', certifications: ['Hot Work Certified'] }
-];
+export const INITIAL_MAP_WORKERS: MapWorkerItem[] = [];
 
 export const DEFAULT_LAYER_CONFIGS: Record<string, MapLayerConfig> = {
-  workers: { id: 'workers', name: 'Workers', category: 'personnel', visible: true, opacity: 1, locked: false, count: 10, iconName: 'HardHat', color: 'bg-emerald-500 text-white' },
-  visitors: { id: 'visitors', name: 'Visitors', category: 'personnel', visible: true, opacity: 1, locked: false, count: 5, iconName: 'Users', color: 'bg-blue-500 text-white' },
-  contractors: { id: 'contractors', name: 'Contractors', category: 'personnel', visible: true, opacity: 1, locked: false, count: 12, iconName: 'Building2', color: 'bg-indigo-500 text-white' },
-  equipment: { id: 'equipment', name: 'Equipment', category: 'equipment', visible: true, opacity: 1, locked: false, count: 8, iconName: 'Box', color: 'bg-amber-500 text-white' },
-  vehicles: { id: 'vehicles', name: 'Vehicles', category: 'equipment', visible: true, opacity: 1, locked: false, count: 6, iconName: 'Truck', color: 'bg-orange-500 text-white' },
-  rfidReaders: { id: 'rfidReaders', name: 'RFID Readers', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 6, iconName: 'Radio', color: 'bg-purple-500 text-white' },
-  gpsDevices: { id: 'gpsDevices', name: 'GPS Devices', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 10, iconName: 'Navigation', color: 'bg-sky-500 text-white' },
-  cctvCameras: { id: 'cctvCameras', name: 'CCTV Cameras', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 7, iconName: 'Camera', color: 'bg-teal-500 text-white' },
-  hazardZones: { id: 'hazardZones', name: 'Hazard Zones', category: 'zones', visible: true, opacity: 0.8, locked: true, count: 4, iconName: 'AlertTriangle', color: 'bg-rose-500 text-white' },
-  restrictedZones: { id: 'restrictedZones', name: 'Restricted Zones', category: 'zones', visible: true, opacity: 0.8, locked: true, count: 3, iconName: 'ShieldAlert', color: 'bg-red-600 text-white' },
-  assemblyPoints: { id: 'assemblyPoints', name: 'Assembly Points', category: 'safety', visible: true, opacity: 1, locked: true, count: 2, iconName: 'ShieldCheck', color: 'bg-emerald-600 text-white' },
-  fireEquipment: { id: 'fireEquipment', name: 'Fire Equipment', category: 'safety', visible: true, opacity: 1, locked: false, count: 9, iconName: 'Flame', color: 'bg-red-500 text-white' },
-  firstAidStations: { id: 'firstAidStations', name: 'First Aid Stations', category: 'safety', visible: true, opacity: 1, locked: false, count: 3, iconName: 'Plus', color: 'bg-emerald-500 text-white' },
-  emergencyRoutes: { id: 'emergencyRoutes', name: 'Emergency Routes', category: 'safety', visible: true, opacity: 0.85, locked: true, count: 4, iconName: 'ArrowUpRight', color: 'bg-green-500 text-white' },
-  utilities: { id: 'utilities', name: 'Utilities', category: 'civil', visible: true, opacity: 0.8, locked: false, count: 5, iconName: 'Sliders', color: 'bg-yellow-500 text-white' },
-  buildings: { id: 'buildings', name: 'Buildings', category: 'civil', visible: true, opacity: 0.95, locked: true, count: 3, iconName: 'Building2', color: 'bg-slate-600 text-white' },
-  roads: { id: 'roads', name: 'Roads', category: 'civil', visible: true, opacity: 0.9, locked: true, count: 2, iconName: 'Compass', color: 'bg-stone-600 text-white' },
+  workers: { id: 'workers', name: 'Workers', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'HardHat', color: 'bg-emerald-500 text-white' },
+  visitors: { id: 'visitors', name: 'Visitors', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Users', color: 'bg-blue-500 text-white' },
+  contractors: { id: 'contractors', name: 'Contractors', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Building2', color: 'bg-indigo-500 text-white' },
+  equipment: { id: 'equipment', name: 'Equipment', category: 'equipment', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Box', color: 'bg-amber-500 text-white' },
+  vehicles: { id: 'vehicles', name: 'Vehicles', category: 'equipment', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Truck', color: 'bg-orange-500 text-white' },
+  rfidReaders: { id: 'rfidReaders', name: 'RFID Readers', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 0, iconName: 'Radio', color: 'bg-purple-500 text-white' },
+  gpsDevices: { id: 'gpsDevices', name: 'GPS Devices', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 0, iconName: 'Navigation', color: 'bg-sky-500 text-white' },
+  cctvCameras: { id: 'cctvCameras', name: 'CCTV Cameras', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 0, iconName: 'Camera', color: 'bg-teal-500 text-white' },
+  hazardZones: { id: 'hazardZones', name: 'Hazard Zones', category: 'zones', visible: true, opacity: 0.8, locked: true, count: 0, iconName: 'AlertTriangle', color: 'bg-rose-500 text-white' },
+  restrictedZones: { id: 'restrictedZones', name: 'Restricted Zones', category: 'zones', visible: true, opacity: 0.8, locked: true, count: 0, iconName: 'ShieldAlert', color: 'bg-red-600 text-white' },
+  assemblyPoints: { id: 'assemblyPoints', name: 'Assembly Points', category: 'safety', visible: true, opacity: 1, locked: true, count: 0, iconName: 'ShieldCheck', color: 'bg-emerald-600 text-white' },
+  fireEquipment: { id: 'fireEquipment', name: 'Fire Equipment', category: 'safety', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Flame', color: 'bg-red-500 text-white' },
+  firstAidStations: { id: 'firstAidStations', name: 'First Aid Stations', category: 'safety', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Plus', color: 'bg-emerald-500 text-white' },
+  emergencyRoutes: { id: 'emergencyRoutes', name: 'Emergency Routes', category: 'safety', visible: true, opacity: 0.85, locked: true, count: 0, iconName: 'ArrowUpRight', color: 'bg-green-500 text-white' },
+  utilities: { id: 'utilities', name: 'Utilities', category: 'civil', visible: true, opacity: 0.8, locked: false, count: 0, iconName: 'Sliders', color: 'bg-yellow-500 text-white' },
+  buildings: { id: 'buildings', name: 'Buildings', category: 'civil', visible: true, opacity: 0.95, locked: true, count: 0, iconName: 'Building2', color: 'bg-slate-600 text-white' },
+  roads: { id: 'roads', name: 'Roads', category: 'civil', visible: true, opacity: 0.9, locked: true, count: 0, iconName: 'Compass', color: 'bg-stone-600 text-white' },
 };
 
 interface CustomMapPageProps {
@@ -256,7 +245,13 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     return DEFAULT_SITES;
   });
 
-  const currentSite = sites[activeProject] || sites['metro-tower'] || DEFAULT_SITES['metro-tower'];
+  const currentSite = sites[activeProject] || sites['metro-tower'] || DEFAULT_SITES['metro-tower'] || {
+    id: activeProject,
+    name: 'Active Project Site',
+    contractor: 'Enterprise Site Operations',
+    dimensions: '200m x 150m',
+    buildings: [{ id: 'bldg-main', name: 'Main Complex', floors: [{ id: 'fl-1', name: 'Level 1 - Main Site', levelNumber: 1, activeVersionId: 'ver-1.0', versions: [{ id: 'ver-1.0', versionNumber: 'v1.0', status: 'published', createdAt: new Date().toISOString(), author: 'System', notes: 'Master map', zones: {}, floorplanUrl: null }] }] }]
+  };
   const [selectedBuildingId, setSelectedBuildingId] = useState<string>(currentSite.buildings[0]?.id || 'bldg-main');
   const currentBuilding = currentSite.buildings.find(b => b.id === selectedBuildingId) || currentSite.buildings[0];
   const [selectedFloorId, setSelectedFloorId] = useState<string>('all');
@@ -266,12 +261,12 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
   const activeVersion = currentFloor?.versions?.find((v: any) => v.id === (currentFloor as any).activeVersionId) || currentFloor?.versions?.[0];
 
-  const [assets, setAssets] = useState<AssetItem[]>(INITIAL_ASSETS);
-  const [vehicles, setVehicles] = useState<VehicleItem[]>(INITIAL_VEHICLES);
-  const [cameras, setCameras] = useState<CCTVCameraItem[]>(INITIAL_CCTVS);
-  const [envSensors, setEnvSensors] = useState<EnvironmentalSensorItem[]>(INITIAL_ENV_SENSORS);
-  const [hardwareDevices, setHardwareDevices] = useState<HardwareDevice[]>(INITIAL_DEVICES);
-  const [mapWorkers, setMapWorkers] = useState<MapWorkerItem[]>(INITIAL_MAP_WORKERS);
+  const [assets, setAssets] = useState<AssetItem[]>([]);
+  const [vehicles, setVehicles] = useState<VehicleItem[]>([]);
+  const [cameras, setCameras] = useState<CCTVCameraItem[]>([]);
+  const [envSensors, setEnvSensors] = useState<EnvironmentalSensorItem[]>([]);
+  const [hardwareDevices, setHardwareDevices] = useState<HardwareDevice[]>([]);
+  const [mapWorkers, setMapWorkers] = useState<MapWorkerItem[]>([]);
 
   // Live real-time workers synchronized with TrackingContext and filtered by floor
   const activeWorkers: MapWorkerItem[] = useMemo(() => {
@@ -281,14 +276,14 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         id: p.id,
         name: p.name,
         role: p.role,
-        company: (p as any).tradeCompany || (p as any).company || 'Apex Construction',
+        company: (p as any).tradeCompany || (p as any).company || 'Site Operations',
         x: p.x,
         y: p.y,
         safetyStatus: (p.ppeStatus === 'NON_COMPLIANT' ? 'NON_COMPLIANT' : 'COMPLIANT') as any,
         ppeStatus: p.ppeStatus || 'COMPLIANT',
         currentZone: p.currentZone || 'Active Site Area',
         hardhatTagId: p.hardhatTagId || p.id,
-        certifications: ['Site Safety Pass', 'OSHA 10'],
+        certifications: ['Site Safety Pass', 'OSHA Standard'],
         floorId: (p as any).floor || (p as any).floorId || 'fl-1'
       }));
     }
@@ -315,9 +310,33 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     return activeVersion?.zones || {};
   });
 
-  const [activeSidebarTab, setActiveSidebarTab] = useState<'layers' | 'inventory' | 'assets' | 'zones' | 'sites'>('layers');
+  const [activeSidebarTab, setActiveSidebarTab] = useState<'layers' | 'readers' | 'inventory' | 'assets' | 'zones' | 'sites'>('layers');
   const [layerConfigs, setLayerConfigs] = useState<Record<string, MapLayerConfig>>(DEFAULT_LAYER_CONFIGS);
   const [mapSearchQuery, setMapSearchQuery] = useState('');
+
+  // Dynamically compute exact layer counts based on active live state
+  const dynamicLayerConfigs = useMemo(() => {
+    return {
+      ...layerConfigs,
+      workers: { ...layerConfigs.workers, count: activeWorkers.length },
+      visitors: { ...layerConfigs.visitors, count: activeWorkers.filter(w => (w.role || '').toLowerCase().includes('visitor') || (w.name || '').toLowerCase().includes('visitor')).length },
+      contractors: { ...layerConfigs.contractors, count: activeWorkers.filter(w => (w.role || '').toLowerCase().includes('contractor') || (w.company || '').toLowerCase().includes('contractor')).length },
+      equipment: { ...layerConfigs.equipment, count: assets.length },
+      vehicles: { ...layerConfigs.vehicles, count: vehicles.length },
+      rfidReaders: { ...layerConfigs.rfidReaders, count: hardwareDevices.length },
+      gpsDevices: { ...layerConfigs.gpsDevices, count: activeWorkers.filter(w => w.hardhatTagId).length },
+      cctvCameras: { ...layerConfigs.cctvCameras, count: cameras.length },
+      hazardZones: { ...layerConfigs.hazardZones, count: Object.values(customZones).filter(z => z.hazardLevel === 'critical').length },
+      restrictedZones: { ...layerConfigs.restrictedZones, count: Object.values(customZones).filter(z => z.hazardLevel === 'warning' || (z.category || '').includes('RESTRICTED')).length },
+      assemblyPoints: { ...layerConfigs.assemblyPoints, count: Object.values(customZones).filter(z => (z.category || '').includes('MUSTER') || (z.category || '').includes('ASSEMBLY')).length },
+      fireEquipment: { ...layerConfigs.fireEquipment, count: 0 },
+      firstAidStations: { ...layerConfigs.firstAidStations, count: 0 },
+      emergencyRoutes: { ...layerConfigs.emergencyRoutes, count: 0 },
+      utilities: { ...layerConfigs.utilities, count: 0 },
+      buildings: { ...layerConfigs.buildings, count: currentSite.buildings.length },
+      roads: { ...layerConfigs.roads, count: 0 },
+    };
+  }, [layerConfigs, activeWorkers, assets, vehicles, hardwareDevices, cameras, customZones, currentSite]);
 
   // Overlays State
   const [showDensityHeatmap, setShowDensityHeatmap] = useState(false);
@@ -331,11 +350,18 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
   // Selected Worker Modal / Detail Drawer
   const [selectedWorker, setSelectedWorker] = useState<MapWorkerItem | null>(null);
 
-  // Geofence Drawing Mode State
-  const [drawToolMode, setDrawToolMode] = useState<'select' | 'polygon' | 'rectangle'>('select');
+  // Geofence & Reader Drawing / Placement Tool Mode
+  const [drawToolMode, setDrawToolMode] = useState<'select' | 'place_reader' | 'polygon' | 'rectangle'>('select');
   const [drawnPoints, setDrawnPoints] = useState<{ x: number; y: number }[]>([]);
   const [isSavingGeofenceModalOpen, setIsSavingGeofenceModalOpen] = useState(false);
   const [isManageAssetsOpen, setIsManageAssetsOpen] = useState(false);
+  const [isNewDeviceModal, setIsNewDeviceModal] = useState(false);
+  
+  // Interactive Map Dragging & Coordinates State
+  const [draggingDeviceId, setDraggingDeviceId] = useState<string | null>(null);
+  const [hoveredDeviceId, setHoveredDeviceId] = useState<string | null>(null);
+  const [cursorMapCoords, setCursorMapCoords] = useState<{ x: number; y: number } | null>(null);
+
   const [geofenceForm, setGeofenceForm] = useState({
     name: '',
     category: 'EXCAVATION & SHORING',
@@ -397,7 +423,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     };
   };
 
-  // Real-time Database sync for Zones, Geofences, Assets, and Personnel
+  // Real-time Database sync for Zones, Geofences, Assets, Personnel, and RFID Readers
   useEffect(() => {
     const fetchDatabaseZones = async () => {
       try {
@@ -405,21 +431,27 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         const [
           zonesRes, 
           mapRes, 
-          peopleRes, 
+          peopleRes,
+          registeredRes,
           assetsRes, 
           vehiclesRes, 
           camerasRes, 
           sensorsRes,
-          devicesRes
+          devicesRes,
+          readersRes,
+          sitesRes
         ] = await Promise.allSettled([
           fetch('/api/data/zones', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
           fetch(`/api/data/map_configurations/${activeProject}`, { headers: authHeaders }).then(r => r.ok ? r.json() : null),
+          fetch('/api/data/people', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
           fetch('/api/data/registered_people', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
           fetch('/api/data/assets', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
           fetch('/api/data/vehicles', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
           fetch('/api/data/cameras', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
           fetch('/api/data/sensors', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
-          fetch('/api/data/devices', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
+          fetch('/api/data/devices', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
+          fetch('/api/data/hardware_readers', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
+          fetch('/api/data/sites', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
         ]);
 
         if (zonesRes.status === 'fulfilled' && Array.isArray(zonesRes.value)) {
@@ -450,42 +482,101 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
           }
         }
 
-        if (peopleRes.status === 'fulfilled' && Array.isArray(peopleRes.value) && peopleRes.value.length > 0) {
-          const mappedWorkers: MapWorkerItem[] = peopleRes.value.map((p: any, idx: number) => ({
+        if (sitesRes.status === 'fulfilled' && Array.isArray(sitesRes.value) && sitesRes.value.length > 0) {
+          const siteMap: Record<string, SiteData> = {};
+          sitesRes.value.forEach((s: any) => {
+            if (s && s.id) siteMap[s.id] = s;
+          });
+          setSites(prev => ({ ...prev, ...siteMap }));
+        }
+
+        const rawPeople = [
+          ...(peopleRes.status === 'fulfilled' && Array.isArray(peopleRes.value) ? peopleRes.value : []),
+          ...(registeredRes.status === 'fulfilled' && Array.isArray(registeredRes.value) ? registeredRes.value : [])
+        ];
+
+        if (rawPeople.length > 0) {
+          const uniquePeopleMap = new Map<string, any>();
+          rawPeople.forEach(p => {
+            if (p && p.id && !uniquePeopleMap.has(p.id)) {
+              uniquePeopleMap.set(p.id, p);
+            }
+          });
+
+          const mappedWorkers: MapWorkerItem[] = Array.from(uniquePeopleMap.values()).map((p: any, idx: number) => ({
             id: p.id || `W-${idx + 101}`,
             name: p.name || `Personnel ${idx + 1}`,
-            role: p.role || 'Field Specialist',
-            company: p.company || p.tradeCompany || 'Apex Construction',
+            role: p.role || 'Personnel',
+            company: p.company || p.tradeCompany || 'Operations',
             x: typeof p.x === 'number' ? p.x : 20 + ((idx * 15) % 65),
             y: typeof p.y === 'number' ? p.y : 20 + ((idx * 19) % 60),
             safetyStatus: p.safetyStatus || (p.ppeStatus === 'NON_COMPLIANT' ? 'NON_COMPLIANT' : 'COMPLIANT'),
             ppeStatus: p.ppeStatus || 'COMPLIANT',
-            currentZone: p.currentZone || p.location || 'Tower Core',
+            currentZone: p.currentZone || p.location || 'General Site',
             hardhatTagId: p.hardhatTagId || p.tagId || `HH-${idx + 1000}`,
-            certifications: p.certifications || ['Site Safety Pass', 'OSHA 10']
+            certifications: p.certifications || ['Site Safety Pass', 'OSHA Standard']
           }));
           setMapWorkers(mappedWorkers);
+        } else {
+          setMapWorkers([]);
         }
 
-        if (assetsRes.status === 'fulfilled' && Array.isArray(assetsRes.value) && assetsRes.value.length > 0) {
+        if (assetsRes.status === 'fulfilled' && Array.isArray(assetsRes.value)) {
           setAssets(assetsRes.value);
         }
 
-        if (vehiclesRes.status === 'fulfilled' && Array.isArray(vehiclesRes.value) && vehiclesRes.value.length > 0) {
+        if (vehiclesRes.status === 'fulfilled' && Array.isArray(vehiclesRes.value)) {
           setVehicles(vehiclesRes.value);
         }
 
-        if (camerasRes.status === 'fulfilled' && Array.isArray(camerasRes.value) && camerasRes.value.length > 0) {
+        if (camerasRes.status === 'fulfilled' && Array.isArray(camerasRes.value)) {
           setCameras(camerasRes.value);
         }
 
-        if (sensorsRes.status === 'fulfilled' && Array.isArray(sensorsRes.value) && sensorsRes.value.length > 0) {
+        if (sensorsRes.status === 'fulfilled' && Array.isArray(sensorsRes.value)) {
           setEnvSensors(sensorsRes.value);
         }
 
-        if (devicesRes.status === 'fulfilled' && Array.isArray(devicesRes.value) && devicesRes.value.length > 0) {
-          setHardwareDevices(devicesRes.value);
-        }
+        // Combine hardware devices & RFID readers from MongoDB
+        const rawReaders = [
+          ...(readersRes.status === 'fulfilled' && Array.isArray(readersRes.value) ? readersRes.value : []),
+          ...(devicesRes.status === 'fulfilled' && Array.isArray(devicesRes.value) ? devicesRes.value : [])
+        ];
+
+        const loadedDevices: HardwareDevice[] = [];
+        const seenReaderIds = new Set<string>();
+
+        rawReaders.forEach((r: any) => {
+          const id = r.id || r.readerId;
+          if (!id || seenReaderIds.has(id)) return;
+          seenReaderIds.add(id);
+
+          loadedDevices.push({
+            id,
+            name: r.name || `UHF Reader ${id}`,
+            macAddress: r.macAddress || `00:1A:79:${id.slice(-4)}`,
+            ipAddress: r.ipAddress || '192.168.1.100',
+            port: Number(r.port) || 8080,
+            x: typeof r.x === 'number' ? r.x : 50,
+            y: typeof r.y === 'number' ? r.y : 50,
+            zone: r.zone || r.location || r.zoneId || 'Main Entrance',
+            type: r.type || r.model || 'UHF Fixed Reader',
+            orientation: r.orientation || 'horizontal',
+            powerDbm: Number(r.powerDbm) || 30,
+            antennaGainDbi: Number(r.antennaGainDbi) || 9,
+            frequencyBand: r.frequencyBand || 'US 902-928 MHz UHF',
+            scanIntervalMs: Number(r.scanIntervalMs) || 250,
+            rssiThreshold: Number(r.rssiThreshold) || 70,
+            status: (r.status === 'online' || r.status === 'ONLINE' || r.status === 'Online') ? 'Online' : (r.status === 'maintenance' || r.status === 'Maintenance') ? 'Maintenance' : 'Offline',
+            alertsEnabled: r.alertsEnabled || {
+              unauthorizedAccess: true,
+              ppeViolation: true,
+              loiteringDwell: false
+            }
+          });
+        });
+
+        setHardwareDevices(loadedDevices);
       } catch (err) {
         console.warn('Failed to load database items in CustomMapPage:', err);
       }
@@ -505,11 +596,47 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         }
       });
 
+      const unsubReaders = onSnapshot(collection(db, 'hardware_readers'), (snap) => {
+        if (!snap.empty) {
+          const rList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+          setHardwareDevices(prev => {
+            const devMap = new Map(prev.map(item => [item.id, item]));
+            rList.forEach((r: any) => {
+              const id = r.id || r.readerId;
+              if (id) {
+                devMap.set(id, {
+                  ...devMap.get(id),
+                  id,
+                  name: r.name || id,
+                  x: typeof r.x === 'number' ? r.x : (devMap.get(id)?.x ?? 50),
+                  y: typeof r.y === 'number' ? r.y : (devMap.get(id)?.y ?? 50),
+                  zone: r.zone || r.location || devMap.get(id)?.zone || 'Main Entrance',
+                  status: (r.status === 'ONLINE' || r.status === 'Online') ? 'Online' : 'Offline',
+                  powerDbm: r.powerDbm || devMap.get(id)?.powerDbm || 30,
+                  antennaGainDbi: r.antennaGainDbi || devMap.get(id)?.antennaGainDbi || 9,
+                  ipAddress: r.ipAddress || devMap.get(id)?.ipAddress || '192.168.1.100',
+                  port: r.port || devMap.get(id)?.port || 8080,
+                  macAddress: r.macAddress || devMap.get(id)?.macAddress || '00:1A:79:00',
+                  type: r.type || r.model || 'UHF Fixed Reader',
+                  orientation: r.orientation || 'horizontal',
+                  frequencyBand: r.frequencyBand || 'US 902-928 MHz UHF',
+                  scanIntervalMs: r.scanIntervalMs || 250,
+                  rssiThreshold: r.rssiThreshold || 70,
+                  alertsEnabled: r.alertsEnabled || { unauthorizedAccess: true, ppeViolation: true, loiteringDwell: false }
+                });
+              }
+            });
+            return Array.from(devMap.values());
+          });
+        }
+      });
+
       return () => {
         unsubMapConfig();
+        unsubReaders();
       };
     } catch (err) {
-      console.warn('Firestore geofences/map_config listener setup error:', err);
+      console.warn('MongoDB listeners setup warning:', err);
     }
   }, [activeProject]);
 
@@ -743,14 +870,90 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     });
   };
 
-  // Drawing Tool Mouse Event Handler
+  // Drawing Tool & Reader Placement Mouse Event Handlers
   const handleMapCanvasClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (drawToolMode === 'select' || !mapRef.current) return;
     const rect = mapRef.current.getBoundingClientRect();
     const clickX = e.clientX - rect.left;
     const clickY = e.clientY - rect.top;
-    const percentX = Math.round((clickX / rect.width) * 100);
-    const percentY = Math.round((clickY / rect.height) * 100);
+    const percentX = Math.max(1, Math.min(99, Math.round((clickX / rect.width) * 100)));
+    const percentY = Math.max(1, Math.min(99, Math.round((clickY / rect.height) * 100)));
+
+    if (drawToolMode === 'place_reader') {
+      const newDevId = `rdr_${Date.now()}`;
+      const firstZone = Object.keys(customZones)[0] || 'Main Portal Gate';
+      const newDevice: HardwareDevice = {
+        id: newDevId,
+        name: `UHF Portal Reader ${hardwareDevices.length + 1}`,
+        macAddress: `00:1A:79:${Math.floor(Math.random()*89+10)}:${Math.floor(Math.random()*89+10)}:${Math.floor(Math.random()*89+10)}`,
+        ipAddress: `192.168.1.${100 + hardwareDevices.length + 1}`,
+        port: 8080,
+        x: percentX,
+        y: percentY,
+        zone: firstZone,
+        type: 'UHF Fixed Portal',
+        orientation: 'horizontal',
+        powerDbm: 30,
+        antennaGainDbi: 9,
+        frequencyBand: 'US 902-928 MHz UHF',
+        scanIntervalMs: 250,
+        rssiThreshold: 70,
+        status: 'Online',
+        alertsEnabled: {
+          unauthorizedAccess: true,
+          ppeViolation: true,
+          loiteringDwell: false
+        }
+      };
+
+      setHardwareDevices(prev => [...prev, newDevice]);
+      setSelectedDeviceForConfig(newDevice);
+      setIsNewDeviceModal(true);
+
+      const authHeaders = getAuthHeaders();
+      const readerDoc = {
+        id: newDevId,
+        readerId: newDevId,
+        name: newDevice.name,
+        location: newDevice.zone,
+        zone: newDevice.zone,
+        zoneId: newDevice.zone,
+        x: percentX,
+        y: percentY,
+        range: 15,
+        powerDbm: 30,
+        antennaGainDbi: 9,
+        status: 'ONLINE',
+        ipAddress: newDevice.ipAddress,
+        port: newDevice.port,
+        macAddress: newDevice.macAddress,
+        type: newDevice.type,
+        orientation: newDevice.orientation,
+        frequencyBand: newDevice.frequencyBand,
+        scanIntervalMs: newDevice.scanIntervalMs,
+        rssiThreshold: newDevice.rssiThreshold,
+        updatedAt: new Date().toISOString()
+      };
+
+      fetch('/api/data/hardware_readers', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(readerDoc)
+      }).catch(err => console.warn('Reader save note:', err));
+
+      fetch('/api/data/devices', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(newDevice)
+      }).catch(err => console.warn('Device save note:', err));
+
+      setDoc(doc(db, 'hardware_readers', newDevId), readerDoc).catch(() => {});
+
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+      setSuccessMsg(`RFID Reader placed at (${percentX}%, ${percentY}%) and saved to MongoDB!`);
+      setTimeout(() => setSuccessMsg(null), 3500);
+      return;
+    }
 
     if (drawToolMode === 'polygon') {
       setDrawnPoints(prev => [...prev, { x: percentX, y: percentY }]);
@@ -763,8 +966,148 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     }
   };
 
+  const handleMapMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (!mapRef.current) return;
+    const rect = mapRef.current.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const clickY = e.clientY - rect.top;
+    const percentX = Math.max(1, Math.min(99, Math.round((clickX / rect.width) * 100)));
+    const percentY = Math.max(1, Math.min(99, Math.round((clickY / rect.height) * 100)));
+    setCursorMapCoords({ x: percentX, y: percentY });
+
+    if (draggingDeviceId) {
+      setHardwareDevices(prev => prev.map(d => {
+        if (d.id === draggingDeviceId) {
+          return { ...d, x: percentX, y: percentY };
+        }
+        return d;
+      }));
+    }
+  };
+
+  const handleMapMouseUp = () => {
+    if (draggingDeviceId) {
+      const movedDev = hardwareDevices.find(d => d.id === draggingDeviceId);
+      if (movedDev) {
+        const authHeaders = getAuthHeaders();
+        fetch('/api/data/hardware_readers', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({
+            id: movedDev.id,
+            readerId: movedDev.id,
+            name: movedDev.name,
+            location: movedDev.zone,
+            zone: movedDev.zone,
+            x: movedDev.x,
+            y: movedDev.y,
+            powerDbm: movedDev.powerDbm,
+            status: movedDev.status === 'Online' ? 'ONLINE' : 'OFFLINE',
+            updatedAt: new Date().toISOString()
+          })
+        }).catch(() => {});
+
+        fetch('/api/data/devices', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify(movedDev)
+        }).catch(() => {});
+
+        setDoc(doc(db, 'hardware_readers', movedDev.id), {
+          id: movedDev.id,
+          x: movedDev.x,
+          y: movedDev.y,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+
+        window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+        setSuccessMsg(`Reader "${movedDev.name}" moved to (${movedDev.x}%, ${movedDev.y}%) and saved!`);
+        setTimeout(() => setSuccessMsg(null), 2500);
+      }
+      setDraggingDeviceId(null);
+    }
+  };
+
+  const handleSaveReaderFromConfig = async (updated: HardwareDevice) => {
+    setHardwareDevices(prev => {
+      const idx = prev.findIndex(d => d.id === updated.id);
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = updated;
+        return next;
+      }
+      return [...prev, updated];
+    });
+
+    const authHeaders = getAuthHeaders();
+    const readerDoc = {
+      id: updated.id,
+      readerId: updated.id,
+      name: updated.name,
+      location: updated.zone,
+      zone: updated.zone,
+      zoneId: updated.zone,
+      x: updated.x,
+      y: updated.y,
+      powerDbm: updated.powerDbm,
+      antennaGainDbi: updated.antennaGainDbi,
+      status: updated.status === 'Online' ? 'ONLINE' : updated.status === 'Maintenance' ? 'MAINTENANCE' : 'OFFLINE',
+      ipAddress: updated.ipAddress,
+      port: updated.port,
+      macAddress: updated.macAddress,
+      type: updated.type,
+      orientation: updated.orientation,
+      frequencyBand: updated.frequencyBand,
+      scanIntervalMs: updated.scanIntervalMs,
+      rssiThreshold: updated.rssiThreshold,
+      alertsEnabled: updated.alertsEnabled,
+      updatedAt: new Date().toISOString()
+    };
+
+    try {
+      await fetch('/api/data/hardware_readers', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(readerDoc)
+      });
+      await fetch('/api/data/devices', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(updated)
+      });
+      await setDoc(doc(db, 'hardware_readers', updated.id), readerDoc, { merge: true });
+    } catch (err) {
+      console.warn('Reader save error:', err);
+    }
+
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+    window.dispatchEvent(new CustomEvent('gao_project_updated'));
+    setSelectedDeviceForConfig(null);
+    setIsNewDeviceModal(false);
+    setSuccessMsg(`Reader "${updated.name}" coordinates & hardware config saved to MongoDB!`);
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
+  const handleDeleteReader = async (deviceId: string) => {
+    setHardwareDevices(prev => prev.filter(d => d.id !== deviceId));
+    const authHeaders = getAuthHeaders();
+    try {
+      await fetch(`/api/data/hardware_readers/${deviceId}`, { method: 'DELETE', headers: authHeaders });
+      await fetch(`/api/data/devices/${deviceId}`, { method: 'DELETE', headers: authHeaders });
+      await deleteDoc(doc(db, 'hardware_readers', deviceId)).catch(() => {});
+      await deleteDoc(doc(db, 'devices', deviceId)).catch(() => {});
+    } catch (err) {
+      console.warn('Reader delete error:', err);
+    }
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+    window.dispatchEvent(new CustomEvent('gao_project_updated'));
+    setSelectedDeviceForConfig(null);
+    setSuccessMsg(`Reader "${deviceId}" deleted from MongoDB.`);
+    setTimeout(() => setSuccessMsg(null), 3000);
+  };
+
   // Save Geofenced Area to Database
-  const handleSaveGeofenceToFirestore = async (e: React.FormEvent) => {
+  const handleSaveGeofenceToMongoDB = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!geofenceForm.name.trim() || drawnPoints.length < 2) return;
 
@@ -1018,7 +1361,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
     const authHeaders = getAuthHeaders();
     try {
-      // 1. Delete removed zones from the database API & MongoDB Atlas Firestore
+      // 1. Delete removed zones from the database API & MongoDB Atlas MongoDB
       const previousZoneNames = Array.from(new Set([
         ...Object.keys(customZones || {}),
         ...(trackingCtx?.zones || []).map(z => z.name),
@@ -1086,7 +1429,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         updatedAt: new Date().toISOString()
       };
 
-      // Persist full map configuration to database API & MongoDB Atlas Firestore (overwrite mapPayload to erase deleted keys)
+      // Persist full map configuration to database API & MongoDB Atlas MongoDB (overwrite mapPayload to erase deleted keys)
       await fetch('/api/data/map_configurations', {
         method: 'POST',
         headers: authHeaders,
@@ -1190,6 +1533,26 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             </button>
             <button
               onClick={() => {
+                if (drawToolMode === 'place_reader') {
+                  setDrawToolMode('select');
+                } else {
+                  setDrawToolMode('place_reader');
+                  setDrawnPoints([]);
+                  setLayerConfigs(prev => ({ ...prev, rfidReaders: { ...prev.rfidReaders, visible: true } }));
+                }
+              }}
+              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-md ${
+                drawToolMode === 'place_reader' 
+                  ? 'bg-purple-500 text-white ring-2 ring-purple-300 animate-pulse' 
+                  : 'bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/40'
+              }`}
+              title="Click on the floor map to drop and position an RFID Reader antenna"
+            >
+              <Radio size={14} className={drawToolMode === 'place_reader' ? 'animate-spin' : ''} />
+              {drawToolMode === 'place_reader' ? 'Active: Click Map to Drop Reader' : '📍 Place / Move RFID Reader'}
+            </button>
+            <button
+              onClick={() => {
                 setDrawToolMode('polygon');
                 setDrawnPoints([]);
               }}
@@ -1207,6 +1570,61 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             >
               <Edit3 size={14} /> Open Vector Zone Editor
             </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Status KPI Metrics Summary Row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xs flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-[#007BC4] flex items-center justify-center font-bold shrink-0">
+            <Users size={20} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Personnel Onsite</div>
+            <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{activeWorkers.length}</div>
+            <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 truncate">
+              {activeWorkers.filter(w => w.ppeStatus === 'COMPLIANT').length} PPE Verified
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xs flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center font-bold shrink-0">
+            <Layers size={20} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Active Geofences</div>
+            <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{Object.keys(customZones).length}</div>
+            <div className="text-[10px] font-semibold text-slate-500 truncate">
+              {Object.values(customZones).filter(z => z.hazardLevel === 'critical').length} High-Hazard Zones
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xs flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-amber-50 dark:bg-amber-950/50 text-amber-600 flex items-center justify-center font-bold shrink-0">
+            <Truck size={20} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Fleet & Assets</div>
+            <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{assets.length + vehicles.length}</div>
+            <div className="text-[10px] font-semibold text-slate-500 truncate">
+              {vehicles.length} Heavy Vehicles • {assets.length} Equipment
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xs flex items-center gap-3.5">
+          <div className="w-11 h-11 rounded-xl bg-purple-50 dark:bg-purple-950/50 text-purple-600 flex items-center justify-center font-bold shrink-0">
+            <Radio size={20} />
+          </div>
+          <div className="min-w-0">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">RFID Portal Readers</div>
+            <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{hardwareDevices.length}</div>
+            <div className="text-[10px] font-semibold text-purple-600 dark:text-purple-400 truncate">
+              {hardwareDevices.filter(d => d.status === 'Online').length} Online Gate Anchors
+            </div>
           </div>
         </div>
       </div>
@@ -1336,33 +1754,40 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
           {/* Sidebar Tabs */}
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm space-y-4">
-            <div className="grid grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-xl">
+            <div className="grid grid-cols-5 gap-1 p-1 bg-slate-100 dark:bg-slate-900 rounded-xl">
               <button
                 onClick={() => setActiveSidebarTab('layers')}
-                className={`py-1.5 text-[9px] font-extrabold rounded-lg transition ${activeSidebarTab === 'layers' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow' : 'text-slate-500'}`}
+                className={`py-1.5 text-[8.5px] font-extrabold rounded-lg transition ${activeSidebarTab === 'layers' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow' : 'text-slate-500'}`}
               >
                 Layers
               </button>
               <button
+                onClick={() => setActiveSidebarTab('readers')}
+                className={`py-1.5 text-[8.5px] font-extrabold rounded-lg transition ${activeSidebarTab === 'readers' ? 'bg-white dark:bg-slate-800 text-purple-400 shadow' : 'text-slate-500'}`}
+              >
+                Readers
+              </button>
+              <button
                 onClick={() => setActiveSidebarTab('zones')}
-                className={`py-1.5 text-[9px] font-extrabold rounded-lg transition ${activeSidebarTab === 'zones' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow' : 'text-slate-500'}`}
+                className={`py-1.5 text-[8.5px] font-extrabold rounded-lg transition ${activeSidebarTab === 'zones' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow' : 'text-slate-500'}`}
               >
                 Zones
               </button>
               <button
                 onClick={() => setActiveSidebarTab('assets')}
-                className={`py-1.5 text-[9px] font-extrabold rounded-lg transition ${activeSidebarTab === 'assets' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow' : 'text-slate-500'}`}
+                className={`py-1.5 text-[8.5px] font-extrabold rounded-lg transition ${activeSidebarTab === 'assets' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow' : 'text-slate-500'}`}
               >
                 Assets
               </button>
               <button
                 onClick={() => setActiveSidebarTab('inventory')}
-                className={`py-1.5 text-[9px] font-extrabold rounded-lg transition ${activeSidebarTab === 'inventory' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow' : 'text-slate-500'}`}
+                className={`py-1.5 text-[8.5px] font-extrabold rounded-lg transition ${activeSidebarTab === 'inventory' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow' : 'text-slate-500'}`}
               >
                 Staff
               </button>
             </div>
 
+            {/* TAB 1: Layers */}
             {activeSidebarTab === 'layers' && (
               <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
                 <div className="flex items-center justify-between text-[10px] font-bold text-slate-400 uppercase">
@@ -1374,7 +1799,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                   </div>
                 </div>
 
-                {Object.entries(layerConfigs).map(([key, conf]) => (
+                {Object.entries(dynamicLayerConfigs).map(([key, conf]) => (
                   <div key={key} className="p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <button
@@ -1393,6 +1818,80 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               </div>
             )}
 
+            {/* TAB 2: RFID Readers Manager */}
+            {activeSidebarTab === 'readers' && (
+              <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-800 dark:text-white">RFID Portal Readers ({hardwareDevices.length})</span>
+                  <button
+                    onClick={() => {
+                      setDrawToolMode('place_reader');
+                      setLayerConfigs(prev => ({ ...prev, rfidReaders: { ...prev.rfidReaders, visible: true } }));
+                    }}
+                    className="p-1 bg-purple-500/20 text-purple-400 rounded-lg text-xs font-bold hover:bg-purple-500/30 flex items-center gap-1"
+                  >
+                    <Plus size={12} /> Place New
+                  </button>
+                </div>
+
+                {hardwareDevices.length === 0 ? (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center space-y-2">
+                    <Radio size={24} className="mx-auto text-purple-400/60" />
+                    <p className="text-xs text-slate-500 dark:text-slate-400 font-medium">No RFID Readers placed on this floor yet.</p>
+                    <button
+                      onClick={() => {
+                        setDrawToolMode('place_reader');
+                        setLayerConfigs(prev => ({ ...prev, rfidReaders: { ...prev.rfidReaders, visible: true } }));
+                      }}
+                      className="px-3 py-1 bg-purple-600 hover:bg-purple-500 text-white text-[11px] font-bold rounded-lg transition"
+                    >
+                      📍 Click to Drop Reader
+                    </button>
+                  </div>
+                ) : (
+                  hardwareDevices.map(d => (
+                    <div 
+                      key={d.id} 
+                      className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-2 group hover:border-purple-500/60 transition"
+                    >
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className={`w-2 h-2 rounded-full ${d.status === 'Online' ? 'bg-emerald-400 animate-pulse' : d.status === 'Maintenance' ? 'bg-amber-400' : 'bg-slate-400'}`} />
+                          <span className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{d.name}</span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={() => {
+                              setSelectedDeviceForConfig(d);
+                              setIsNewDeviceModal(false);
+                            }}
+                            className="p-1 text-slate-400 hover:text-purple-400 rounded-md hover:bg-purple-500/10 transition"
+                            title="Edit Coordinates & Settings"
+                          >
+                            <Edit3 size={12} />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteReader(d.id)}
+                            className="p-1 text-slate-400 hover:text-rose-400 rounded-md hover:bg-rose-500/10 transition"
+                            title="Delete Reader"
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-1 text-[10px] font-mono text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-950 p-1.5 rounded-lg border border-slate-100 dark:border-slate-800">
+                        <div><span className="text-slate-400">Coord:</span> <span className="text-purple-400 font-bold">X:{d.x}% Y:{d.y}%</span></div>
+                        <div><span className="text-slate-400">Power:</span> <span className="text-slate-300 font-bold">{d.powerDbm} dBm</span></div>
+                        <div className="col-span-2 truncate"><span className="text-slate-400">Zone:</span> <span className="text-slate-300">{d.zone}</span></div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* TAB 3: Zones */}
             {activeSidebarTab === 'zones' && (
               <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
                 <div className="flex items-center justify-between">
@@ -1408,34 +1907,41 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                   </button>
                 </div>
 
-                {Object.entries(customZones).map(([zName, bounds]: [string, any]) => (
-                  <div key={zName} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1.5 group">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{zName}</span>
-                      <div className="flex items-center gap-1.5">
-                        <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
-                          bounds.hazardLevel === 'critical' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'
-                        }`}>
-                          {bounds.hazardLevel || 'normal'}
-                        </span>
-                        <button
-                          onClick={() => handleDeleteZone(zName)}
-                          className="p-1 text-slate-400 hover:text-rose-400 rounded-md hover:bg-rose-500/10 transition"
-                          title={`Delete zone ${zName}`}
-                        >
-                          <Trash2 size={12} />
-                        </button>
+                {Object.keys(customZones).length === 0 ? (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center">
+                    <p className="text-xs text-slate-400">No geofences created yet. Click Draw to outline a zone.</p>
+                  </div>
+                ) : (
+                  Object.entries(customZones).map(([zName, bounds]: [string, any]) => (
+                    <div key={zName} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1.5 group">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{zName}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`text-[8px] font-black uppercase px-1.5 py-0.5 rounded ${
+                            bounds.hazardLevel === 'critical' ? 'bg-rose-500/20 text-rose-300' : 'bg-amber-500/20 text-amber-300'
+                          }`}>
+                            {bounds.hazardLevel || 'normal'}
+                          </span>
+                          <button
+                            onClick={() => handleDeleteZone(zName)}
+                            className="p-1 text-slate-400 hover:text-rose-400 rounded-md hover:bg-rose-500/10 transition"
+                            title={`Delete zone ${zName}`}
+                          >
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="text-[10px] text-slate-400 flex justify-between font-mono">
+                        <span>{bounds.category || 'ZONE'}</span>
+                        <span>Capacity: {bounds.capacity || 10}</span>
                       </div>
                     </div>
-                    <div className="text-[10px] text-slate-400 flex justify-between font-mono">
-                      <span>{bounds.category || 'ZONE'}</span>
-                      <span>Capacity: {bounds.capacity || 10}</span>
-                    </div>
-                  </div>
-                ))}
+                  ))
+                )}
               </div>
             )}
 
+            {/* TAB 4: Assets & Machinery */}
             {activeSidebarTab === 'assets' && (
               <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
                 <div className="flex items-center justify-between">
@@ -1448,70 +1954,85 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                   </button>
                 </div>
 
-                {assets.map(a => (
-                  <div key={a.id} className="p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Wrench size={13} className="text-amber-500 shrink-0" />
-                        <span className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{a.name}</span>
-                      </div>
-                      <span className="text-[8px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 uppercase">
-                        {a.status}
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-slate-400 flex justify-between font-mono">
-                      <span>{a.category} • {a.location}</span>
-                      <span>🔋 {a.battery}%</span>
-                    </div>
+                {assets.length === 0 && vehicles.length === 0 ? (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center">
+                    <p className="text-xs text-slate-400">No assets registered yet. Click Manage to add machinery.</p>
                   </div>
-                ))}
+                ) : (
+                  <>
+                    {assets.map(a => (
+                      <div key={a.id} className="p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Wrench size={13} className="text-amber-500 shrink-0" />
+                            <span className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{a.name}</span>
+                          </div>
+                          <span className="text-[8px] font-black px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 uppercase">
+                            {a.status}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 flex justify-between font-mono">
+                          <span>{a.category} • {a.location}</span>
+                          <span>🔋 {a.battery}%</span>
+                        </div>
+                      </div>
+                    ))}
 
-                {vehicles.map(v => (
-                  <div key={v.id} className="p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2 min-w-0">
-                        <Truck size={13} className="text-sky-500 shrink-0" />
-                        <span className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{v.name}</span>
+                    {vehicles.map(v => (
+                      <div key={v.id} className="p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <Truck size={13} className="text-sky-500 shrink-0" />
+                            <span className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{v.name}</span>
+                          </div>
+                          <span className="text-[8px] font-black px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 uppercase">
+                            {v.status}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 flex justify-between font-mono">
+                          <span>{v.type} • {v.location}</span>
+                          <span>⛽ {v.fuel}%</span>
+                        </div>
                       </div>
-                      <span className="text-[8px] font-black px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 uppercase">
-                        {v.status}
-                      </span>
-                    </div>
-                    <div className="text-[10px] text-slate-400 flex justify-between font-mono">
-                      <span>{v.type} • {v.location}</span>
-                      <span>⛽ {v.fuel}%</span>
-                    </div>
-                  </div>
-                ))}
+                    ))}
+                  </>
+                )}
               </div>
             )}
 
+            {/* TAB 5: Staff */}
             {activeSidebarTab === 'inventory' && (
               <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
                 <span className="text-xs font-bold text-slate-800 dark:text-white">Active Site Personnel ({mapWorkers.length})</span>
-                {mapWorkers.map(w => {
-                  const badge = getSafetyStatusBadge(w.safetyStatus);
-                  const BadgeIcon = badge.icon;
-                  return (
-                    <div 
-                      key={w.id} 
-                      onClick={() => setSelectedWorker(w)}
-                      className="p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between cursor-pointer hover:border-[#007BC4] transition"
-                    >
-                      <div className="flex items-center gap-2 min-w-0">
-                        <HardHat size={14} className="text-slate-400 shrink-0" />
-                        <div className="truncate">
-                          <div className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{w.name}</div>
-                          <div className="text-[9px] text-slate-400 truncate">{w.role} • {w.company}</div>
+                {mapWorkers.length === 0 ? (
+                  <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center">
+                    <p className="text-xs text-slate-400">No personnel tags active on this floor yet.</p>
+                  </div>
+                ) : (
+                  mapWorkers.map(w => {
+                    const badge = getSafetyStatusBadge(w.safetyStatus);
+                    const BadgeIcon = badge.icon;
+                    return (
+                      <div 
+                        key={w.id} 
+                        onClick={() => setSelectedWorker(w)}
+                        className="p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between cursor-pointer hover:border-[#007BC4] transition"
+                      >
+                        <div className="flex items-center gap-2 min-w-0">
+                          <HardHat size={14} className="text-slate-400 shrink-0" />
+                          <div className="truncate">
+                            <div className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{w.name}</div>
+                            <div className="text-[9px] text-slate-400 truncate">{w.role} • {w.company}</div>
+                          </div>
                         </div>
+                        <span className={`text-[8px] font-black px-1.5 py-0.5 rounded flex items-center gap-1 ${badge.badgeClass}`}>
+                          <BadgeIcon size={10} />
+                          {badge.shortLabel}
+                        </span>
                       </div>
-                      <span className={`text-[8px] font-black px-1.5 py-0.5 rounded flex items-center gap-1 ${badge.badgeClass}`}>
-                        <BadgeIcon size={10} />
-                        {badge.shortLabel}
-                      </span>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             )}
           </div>
@@ -1597,7 +2118,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                 })}
               </div>
 
-              {/* Drawing Tool Controls Bar */}
+              {/* Drawing & Placement Tool Controls Bar */}
               <div className="flex items-center gap-2 bg-slate-900 border border-slate-700 p-1 rounded-xl">
                 <button
                   onClick={() => { setDrawToolMode('select'); setDrawnPoints([]); }}
@@ -1607,6 +2128,21 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                 >
                   <Compass size={12} /> Pan/Select
                 </button>
+
+                <button
+                  onClick={() => { 
+                    setDrawToolMode('place_reader'); 
+                    setDrawnPoints([]); 
+                    setLayerConfigs(prev => ({ ...prev, rfidReaders: { ...prev.rfidReaders, visible: true } }));
+                  }}
+                  className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
+                    drawToolMode === 'place_reader' ? 'bg-purple-500 text-white font-black animate-pulse' : 'text-purple-300 hover:text-purple-200'
+                  }`}
+                  title="Click map to drop RFID Reader or drag existing readers"
+                >
+                  <Radio size={12} /> 📍 Place Reader
+                </button>
+
                 <button
                   onClick={() => { setDrawToolMode('polygon'); setDrawnPoints([]); }}
                   className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
@@ -1615,6 +2151,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                 >
                   <PenTool size={12} /> Draw Polygon
                 </button>
+
                 <button
                   onClick={() => { setDrawToolMode('rectangle'); setDrawnPoints([]); }}
                   className={`px-2 py-1 rounded-lg text-[10px] font-bold transition flex items-center gap-1 ${
@@ -1650,8 +2187,25 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             </div>
           </div>
 
-          {/* Drawing Tool Helper Status Bar */}
-          {drawToolMode !== 'select' && (
+          {/* Active Tool Helper Status Banner */}
+          {drawToolMode === 'place_reader' && (
+            <div className="mb-2 px-3 py-1.5 bg-purple-500/15 border border-purple-500/50 text-purple-200 text-xs font-bold rounded-xl flex items-center justify-between z-20 animate-fade-in">
+              <span className="flex items-center gap-2">
+                <Radio size={14} className="text-purple-400 animate-pulse" />
+                <span><strong>Reader Placement Mode:</strong> Click anywhere on the floor map to drop a new RFID Reader antenna. Drag existing readers to adjust (X, Y) coordinates.</span>
+                {cursorMapCoords && (
+                  <span className="font-mono text-purple-300 bg-purple-950/80 px-2 py-0.5 rounded border border-purple-600/40">
+                    Cursor: X {cursorMapCoords.x}% • Y {cursorMapCoords.y}%
+                  </span>
+                )}
+              </span>
+              <button onClick={() => setDrawToolMode('select')} className="text-purple-300 hover:text-white">
+                <X size={14} />
+              </button>
+            </div>
+          )}
+
+          {drawToolMode !== 'select' && drawToolMode !== 'place_reader' && (
             <div className="mb-2 px-3 py-1.5 bg-amber-500/10 border border-amber-500/40 text-amber-300 text-xs font-bold rounded-xl flex items-center justify-between z-20">
               <span className="flex items-center gap-1.5">
                 <PenTool size={14} /> Click directly on the map surface to add geofence vertices. ({drawnPoints.length} points placed)
@@ -1666,8 +2220,10 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
           <div 
             ref={mapRef}
             onClick={handleMapCanvasClick}
+            onMouseMove={handleMapMouseMove}
+            onMouseUp={handleMapMouseUp}
             className={`flex-1 relative rounded-xl border border-slate-300 bg-white overflow-hidden shadow-inner select-none ${
-              drawToolMode !== 'select' ? 'cursor-crosshair' : ''
+              drawToolMode === 'place_reader' ? 'cursor-crosshair' : drawToolMode !== 'select' ? 'cursor-crosshair' : draggingDeviceId ? 'cursor-grabbing' : ''
             }`}
           >
             {/* SVG Source, Custom Blueprint Image, or Enterprise CAD Digital Twin */}
@@ -1676,7 +2232,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                 className="absolute inset-0 opacity-80 pointer-events-none overflow-hidden" 
                 dangerouslySetInnerHTML={{ __html: customSvgSource }} 
               />
-            ) : customFloorplan && !customFloorplan.includes('unsplash') && (customFloorplan.startsWith('blob:') || customFloorplan.startsWith('data:image/png') || customFloorplan.startsWith('data:image/jpeg') || customFloorplan.startsWith('data:image/webp')) ? (
+            ) : customFloorplan && typeof customFloorplan === 'string' && customFloorplan.trim().length > 5 ? (
               <img src={customFloorplan} alt="Custom Blueprint" className="absolute inset-0 w-full h-full object-cover opacity-90 pointer-events-none" />
             ) : (
               <InteractiveSiteMap 
@@ -1733,8 +2289,8 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               const isHazard = bounds.hazardLevel === 'critical';
               const isWarning = bounds.hazardLevel === 'warning';
               
-              if (isHazard && !layerConfigs.restrictedZones?.visible) return null;
-              if (isWarning && !layerConfigs.hazardZones?.visible) return null;
+              if (isHazard && !dynamicLayerConfigs.restrictedZones?.visible) return null;
+              if (isWarning && !dynamicLayerConfigs.hazardZones?.visible) return null;
 
               let zoneColor = 'border-sky-500 bg-sky-500/20 text-sky-300 hover:bg-sky-500/30';
               if (isHazard) zoneColor = 'border-rose-500 bg-rose-500/25 text-rose-300 hover:bg-rose-500/40';
@@ -1915,8 +2471,110 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               </svg>
             )}
 
+            {/* RFID READERS & UHF GATE ANCHORS LAYER */}
+            {(dynamicLayerConfigs.rfidReaders?.visible || drawToolMode === 'place_reader') && (
+              <>
+                {/* SVG Translucent Coverage Range Circles */}
+                <svg className="absolute inset-0 w-full h-full pointer-events-none z-20">
+                  <defs>
+                    <radialGradient id="readerCoverageGlow" cx="50%" cy="50%" r="50%">
+                      <stop offset="0%" stopColor="#a855f7" stopOpacity="0.35" />
+                      <stop offset="70%" stopColor="#a855f7" stopOpacity="0.12" />
+                      <stop offset="100%" stopColor="#a855f7" stopOpacity="0" />
+                    </radialGradient>
+                  </defs>
+                  {hardwareDevices.map(d => {
+                    const radius = Math.max(35, (d.powerDbm || 30) * 1.8);
+                    const isSelected = selectedDeviceForConfig?.id === d.id || hoveredDeviceId === d.id;
+                    return (
+                      <g key={`svg-rdr-${d.id}`}>
+                        <circle
+                          cx={`${d.x}%`}
+                          cy={`${d.y}%`}
+                          r={radius}
+                          fill="url(#readerCoverageGlow)"
+                          stroke={isSelected ? "#c084fc" : "#a855f7"}
+                          strokeWidth={isSelected ? "2" : "1.2"}
+                          strokeDasharray={isSelected ? "none" : "5,4"}
+                          className={d.status === 'Online' ? 'animate-pulse' : ''}
+                        />
+                        {/* Antenna Angle Beam Indicator */}
+                        <line
+                          x1={`${d.x}%`}
+                          y1={`${d.y}%`}
+                          x2={`${d.x}%`}
+                          y2={`${d.y - (radius * 0.12)}%`}
+                          stroke="#a855f7"
+                          strokeWidth="2"
+                        />
+                      </g>
+                    );
+                  })}
+                </svg>
+
+                {/* Interactive Drag-and-Drop RFID Reader Pins */}
+                {hardwareDevices.map(d => {
+                  const isDragging = draggingDeviceId === d.id;
+                  const isSelected = selectedDeviceForConfig?.id === d.id;
+                  return (
+                    <div
+                      key={`rdr-marker-${d.id}`}
+                      onMouseDown={(e) => {
+                        e.stopPropagation();
+                        setDraggingDeviceId(d.id);
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedDeviceForConfig(d);
+                        setIsNewDeviceModal(false);
+                      }}
+                      onMouseEnter={() => setHoveredDeviceId(d.id)}
+                      onMouseLeave={() => setHoveredDeviceId(null)}
+                      className={`absolute z-35 flex flex-col items-center cursor-grab active:cursor-grabbing group transition-transform ${
+                        isDragging ? 'scale-125 z-50 pointer-events-none' : isSelected ? 'scale-115 z-45' : 'hover:scale-110'
+                      }`}
+                      style={{ left: `${d.x}%`, top: `${d.y}%`, transform: 'translate(-50%, -50%)' }}
+                      title={`RFID Reader: ${d.name} (${d.x}%, ${d.y}%) — Click to configure or drag to move`}
+                    >
+                      {/* Live Dragging / Hover Coordinate Pill */}
+                      {(isDragging || hoveredDeviceId === d.id || isSelected) && (
+                        <div className="absolute -top-7 px-2 py-0.5 rounded-md bg-purple-950/95 border border-purple-500/80 text-purple-200 text-[9px] font-mono font-black shadow-xl whitespace-nowrap animate-fade-in flex items-center gap-1">
+                          <Radio size={10} className="text-purple-400" />
+                          <span>{d.name}: X {d.x}% • Y {d.y}%</span>
+                        </div>
+                      )}
+
+                      {/* Reader Antenna Physical Badge */}
+                      <div className={`p-2 rounded-2xl shadow-2xl border backdrop-blur-md flex items-center justify-center transition ${
+                        isDragging 
+                          ? 'bg-purple-600 text-white border-white ring-4 ring-purple-400/50 shadow-purple-500/50' 
+                          : d.status === 'Online'
+                          ? 'bg-slate-900/95 text-purple-300 border-purple-500/80 shadow-purple-500/20'
+                          : 'bg-slate-800/95 text-slate-400 border-slate-600'
+                      }`}>
+                        <Radio size={16} className={d.status === 'Online' ? 'text-purple-400 animate-pulse' : ''} />
+                        
+                        {/* Status LED Dot */}
+                        <span className={`w-2.5 h-2.5 rounded-full absolute -top-1 -right-1 border border-slate-900 ${
+                          d.status === 'Online' ? 'bg-emerald-400 animate-ping' : d.status === 'Maintenance' ? 'bg-amber-400' : 'bg-rose-500'
+                        }`} />
+                        <span className={`w-2 h-2 rounded-full absolute -top-1 -right-1 border border-slate-900 ${
+                          d.status === 'Online' ? 'bg-emerald-400' : d.status === 'Maintenance' ? 'bg-amber-400' : 'bg-rose-500'
+                        }`} />
+                      </div>
+
+                      {/* Reader Label Pill */}
+                      <div className="mt-1 px-1.5 py-0.2 rounded bg-slate-950/90 border border-slate-800 text-[8px] font-mono font-bold text-white shadow truncate max-w-[100px] text-center">
+                        {d.name.replace('UHF Portal Reader ', 'RDR-')}
+                      </div>
+                    </div>
+                  );
+                })}
+              </>
+            )}
+
             {/* LAYER 3: Clustered Map Markers or Individual Workers */}
-            {layerConfigs.workers?.visible && (
+            {dynamicLayerConfigs.workers?.visible && (
               <>
                 {/* Clustered Marker Groups */}
                 {clusteredGroups.clusters.map(cluster => {
@@ -1986,7 +2644,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             )}
 
             {/* Equipment Layer */}
-            {layerConfigs.equipment?.visible && (
+            {dynamicLayerConfigs.equipment?.visible && (
               <div>
                 {assets.map(a => (
                   <div
@@ -2002,7 +2660,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             )}
 
             {/* Vehicles Layer */}
-            {layerConfigs.vehicles?.visible && (
+            {dynamicLayerConfigs.vehicles?.visible && (
               <div>
                 {vehicles.map(v => (
                   <div
@@ -2017,15 +2675,22 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               </div>
             )}
 
-            {/* Safety Items (Assembly Points, Fire Equipment) */}
-            {layerConfigs.assemblyPoints?.visible && (
-              <div
-                className="absolute z-20 p-2 rounded-xl bg-emerald-900/80 border border-emerald-500 text-emerald-200 flex items-center gap-1.5"
-                style={{ left: '5%', top: '10%' }}
-              >
-                <ShieldCheck size={14} className="text-emerald-400" />
-                <span className="text-[10px] font-black">MUSTER POINT A</span>
-              </div>
+            {/* Safety Items: Dynamic Assembly Points from Zones */}
+            {dynamicLayerConfigs.assemblyPoints?.visible && (
+              <>
+                {Object.entries(customZones)
+                  .filter(([name, z]) => (z.category || '').includes('MUSTER') || (z.category || '').includes('ASSEMBLY') || name.toLowerCase().includes('muster') || name.toLowerCase().includes('assembly'))
+                  .map(([zName, z]) => (
+                    <div
+                      key={`muster-${zName}`}
+                      className="absolute z-20 p-2 rounded-xl bg-emerald-900/90 border border-emerald-500 text-emerald-200 flex items-center gap-1.5 shadow-lg backdrop-blur-sm"
+                      style={{ left: `${z.x}%`, top: `${z.y}%` }}
+                    >
+                      <ShieldCheck size={14} className="text-emerald-400" />
+                      <span className="text-[10px] font-black">{zName.toUpperCase()}</span>
+                    </div>
+                  ))}
+              </>
             )}
 
             {/* DYNAMIC MAP LEGEND OVERLAY COMPONENT */}
@@ -2066,16 +2731,16 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                   {/* Section 2: Marker Badges & Icons */}
                   <div className="space-y-1.5">
                     <div className="text-[10px] font-extrabold uppercase text-slate-400 flex items-center gap-1">
-                      <HardHat size={12} className="text-amber-400" /> Personnel Safety Status Key
+                      <Radio size={12} className="text-purple-400" /> Hardware & Safety Key
                     </div>
                     <div className="grid grid-cols-2 gap-1.5 text-[9px]">
+                      <div className="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded border border-purple-500/50 text-purple-300">
+                        <Radio size={10} className="text-purple-400 shrink-0" />
+                        <span className="font-bold truncate">RFID UHF Portal</span>
+                      </div>
                       <div className="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded border border-emerald-500/50 text-emerald-300">
                         <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
-                        <span className="font-bold truncate">Compliant Tag</span>
-                      </div>
-                      <div className="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded border border-amber-500/50 text-amber-300">
-                        <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
-                        <span className="font-bold truncate">Refresher Due</span>
+                        <span className="font-bold truncate">Compliant Worker</span>
                       </div>
                       <div className="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded border border-rose-500/50 text-rose-300">
                         <span className="w-2 h-2 rounded-full bg-rose-500 animate-ping shrink-0" />
@@ -2106,12 +2771,6 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                         </span>
                         <span className="font-mono text-[8px] opacity-80">Amber Dashed</span>
                       </div>
-                      <div className="flex items-center justify-between bg-slate-800/60 p-1 rounded border-l-2 border-rose-500 text-rose-300">
-                        <span className="font-bold flex items-center gap-1">
-                          <BellRing size={10} className="text-rose-400" /> Proximity Alert Armed
-                        </span>
-                        <span className="font-mono text-[8px] opacity-80">Siren & Pulsing</span>
-                      </div>
                     </div>
                   </div>
                 </div>
@@ -2134,14 +2793,14 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl text-white space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <h3 className="text-base font-bold flex items-center gap-2 text-amber-400">
-                <PenTool size={18} /> Save Geofenced Area to Firestore
+                <PenTool size={18} /> Save Geofenced Area to MongoDB
               </h3>
               <button onClick={() => setIsSavingGeofenceModalOpen(false)} className="text-slate-400 hover:text-white">
                 <X size={16} />
               </button>
             </div>
 
-            <form onSubmit={handleSaveGeofenceToFirestore} className="space-y-3">
+            <form onSubmit={handleSaveGeofenceToMongoDB} className="space-y-3">
               <div>
                 <label className="text-xs font-bold text-slate-300">Geofence Zone Name</label>
                 <input
@@ -2232,7 +2891,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                   type="submit"
                   className="px-5 py-2 bg-amber-500 text-slate-950 font-black rounded-xl text-xs hover:bg-amber-400 flex items-center gap-1.5"
                 >
-                  <Save size={14} /> Save Geofence to Firestore
+                  <Save size={14} /> Save Geofence to MongoDB
                 </button>
               </div>
             </form>
@@ -2318,7 +2977,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
               <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 space-y-1">
                 <div className="text-xs font-bold text-slate-300">Hardhat RFID Tag ID</div>
-                <div className="text-sm font-mono text-emerald-400 font-bold">{selectedWorker.hardhatTagId || 'HH-1092'}</div>
+                <div className="text-sm font-mono text-emerald-400 font-bold">{selectedWorker.hardhatTagId || selectedWorker.id}</div>
               </div>
 
               {selectedWorker.certifications && (
@@ -2367,14 +3026,11 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         <HardwareConfigModal
           device={selectedDeviceForConfig}
           isOpen={!!selectedDeviceForConfig}
-          availableZones={Object.keys(customZones)}
+          availableZones={Object.keys(customZones).length > 0 ? Object.keys(customZones) : ['Main Entrance Gate', 'Core Building Area', 'Equipment Zone']}
           onClose={() => setSelectedDeviceForConfig(null)}
-          onSave={(updated) => {
-            setHardwareDevices(prev => prev.map(d => d.id === updated.id ? updated : d));
-            setSelectedDeviceForConfig(null);
-            setSuccessMsg(`Hardware gateway "${updated.name}" updated!`);
-            setTimeout(() => setSuccessMsg(null), 3000);
-          }}
+          onSave={handleSaveReaderFromConfig}
+          onDelete={handleDeleteReader}
+          isNew={isNewDeviceModal}
         />
       )}
 
@@ -2383,7 +3039,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         <ManageAssetsModal
           isOpen={isManageAssetsOpen}
           onClose={() => setIsManageAssetsOpen(false)}
-          availableZones={Object.keys(customZones).length > 0 ? Object.keys(customZones) : ['Tower Core Structure', 'Excavation Shaft', 'Crane Swing Zone', 'Material Laydown']}
+          availableZones={Object.keys(customZones).length > 0 ? Object.keys(customZones) : ['Main Complex', 'Material Laydown', 'Site Perimeter']}
           assets={assets}
           vehicles={vehicles}
           cameras={cameras}

@@ -16,12 +16,13 @@ dataRouter.use(requireAuth);
 
 // GET /api/data/stats
 dataRouter.get('/stats', async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'demo';
   try {
-    const people = await getCollectionDocs('registered_people');
-    const devices = await getCollectionDocs('devices');
-    const visitors = await getCollectionDocs('visitors');
-    const tags = await getCollectionDocs('live_tags');
-    const alerts = await getCollectionDocs('alerts');
+    const people = await getCollectionDocs('registered_people', undefined, orgId);
+    const devices = await getCollectionDocs('devices', undefined, orgId);
+    const visitors = await getCollectionDocs('visitors', undefined, orgId);
+    const tags = await getCollectionDocs('live_tags', undefined, orgId);
+    const alerts = await getCollectionDocs('alerts', undefined, orgId);
 
     return res.json({
       registeredPeopleCount: people.length,
@@ -29,6 +30,7 @@ dataRouter.get('/stats', async (req: AuthRequest, res: Response) => {
       visitorsCount: visitors.length,
       liveTagsCount: tags.length,
       alertsCount: alerts.length,
+      organizationId: orgId,
       dbStatus: isMongoConnected() ? 'connected' : 'in_memory_fallback'
     });
   } catch (err: any) {
@@ -40,8 +42,9 @@ dataRouter.get('/stats', async (req: AuthRequest, res: Response) => {
 // GET /api/data/:collection
 dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
   const { collection } = req.params;
+  const orgId = req.user?.organizationId || 'demo';
   const allowed = [
-    'registered_people', 'devices', 'visitors', 'alerts',
+    'organizations', 'registered_people', 'devices', 'visitors', 'alerts',
     'live_tags', 'real_time_tags', 'rfid_realtime_events', 'tag_history', 'settings', 'projects', 'floorplans',
     'visitor_security_list', 'visitor_access_tokens', 'visitor_access_logs',
     'attendance_logs', 'leave_requests', 'shift_schedules',
@@ -58,12 +61,13 @@ dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
     'notifications', 'system_events', 'daily_reports'
   ];
 
-  if (!allowed.includes(collection)) {
+  const isAllowed = allowed.includes(collection) || collection.startsWith('gao_') || /^[a-zA-Z0-9_-]+$/.test(collection);
+  if (!isAllowed) {
     return res.status(400).json({ error: `Invalid or restricted collection: ${collection}` });
   }
 
   try {
-    const docs = await getCollectionDocs(collection);
+    const docs = await getCollectionDocs(collection, undefined, orgId);
     return res.json(docs);
   } catch (err: any) {
     console.error(`[Data Route] Error fetching collection ${collection}:`, err);
@@ -74,8 +78,9 @@ dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
 // GET /api/data/:collection/:id
 dataRouter.get('/:collection/:id', async (req: AuthRequest, res: Response) => {
   const { collection, id } = req.params;
+  const orgId = req.user?.organizationId || 'demo';
   try {
-    const doc = await getDocById(collection, id);
+    const doc = await getDocById(collection, id, orgId);
     if (!doc) {
       return res.status(404).json({ error: 'Document not found' });
     }
@@ -90,6 +95,7 @@ dataRouter.get('/:collection/:id', async (req: AuthRequest, res: Response) => {
 dataRouter.post('/:collection', async (req: AuthRequest, res: Response) => {
   const { collection } = req.params;
   const user = req.user;
+  const orgId = user?.organizationId || 'demo';
 
   const body = req.body;
   if (!body || typeof body !== 'object') {
@@ -97,11 +103,12 @@ dataRouter.post('/:collection', async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const saved = await upsertDoc(collection, body);
+    const saved = await upsertDoc(collection, body, orgId);
 
     await logAuditEvent({
       userId: user?.id || 'client',
       userEmail: user?.email || 'client',
+      organizationId: orgId,
       action: `UPSERT_${collection.toUpperCase()}_DOC`,
       resource: collection,
       details: { docId: saved.id },
@@ -119,16 +126,25 @@ dataRouter.post('/:collection', async (req: AuthRequest, res: Response) => {
 dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
   const { collection, id } = req.params;
   const user = req.user;
+  const orgId = user?.organizationId || 'demo';
+
+  // IDOR check: if updating existing doc, ensure it belongs to the tenant
+  const existingDoc = await getDocById(collection, id, orgId);
+  const allExisting = await getDocById(collection, id, 'ALL');
+  if (allExisting && (!existingDoc || (allExisting.organizationId && allExisting.organizationId !== orgId))) {
+    return res.status(404).json({ error: 'Document not found or belongs to another organization' });
+  }
 
   const body = req.body || {};
   body.id = id;
 
   try {
-    const saved = await upsertDoc(collection, body);
+    const saved = await upsertDoc(collection, body, orgId);
 
     await logAuditEvent({
       userId: user?.id || 'client',
       userEmail: user?.email || 'client',
+      organizationId: orgId,
       action: `UPDATE_${collection.toUpperCase()}_DOC`,
       resource: collection,
       details: { docId: id },
@@ -146,13 +162,15 @@ dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
 dataRouter.delete('/:collection/:id', async (req: AuthRequest, res: Response) => {
   const { collection, id } = req.params;
   const user = req.user;
+  const orgId = user?.organizationId || 'demo';
 
   try {
-    const deleted = await deleteDocById(collection, id);
+    const deleted = await deleteDocById(collection, id, orgId);
 
     await logAuditEvent({
       userId: user?.id || 'client',
       userEmail: user?.email || 'client',
+      organizationId: orgId,
       action: `DELETE_${collection.toUpperCase()}_DOC`,
       resource: collection,
       details: { docId: id, success: deleted },
@@ -160,7 +178,7 @@ dataRouter.delete('/:collection/:id', async (req: AuthRequest, res: Response) =>
     });
 
     if (!deleted) {
-      return res.status(404).json({ error: 'Document not found or already deleted' });
+      return res.status(404).json({ error: 'Document not found or belongs to another organization' });
     }
 
     return res.json({ message: 'Document deleted successfully', id });

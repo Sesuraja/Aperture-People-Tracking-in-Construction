@@ -15,38 +15,19 @@ enum OperationType {
   WRITE = 'write',
 }
 
-interface FirestoreErrorInfo {
+interface DbErrorInfo {
   error: string;
   operationType: OperationType;
   path: string | null;
-  authInfo: {
-    userId?: string | null;
-    email?: string | null;
-    emailVerified?: boolean | null;
-    isAnonymous?: boolean | null;
-    tenantId?: string | null;
-    providerInfo?: {
-      providerId?: string | null;
-      email?: string | null;
-    }[];
-  }
 }
 
-function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null) {
-  const errInfo: FirestoreErrorInfo = {
+function handleDbError(error: unknown, operationType: OperationType, path: string | null) {
+  const errInfo: DbErrorInfo = {
     error: error instanceof Error ? error.message : String(error),
-    authInfo: {
-      userId: 'default',
-      email: 'sigmund.t.d@gaostaff.com',
-      emailVerified: true,
-      isAnonymous: false,
-      tenantId: null,
-      providerInfo: []
-    },
     operationType,
     path
   };
-  console.warn('Firestore Operation Notice: ', JSON.stringify(errInfo));
+  console.warn('Database Operation Notice: ', JSON.stringify(errInfo));
 }
 
 export const SITE_ZONE_WAYPOINTS: { name: string; x: number; y: number; minX: number; maxX: number; minY: number; maxY: number }[] = [
@@ -191,7 +172,7 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
         if (data.idleAlertThreshold !== undefined) idleAlertThresholdRef.current = data.idleAlertThreshold;
         if (data.occupancyThresholds) occupancyLimitsRef.current = data.occupancyThresholds;
       }
-    }, (err) => handleFirestoreError(err, OperationType.GET, 'settings/global'));
+    }, (err) => handleDbError(err, OperationType.GET, 'settings/global'));
 
     // Listen to real alerts from the database
     const alertQuery = query(collection(db, 'alerts'), orderBy('timestamp', 'desc'), limit(50));
@@ -208,7 +189,7 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
           });
        });
        setAlerts(fetchedAlerts);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'alerts'));
+    }, (err) => handleDbError(err, OperationType.LIST, 'alerts'));
     
     // Listen to floor plans to generate zones based on devices placed
     const floorplansQuery = query(collection(db, 'floorplans'));
@@ -228,7 +209,7 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
           }
        });
        setDynamicZones(newZones);
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'floorplans'));
+    }, (err) => handleDbError(err, OperationType.LIST, 'floorplans'));
     
     const registeredQuery = query(collection(db, 'registered_people'));
     const unsubscribeRegistered = onSnapshot(registeredQuery, (snapshot) => {
@@ -275,7 +256,7 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
            });
          });
        }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'registered_people'));
+    }, (err) => handleDbError(err, OperationType.LIST, 'registered_people'));
     
     // Listen to Assets from Firebase
     const assetsQuery = collection(db, 'assets');
@@ -314,7 +295,7 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
           });
         });
       }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'assets'));
+    }, (err) => handleDbError(err, OperationType.LIST, 'assets'));
 
     // Listen to Vehicles from Firebase
     const vehiclesQuery = collection(db, 'vehicles');
@@ -354,7 +335,7 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
           });
         });
       }
-    }, (err) => handleFirestoreError(err, OperationType.LIST, 'vehicles'));
+    }, (err) => handleDbError(err, OperationType.LIST, 'vehicles'));
 
     return () => {
        unsubscribeSettings();
@@ -402,57 +383,28 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
                 const pRole = registered ? registered.role : 'Visitor';
 
                 if (!p) {
-                    p = {
-                      id: tag.TagID,
-                      name: pName,
-                      role: pRole,
-                      currentZone: targetZone,
-                      presenceState: 'IDLE',
-                      dwellTime: 0,
-                      x: rect.x + rect.width / 2,
-                      y: rect.y + rect.height / 2,
-                      lastSeen: new Date(tag.Timestamp + "Z"),
-                      trail: []
-                    };
-                    nextPeople.push(p);
-
-                    addDoc(collection(db, 'alerts'), {
-                        type: 'info',
-                        message: `System tracked new tag: ${tag.TagID.substring(0, 8)} at ${tag.Location}`,
-                        timestamp: new Date()
-                    }).catch(error => handleFirestoreError(error, OperationType.WRITE, 'alerts'));
-
-                    // Store real history log
-                    addDoc(collection(db, 'tag_history'), {
-                        TagID: p.id,
-                        name: p.name,
-                        role: p.role,
-                        fromZone: null,
-                        toZone: targetZone,
-                        timestamp: new Date()
-                    }).catch(() => {});
-
+                   p = {
+                     id: tag.TagID,
+                     name: pName,
+                     role: pRole,
+                     currentZone: targetZone,
+                     presenceState: 'IDLE',
+                     dwellTime: 0,
+                     x: rect.x + rect.width / 2,
+                     y: rect.y + rect.height / 2,
+                     lastSeen: new Date(tag.Timestamp + "Z"),
+                     trail: []
+                   };
+                   nextPeople.push(p);
                 } else {
-                    p.lastSeen = new Date(tag.Timestamp + "Z");
-                    p.name = pName;
-                    p.role = pRole;
-                    if (p.currentZone !== targetZone) {
-                        const oldZone = p.currentZone;
-                        p.currentZone = targetZone;
-                        p.dwellTime = 0;
-                        p.presenceState = 'MOVING';
-                        (p as any).targetX = rect.x + rect.width / 2;
-                        (p as any).targetY = rect.y + rect.height / 2;
-                        
-                        addDoc(collection(db, 'tag_history'), {
-                            TagID: p.id,
-                            name: p.name,
-                            role: p.role,
-                            fromZone: oldZone,
-                            toZone: targetZone,
-                            timestamp: new Date()
-                        }).catch(() => {});
-                    }
+                   p.lastSeen = new Date(tag.Timestamp + "Z");
+                   p.name = pName;
+                   p.role = pRole;
+                   if (p.currentZone !== targetZone) {
+                       p.currentZone = targetZone;
+                       p.dwellTime = 0;
+                       p.presenceState = 'IDLE';
+                   }
                 }
              });
 
@@ -478,7 +430,7 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
                         type: 'warning',
                         message: `OVERCAPACITY: ${zone} exceeded max occupancy of ${limit}. Currently ${count}.`,
                         timestamp: new Date()
-                      }).catch(error => handleFirestoreError(error, OperationType.WRITE, 'alerts'));
+                      }).catch(error => handleDbError(error, OperationType.WRITE, 'alerts'));
                    }
                 }
              });
@@ -626,104 +578,9 @@ const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: 
         interval = setInterval(loadFromMongo, 6000);
      }
 
-     // 10-Second Single-Worker Rotating Movement Engine
-     // 1 person moves for 10 seconds from current zone to another zone, rest of workers rest.
-     // After 10 seconds, another worker takes turn for 10 seconds, rest of workers rest.
-     let activeMoverIdx = 0;
-     let ticksInCycle = 0;
-     const TICKS_PER_CYCLE = 100; // 100 ticks * 100ms = 10,000ms (10 seconds)
-     let isInitialized = false;
-
-     const movementInterval = setInterval(() => {
-       if (!isMounted) return;
-       ticksInCycle += 1;
-       const isNew10SecTurn = ticksInCycle >= TICKS_PER_CYCLE;
-
-       setPeople(prevPeople => {
-         if (!prevPeople || prevPeople.length === 0) return prevPeople;
-
-         if (isNew10SecTurn || !isInitialized) {
-           if (isNew10SecTurn) {
-             ticksInCycle = 0;
-             activeMoverIdx = (activeMoverIdx + 1) % prevPeople.length;
-           }
-           isInitialized = true;
-         }
-
-         const safeMoverIndex = activeMoverIdx % prevPeople.length;
-
-         return prevPeople.map((p, idx) => {
-           const isMover = idx === safeMoverIndex;
-
-           if (!isMover) {
-             return {
-               ...p,
-               presenceState: 'IDLE' as const,
-               speed: 0,
-               dwellTime: (p.dwellTime || 0) + 1,
-               lastSeen: new Date()
-             };
-           }
-
-           // Mover: compute destination & interpolate smoothly
-           let startX = (p as any).startX;
-           let startY = (p as any).startY;
-           let targetX = (p as any).targetX;
-           let targetY = (p as any).targetY;
-           let targetZone = (p as any).targetZone;
-
-           if (ticksInCycle === 1 || startX === undefined || targetX === undefined || !targetZone) {
-             startX = typeof p.x === 'number' ? p.x : 50;
-             startY = typeof p.y === 'number' ? p.y : 50;
-
-             const currentZoneName = p.currentZone || '';
-             const eligibleZones = SITE_ZONE_WAYPOINTS.filter(
-               z => z.name.toLowerCase() !== currentZoneName.toLowerCase()
-             );
-             const chosenZone = eligibleZones.length > 0
-               ? eligibleZones[Math.floor(Math.random() * eligibleZones.length)]
-               : SITE_ZONE_WAYPOINTS[Math.floor(Math.random() * SITE_ZONE_WAYPOINTS.length)];
-
-              targetZone = chosenZone.name;
-              targetX = Math.round((chosenZone.minX + Math.random() * (chosenZone.maxX - chosenZone.minX)) * 10) / 10;
-              targetY = Math.round((chosenZone.minY + Math.random() * (chosenZone.maxY - chosenZone.minY)) * 10) / 10;
-            }
-
-           const progress = Math.min(1.0, Math.max(0.0, ticksInCycle / TICKS_PER_CYCLE));
-           const easeProgress = 0.5 - Math.cos(progress * Math.PI) / 2;
-
-           const currX = startX + (targetX - startX) * easeProgress;
-           const currY = startY + (targetY - startY) * easeProgress;
-
-           const dx = targetX - startX;
-           const dy = targetY - startY;
-           const heading = Math.round((Math.atan2(dy, dx) * 180 / Math.PI + 360) % 360);
-           const isArrived = progress >= 0.99;
-
-           return {
-             ...p,
-             x: Math.round(currX * 100) / 100,
-             y: Math.round(currY * 100) / 100,
-             startX,
-             startY,
-             targetX,
-             targetY,
-             targetZone,
-             currentZone: progress >= 0.5 ? targetZone : p.currentZone,
-             heading,
-             speed: isArrived ? 0 : 1.4,
-             presenceState: isArrived ? ('IDLE' as const) : ('MOVING' as const),
-             dwellTime: isArrived ? (p.dwellTime || 0) + 1 : 0,
-             lastSeen: new Date()
-           };
-         });
-       });
-     }, 100);
-
      return () => {
        isMounted = false;
        if (interval) clearInterval(interval);
-       clearInterval(movementInterval);
      };
   }, [mode, activeProjectId, dynamicZones]);
 

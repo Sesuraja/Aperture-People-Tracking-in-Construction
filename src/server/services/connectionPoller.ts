@@ -13,7 +13,7 @@ export async function pollSingleConnection(config: ApiConnectionConfig): Promise
   const headers = buildHeaders(config);
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
+  const timeout = setTimeout(() => controller.abort(), 15000);
 
   try {
     const fetchOptions: RequestInit = {

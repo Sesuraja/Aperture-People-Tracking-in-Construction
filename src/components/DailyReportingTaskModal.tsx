@@ -33,7 +33,7 @@ export default function DailyReportingTaskModal({
   const [activeTab, setActiveTab] = useState<'task_runner' | 'history' | 'settings'>('task_runner');
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Load report history from Firestore / localStorage
+  // Load report history from MongoDB / localStorage
   const loadReports = async () => {
     const logs = await getDailyReportLogs();
     setReportLogs(logs);
@@ -175,7 +175,7 @@ export default function DailyReportingTaskModal({
                     </div>
                     <h4 className="text-xl font-black text-white">Daily Attendance & Safety Compliance Task</h4>
                     <p className="text-xs text-slate-300 mt-1 max-w-lg">
-                      Automatically compiles site attendance rosters, trade headcounts, PPE compliance checks, and security alerts into an official PDF document saved to Firestore.
+                      Automatically compiles site attendance rosters, trade headcounts, PPE compliance checks, and security alerts into an official PDF document saved to MongoDB.
                     </p>
                   </div>
 
@@ -284,7 +284,7 @@ export default function DailyReportingTaskModal({
             <div className="space-y-4">
               <div className="flex items-center justify-between">
                 <h5 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Firestore / MongoDB Archived Daily Reports
+                  MongoDB Archived Daily Reports
                 </h5>
                 <button
                   onClick={loadReports}
@@ -390,7 +390,7 @@ export default function DailyReportingTaskModal({
                       Output Format & Storage Target
                     </label>
                     <div className="p-2.5 bg-slate-100 dark:bg-slate-900 rounded-xl text-xs font-mono font-bold text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                      PDF Document + Firestore DB Archive
+                      PDF Document + MongoDB DB Archive
                     </div>
                   </div>
                 </div>

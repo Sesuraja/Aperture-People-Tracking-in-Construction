@@ -390,7 +390,7 @@ export default function ExportReportModal({ isOpen, onClose, defaultCategory = '
               <div>
                 <h4 className="text-xs font-black uppercase tracking-wider text-emerald-300">Automated Daily Reporting Task</h4>
                 <p className="text-xs text-slate-300 font-medium mt-0.5">
-                  Summarizes attendance rosters, overtime, and safety compliance stats into a formatted PDF record saved to Firestore.
+                  Summarizes attendance rosters, overtime, and safety compliance stats into a formatted PDF record saved to MongoDB.
                 </p>
               </div>
             </div>

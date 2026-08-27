@@ -278,7 +278,7 @@ export default function VisitorQrGenerator({ visitorsList = [], securityListProp
                 <QrCode className="w-5 h-5 text-[#007BC4]" />
                 Guest QR Access Token Generator
               </h3>
-              <p className="text-xs text-slate-500 font-medium">Issue time-bound QR passes stored in Firestore for gate verification.</p>
+              <p className="text-xs text-slate-500 font-medium">Issue time-bound QR passes stored in MongoDB for gate verification.</p>
             </div>
             <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-[#007BC4] border border-blue-200">
               Database Sync On
@@ -448,7 +448,7 @@ export default function VisitorQrGenerator({ visitorsList = [], securityListProp
                 <Scan className="w-5 h-5 text-emerald-600" />
                 Gatehouse QR Reader & Scanner Validator
               </h3>
-              <p className="text-xs text-slate-500 font-medium">Simulate gate optical scanners validating guest tokens against Firestore & Blacklist.</p>
+              <p className="text-xs text-slate-500 font-medium">Simulate gate optical scanners validating guest tokens against MongoDB & Blacklist.</p>
             </div>
             <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
               Scanner Online

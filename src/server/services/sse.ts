@@ -1,10 +1,10 @@
 import { Response } from 'express';
 
-const subscribers: Set<Response> = new Set();
+const subscribers: Map<Response, string> = new Map();
 
-export function addSseSubscriber(res: Response): void {
-  subscribers.add(res);
-  console.log(`[SSE Service] Client subscribed. Active connections: ${subscribers.size}`);
+export function addSseSubscriber(res: Response, organizationId: string = 'demo'): void {
+  subscribers.set(res, organizationId);
+  console.log(`[SSE Service] Client subscribed for org [${organizationId}]. Active connections: ${subscribers.size}`);
 }
 
 export function removeSseSubscriber(res: Response): void {
@@ -12,11 +12,14 @@ export function removeSseSubscriber(res: Response): void {
   console.log(`[SSE Service] Client disconnected. Active connections: ${subscribers.size}`);
 }
 
-export function broadcastSseEvent(event: string, payload: any): void {
+export function broadcastSseEvent(event: string, payload: any, organizationId?: string): void {
   const dataString = JSON.stringify(payload);
   const message = `event: ${event}\ndata: ${dataString}\n\n`;
 
-  for (const client of subscribers) {
+  for (const [client, clientOrg] of subscribers.entries()) {
+    if (organizationId && organizationId !== 'ALL' && clientOrg !== organizationId) {
+      continue;
+    }
     try {
       client.write(message);
     } catch (err) {
@@ -35,7 +38,7 @@ export function getSseStats() {
 
 // Heartbeat timer to keep SSE connections alive across proxies
 setInterval(() => {
-  for (const client of subscribers) {
+  for (const [client] of subscribers.entries()) {
     try {
       client.write(': heartbeat\n\n');
     } catch (err) {

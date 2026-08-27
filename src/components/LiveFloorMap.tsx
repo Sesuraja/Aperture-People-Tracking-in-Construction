@@ -290,9 +290,10 @@ export function getBlueprintSvg(projectId: string, title: string, contractor: st
 export function InteractiveSiteMap({
   mode,
   activeFloor = 'Floor 1',
-  activeZones,
-  people,
-  vehicles,
+  activeZones = {},
+  people = [],
+  vehicles = [],
+  projectName = 'Site Operations',
   onSelectEntity
 }: {
   mode: MapMode;
@@ -300,24 +301,10 @@ export function InteractiveSiteMap({
   activeZones: Record<string, any>;
   people: Person[];
   vehicles: Vehicle[];
+  projectName?: string;
   onSelectEntity?: (entity: SelectedEntity) => void;
 }) {
-  const getRFIDMarkersInZone = (zoneName: string) => {
-    const bounds = activeZones[zoneName];
-    if (!bounds) return [];
-    const rfidMarkers = [
-      ...(people || []).map(p => ({ ...p, markerType: 'person' })),
-      ...(vehicles || []).map(v => ({ ...v, markerType: 'vehicle' }))
-    ];
-    return rfidMarkers.filter(m => 
-      m && m.x >= bounds.x && m.x <= bounds.x + bounds.width &&
-      m.y >= bounds.y && m.y <= bounds.y + bounds.height
-    );
-  };
-
-  const isExcavationShaftBreached = getRFIDMarkersInZone('Excavation Shaft').length > 0;
-  const isCraneSwingBreached = getRFIDMarkersInZone('Crane Swing Zone').length > 0;
-  const isHighVoltageBreached = getRFIDMarkersInZone('High Voltage Area').length > 0;
+  const zoneEntries = Object.entries(activeZones || {});
 
   return (
     <svg viewBox="0 0 1200 800" className="absolute inset-0 w-full h-full bg-slate-50 select-none">
@@ -328,11 +315,14 @@ export function InteractiveSiteMap({
         <pattern id="cadGridMinor" width="20" height="20" patternUnits="userSpaceOnUse">
           <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(100,116,139,0.07)" strokeWidth="0.5"/>
         </pattern>
-        <pattern id="concreteHatch" width="24" height="24" patternUnits="userSpaceOnUse">
-          <path d="M 0 24 L 24 0 M 0 0 L 24 24" stroke="rgba(2,132,199,0.09)" strokeWidth="0.75"/>
+        <pattern id="hatchYellow" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(234,179,8,0.3)" strokeWidth="2"/>
         </pattern>
-        <pattern id="earthHatch" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(217,119,6,0.22)" strokeWidth="1.5" strokeDasharray="4,4" />
+        <pattern id="hatchRed" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(244,63,94,0.3)" strokeWidth="2"/>
+        </pattern>
+        <pattern id="hatchOrange" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(249,115,22,0.3)" strokeWidth="2"/>
         </pattern>
       </defs>
 
@@ -341,297 +331,81 @@ export function InteractiveSiteMap({
       <rect width="100%" height="100%" fill="url(#cadGridMajor)"/>
 
       {/* Outer Engineering CAD Dashed Perimeter */}
-      <rect x="55" y="35" width="1090" height="730" rx="4" fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="14,8"/>
-      <rect x="62" y="42" width="1076" height="716" rx="2" fill="none" stroke="#e2e8f0" strokeWidth="1"/>
+      <rect x="35" y="25" width="1130" height="750" rx="8" fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="14,8"/>
+      <rect x="42" y="32" width="1116" height="736" rx="6" fill="none" stroke="#e2e8f0" strokeWidth="1"/>
 
-      {/* Grid Axis Coordinate Bubble Markers (Top 01-08) */}
+      {/* Dynamic Zone SVG Cards */}
+      {zoneEntries.map(([zName, bounds]: [string, any], idx: number) => {
+        const bx = (bounds.x ?? (5 + (idx % 3) * 32)) * 12;
+        const by = (bounds.y ?? (5 + Math.floor(idx / 3) * 30)) * 8;
+        const bw = Math.max(90, (bounds.width ?? 28) * 12);
+        const bh = Math.max(70, (bounds.height ?? 24) * 8);
+        const isHazard = bounds.hazardLevel === 'critical';
+        const isWarning = bounds.hazardLevel === 'warning';
+        const isMuster = bounds.category === 'MUSTER POINT' || zName.toLowerCase().includes('muster') || zName.toLowerCase().includes('assembly');
+
+        const bgFill = isHazard ? '#fff1f2' : isWarning ? '#fff7ed' : isMuster ? '#f0fdf4' : '#f0f9ff';
+        const strokeColor = isHazard ? '#f43f5e' : isWarning ? '#f97316' : isMuster ? '#10b981' : '#0284c7';
+        const textColor = isHazard ? '#be123c' : isWarning ? '#c2410c' : isMuster ? '#047857' : '#0369a1';
+        const hatchUrl = isHazard ? 'url(#hatchRed)' : isWarning ? 'url(#hatchOrange)' : 'none';
+
+        const workersInThisZone = (people || []).filter(p => {
+          if (!p) return false;
+          if (p.currentZone && p.currentZone.toLowerCase() === zName.toLowerCase()) return true;
+          return p.x >= (bounds.x ?? 0) && p.x <= ((bounds.x ?? 0) + (bounds.width ?? 20)) &&
+                 p.y >= (bounds.y ?? 0) && p.y <= ((bounds.y ?? 0) + (bounds.height ?? 20));
+        });
+
+        return (
+          <g 
+            key={`dyn-zone-${zName}-${idx}`} 
+            className="cursor-pointer transition-all hover:opacity-95 group"
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectEntity?.({
+                type: 'infrastructure',
+                data: {
+                  id: `zone-${zName.replace(/\s+/g, '-').toLowerCase()}`,
+                  name: zName,
+                  type: 'IoT Edge Gateway',
+                  location: zName,
+                  status: (isHazard ? 'Warning' : isWarning ? 'Warning' : 'Online') as any,
+                  occupancy: `${workersInThisZone.length} Active`,
+                  x: bounds.x ?? 10,
+                  y: bounds.y ?? 10
+                }
+              });
+            }}
+          >
+            <rect x={bx} y={by} width={bw} height={bh} rx="16" fill={bgFill} stroke={strokeColor} strokeWidth="2.5" strokeDasharray={isHazard || isWarning ? "7,5" : "none"} />
+            {hatchUrl !== 'none' && <rect x={bx} y={by} width={bw} height={bh} rx="16" fill={hatchUrl} />}
+
+            {/* Zone Label */}
+            <text x={bx + bw / 2} y={by + 28} textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="900" fill={textColor} letterSpacing="0.5">
+              {zName.toUpperCase()}
+            </text>
+
+            {/* Badge Indicator */}
+            <rect x={bx + bw / 2 - 50} y={by + bh - 32} width="100" height="20" rx="6" fill="#ffffff" stroke={strokeColor} strokeWidth="1" />
+            <text x={bx + bw / 2} y={by + bh - 18} textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9" fontWeight="bold" fill={textColor}>
+              {isHazard ? '⚠️ HIGH HAZARD' : isMuster ? '🛡️ MUSTER POINT' : `Capacity: ${bounds.capacity || 10}`}
+            </text>
+          </g>
+        );
+      })}
+
+      {/* Axis Coordinate Bubble Markers */}
       <g fontFamily="'JetBrains Mono', monospace" fontSize="9" fontWeight="bold" fill="#0284c7">
         {[
           { x: 130, label: '01' }, { x: 250, label: '02' }, { x: 380, label: '03' }, { x: 510, label: '04' },
           { x: 640, label: '05' }, { x: 770, label: '06' }, { x: 900, label: '07' }, { x: 1010, label: '08' }, { x: 1100, label: '09' }
         ].map(a => (
           <g key={`axis-x-${a.label}`}>
-            <line x1={a.x} y1={42} x2={a.x} y2={758} stroke="rgba(56,189,248,0.2)" strokeDasharray="4,6" strokeWidth={0.8}/>
-            <circle cx={a.x} cy={35} r={10} fill="#ffffff" stroke="#38bdf8" strokeWidth={1.6}/>
-            <text x={a.x} y={38.5} textAnchor="middle">{a.label}</text>
+            <line x1={a.x} y1={32} x2={a.x} y2={768} stroke="rgba(56,189,248,0.2)" strokeDasharray="4,6" strokeWidth={0.8}/>
+            <circle cx={a.x} cy={25} r={9} fill="#ffffff" stroke="#38bdf8" strokeWidth={1.5}/>
+            <text x={a.x} y={28.5} textAnchor="middle">{a.label}</text>
           </g>
         ))}
-        {[
-          { y: 110, label: 'A' }, { y: 230, label: 'B' }, { y: 350, label: 'C' },
-          { y: 470, label: 'D' }, { y: 590, label: 'E' }, { y: 700, label: 'F' }
-        ].map(b => (
-          <g key={`axis-y-${b.label}`}>
-            <line x1={62} y1={b.y} x2={1138} y2={b.y} stroke="rgba(56,189,248,0.2)" strokeDasharray="4,6" strokeWidth={0.8}/>
-            <circle cx={55} cy={b.y} r={10} fill="#ffffff" stroke="#38bdf8" strokeWidth={1.6}/>
-            <text x={55} y={b.y + 3.5} textAnchor="middle">{b.label}</text>
-          </g>
-        ))}
-      </g>
-
-      {/* MUSTER POINT A (Top Left) */}
-      <g className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'muster-point-a',
-            name: 'Muster Point A (Assembly Area)',
-            type: 'IoT Edge Gateway',
-            location: 'Main North Gate Perimeter',
-            status: 'Online',
-            occupancy: `${people.filter(p => p.currentZone === 'Muster Point A').length} Onsite`,
-            x: 2,
-            y: 10
-          }
-        });
-      }}>
-        <rect x="80" y="90" width="100" height="115" rx="14" fill="#f0fdf4" stroke="#10b981" strokeWidth="2.5" />
-        <rect x="86" y="96" width="88" height="88" rx="10" fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4,4" opacity="0.6" />
-        <circle cx="130" cy="140" r="18" fill="#10b981" />
-        <circle cx="130" cy="140" r="9" fill="#ffffff" />
-        <circle cx="130" cy="140" r="4" fill="#10b981" />
-        <line x1="130" y1="116" x2="130" y2="164" stroke="#10b981" strokeWidth="1.8"/>
-        <line x1="106" y1="140" x2="154" y2="140" stroke="#10b981" strokeWidth="1.8"/>
-        <text x="130" y="195" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill="#047857" letterSpacing="0.5">MUSTER POINT A</text>
-      </g>
-
-      {/* 480V SUBSTATION (Top Center) */}
-      <g className="transition-all cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'zone-high-voltage',
-            name: 'High Voltage Area (Substation)',
-            type: 'IoT Edge Gateway',
-            location: 'North Center Perimeter',
-            status: isHighVoltageBreached ? 'Warning' : 'Online',
-            occupancy: `${getRFIDMarkersInZone('High Voltage Area').length} Active Markers`,
-            x: 46,
-            y: 5
-          }
-        });
-      }}>
-        <rect x="395" y="60" width="115" height="50" rx="6" fill={isHighVoltageBreached ? "rgba(239, 68, 68, 0.22)" : "#fff7ed"} stroke={isHighVoltageBreached ? "#dc2626" : "#f97316"} strokeWidth={2} />
-        <text x="452" y="90" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill={isHighVoltageBreached ? "#b91c1c" : "#c2410c"}>
-          {isHighVoltageBreached ? "⚡ SUBSTATION BREACH" : "480V SUBSTATION"}
-        </text>
-      </g>
-
-      {/* EXCAVATION & SHORING PIT (Left Center) */}
-      <g className="transition-all cursor-pointer group" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'zone-excavation-shaft',
-            name: 'Deep Excavation Pit Shaft',
-            type: 'IoT Edge Gateway',
-            location: 'Central West Sector',
-            status: isExcavationShaftBreached ? 'Warning' : 'Online',
-            occupancy: `${getRFIDMarkersInZone('Excavation Shaft').length} Entities`,
-            x: 10,
-            y: 15
-          }
-        });
-      }}>
-        <rect x="180" y="125" width="320" height="360" rx="16" fill="#fefce8" stroke={isExcavationShaftBreached ? '#ef4444' : '#f59e0b'} strokeWidth="2.5" strokeDasharray="6,4" className="transition-colors duration-300" />
-        <rect x="180" y="125" width="320" height="360" rx="16" fill="url(#earthHatch)" />
-        
-        <rect x="205" y="150" width="270" height="310" rx="12" fill="#fffbeb" stroke={isExcavationShaftBreached ? 'rgba(239,68,68,0.5)' : 'rgba(245,158,11,0.45)'} strokeWidth="1.8" />
-        <rect x="230" y="175" width="220" height="260" rx="8" fill="#ffffff" stroke="rgba(245,158,11,0.35)" strokeWidth="1.4" />
-
-        <rect x="255" y="133" width="170" height="22" rx="4" fill="#ffffff" stroke={isExcavationShaftBreached ? '#ef4444' : '#f59e0b'} strokeWidth="1.5" />
-        <text x="340" y="148" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill={isExcavationShaftBreached ? '#dc2626' : '#b45309'} letterSpacing="0.5">
-          {isExcavationShaftBreached ? "🚨 SHAFT OCCUPIED" : "EXCAVATION & SHORING PIT"}
-        </text>
-
-        <circle cx="340" cy="320" r="26" fill="#f0f9ff" stroke="#0284c7" strokeWidth="1.8"/>
-        <text x="340" y="316" textAnchor="middle" fontFamily="sans-serif" fontSize="7.5" fontWeight="900" fill="#0369a1">SUMP PUMP</text>
-        <text x="340" y="328" textAnchor="middle" fontFamily="'JetBrains Mono', monospace" fontSize="7" fontWeight="bold" fill="#0284c7">-12.50 FT</text>
-      </g>
-
-      {/* BUILDING A • TOWER CORE (Center Right) */}
-      <g className="transition-all cursor-pointer group" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'zone-building-a',
-            name: 'Building A (Core Tower Structure)',
-            type: 'IoT Edge Gateway',
-            location: 'Central East Sector',
-            status: 'Online',
-            occupancy: `${getRFIDMarkersInZone('Tower Core').length} Onsite`,
-            x: 51,
-            y: 25
-          }
-        });
-      }}>
-        <rect x="525" y="180" width="330" height="320" rx="18" fill="#f0f9ff" stroke="#0284c7" strokeWidth="3.5" />
-        <rect x="525" y="180" width="330" height="320" rx="18" fill="url(#concreteHatch)" />
-        <rect x="550" y="205" width="280" height="270" rx="10" fill="#ffffff" stroke="#0284c7" strokeWidth="2.5" />
-        
-        <g stroke="#0284c7" strokeWidth="1.2" opacity="0.35">
-          <line x1="550" y1="270" x2="830" y2="270" strokeDasharray="4,4" />
-          <line x1="550" y1="340" x2="830" y2="340" strokeDasharray="4,4" />
-          <line x1="550" y1="410" x2="830" y2="410" strokeDasharray="4,4" />
-          <line x1="620" y1="205" x2="620" y2="475" strokeDasharray="4,4" />
-          <line x1="690" y1="205" x2="690" y2="475" strokeDasharray="4,4" />
-          <line x1="760" y1="205" x2="760" y2="475" strokeDasharray="4,4" />
-        </g>
-
-        <g fill="#0284c7" stroke="#0369a1" strokeWidth="1">
-          {[620, 690, 760].flatMap(x => [270, 340, 410].map(y => {
-            if (x === 690 && y === 340) return null;
-            return (
-              <g key={`col-pad-${x}-${y}`}>
-                <rect x={x - 7} y={y - 7} width={14} height={14} rx={2}/>
-                <line x1={x - 4} y1={y} x2={x + 4} y2={y} stroke="#ffffff" strokeWidth={1}/>
-                <line x1={x} y1={y - 4} x2={x} y2={y + 4} stroke="#ffffff" strokeWidth={1}/>
-              </g>
-            );
-          }))}
-        </g>
-
-        <rect x="655" y="305" width="70" height="70" rx="4" fill="#e0f2fe" stroke="#0284c7" strokeWidth="2.5" />
-        <line x1="655" y1="305" x2="725" y2="375" stroke="#0284c7" strokeWidth="2"/>
-        <line x1="725" y1="305" x2="655" y2="375" stroke="#0284c7" strokeWidth="2"/>
-
-        <rect x="605" y="188" width="170" height="22" rx="4" fill="#ffffff" stroke="#0284c7" strokeWidth="1.5" />
-        <text x="690" y="203" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill="#0369a1" letterSpacing="0.5">BUILDING A • TOWER CORE</text>
-      </g>
-
-      {/* HEAVY CRANE EXCLUSION (Top Right) */}
-      <g className="transition-all cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'zone-crane-swing',
-            name: 'Crane Swing Exclusion Radius',
-            type: 'IoT Edge Gateway',
-            location: 'North East Sector',
-            status: isCraneSwingBreached ? 'Warning' : 'Online',
-            occupancy: `${getRFIDMarkersInZone('Crane Swing Zone').length} Active Markers`,
-            x: 80,
-            y: 5
-          }
-        });
-      }}>
-        <rect x="885" y="65" width="215" height="435" rx="14" fill="#fff1f2" stroke={isCraneSwingBreached ? "#dc2626" : "#ef4444"} strokeWidth={isCraneSwingBreached ? 3.5 : 2} strokeDasharray={isCraneSwingBreached ? "4,4" : "8,4"} className="transition-all duration-300" />
-        <circle cx="985" cy="245" r="145" fill={isCraneSwingBreached ? "rgba(239, 68, 68, 0.22)" : "rgba(239, 68, 68, 0.06)"} stroke="#ef4444" strokeWidth="1.8" strokeDasharray="4,4" />
-        
-        <rect x="963" y="223" width="44" height="44" rx="8" fill="#fbbf24" stroke="#b45309" strokeWidth="2" />
-        <circle cx="985" cy="245" r="7" fill="#d97706" />
-        
-        <line x1="985" y1="245" x2="875" y2="135" stroke="#d97706" strokeWidth={4.5} strokeLinecap="round" />
-        <line x1="985" y1="245" x2="1040" y2="300" stroke="#d97706" strokeWidth={5.5} strokeLinecap="round" />
-
-        <rect x="920" y="73" width="145" height="20" rx="4" fill="#ffffff" stroke={isCraneSwingBreached ? "#dc2626" : "#ef4444"} strokeWidth="1.5" />
-        <text x="992" y="87" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill={isCraneSwingBreached ? "#b91c1c" : "#dc2626"} letterSpacing="0.5">
-          {isCraneSwingBreached ? "🚨 CRITICAL SWING BREACH" : "HEAVY CRANE EXCLUSION"}
-        </text>
-      </g>
-
-      {/* HEAVY TRUCK ARTERIAL CORRIDOR (ROADWAY) */}
-      <g opacity="0.95" className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'road-access',
-            name: 'Heavy Truck Access Route',
-            type: 'IoT Edge Gateway',
-            location: 'Main Logistics Gate',
-            status: 'Online',
-            occupancy: 'Unrestricted',
-            x: 10,
-            y: 52
-          }
-        });
-      }}>
-        <path d="M 55 520 L 1145 520" fill="none" stroke="#f1f5f9" strokeWidth={38} strokeLinecap="square" />
-        <path d="M 175 520 L 175 765" fill="none" stroke="#f1f5f9" strokeWidth={38} strokeLinecap="square" />
-        
-        <path d="M 55 501 L 156 501 L 156 765" fill="none" stroke="#94a3b8" strokeWidth={1.5} />
-        <path d="M 55 539 L 194 539 L 194 765" fill="none" stroke="#94a3b8" strokeWidth={1.5} />
-        <path d="M 194 501 L 1145 501" fill="none" stroke="#94a3b8" strokeWidth={1.5} />
-        <path d="M 194 539 L 1145 539" fill="none" stroke="#94a3b8" strokeWidth={1.5} />
-
-        <path d="M 55 520 L 175 520 L 175 765" fill="none" stroke="#f59e0b" strokeWidth={2.2} strokeDasharray="12,8" opacity="0.9" />
-        <path d="M 175 520 L 1145 520" fill="none" stroke="#f59e0b" strokeWidth={2.2} strokeDasharray="12,8" opacity="0.9" />
-
-        <text x="420" y="512" fontFamily="'JetBrains Mono', monospace" fontSize="8" fontWeight="900" fill="#94a3b8" letterSpacing="1.2">HEAVY TRUCK ARTERIAL CORRIDOR</text>
-      </g>
-
-      {/* SITE COMMAND HQ (Lower Left) */}
-      <g className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'site-office',
-            name: 'Site Command HQ & BIM Trailer',
-            type: 'IoT Edge Gateway',
-            location: 'South West Corner',
-            status: 'Online',
-            occupancy: 'Command Center Active',
-            x: 12,
-            y: 68
-          }
-        });
-      }}>
-        <rect x="180" y="605" width="140" height="80" rx="6" fill="#eff6ff" stroke="#3b82f6" strokeWidth={2} />
-        <line x1="225" y1="605" x2="225" y2="685" stroke="#93c5fd" strokeWidth={1} strokeDasharray="3,3" />
-        <line x1="270" y1="605" x2="270" y2="685" stroke="#93c5fd" strokeWidth={1} strokeDasharray="3,3" />
-        <text x="250" y="650" textAnchor="middle" fontFamily="sans-serif" fontSize="8.5" fontWeight="900" fill="#1d4ed8">SITE COMMAND HQ</text>
-      </g>
-
-      {/* REBAR / LAYDOWN YARD (Lower Right) */}
-      <g className="transition-all hover:opacity-100 cursor-pointer" onClick={(e) => {
-        e.stopPropagation();
-        onSelectEntity?.({
-          type: 'infrastructure',
-          data: {
-            id: 'steel-yard-s3',
-            name: 'Rebar Assembly Yard S3',
-            type: 'IoT Edge Gateway',
-            location: 'South East Sector',
-            status: 'Online',
-            occupancy: 'Heavy Duty Rebar Stacked',
-            x: 82,
-            y: 65
-          }
-        });
-      }}>
-        <rect x="685" y="585" width="180" height="85" rx="8" fill="#fffbeb" stroke="#f59e0b" strokeWidth={2} />
-        {[605, 618, 631, 644, 657].map(y => (
-          <line key={`rebar-line-${y}`} x1={700} y1={y} x2={785} y2={y} stroke="#d97706" strokeWidth={3} strokeLinecap="round" />
-        ))}
-        <text x="825" y="632" textAnchor="middle" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#b45309">REBAR YARD</text>
-      </g>
-
-      {/* ENTERPRISE TITLE BLOCK (Bottom Right) */}
-      <g transform="translate(800, 690)">
-        <rect x="0" y="0" width="320" height="75" fill="#ffffff" stroke="#007BC4" strokeWidth="1.6" rx="4"/>
-        <line x1="0" y1="24" x2="320" y2="24" stroke="#e2e8f0" strokeWidth="1"/>
-        <line x1="0" y1="50" x2="320" y2="50" stroke="#e2e8f0" strokeWidth="1"/>
-        <line x1="160" y1="24" x2="160" y2="75" stroke="#e2e8f0" strokeWidth="1"/>
-
-        <text x="12" y="16" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#0f172a" letterSpacing="0.5">APERTURE RTLS DIGITAL TWIN</text>
-        <rect x="245" y="6" width="65" height="14" rx="3" fill="#007BC4"/>
-        <text x="277" y="16" textAnchor="middle" fontFamily="'JetBrains Mono', monospace" fontSize="7.5" fontWeight="bold" fill="#ffffff">LIVE RTLS</text>
-
-        <text x="12" y="36" fontFamily="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">SITE: METRO TOWER SITE</text>
-        <text x="12" y="44" fontFamily="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">LEVEL: {activeFloor.toUpperCase()}</text>
-        <text x="170" y="36" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">SCALE: 1:250 @ A1</text>
-        <text x="170" y="44" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">DATUM: WGS 84 / UTM</text>
-
-        <text x="12" y="62" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">SPAN: 250m x 180m</text>
-        <text x="12" y="70" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#059669" fontWeight="bold">STATUS: CALIBRATED</text>
-        <text x="170" y="62" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#64748b">DWG NO: GAO-RTLS-001</text>
-        <text x="170" y="70" font-family="'JetBrains Mono', monospace" fontSize="7" fill="#007BC4" fontWeight="bold">MODE: {mode.toUpperCase()}</text>
       </g>
 
       {/* Azimuth North Arrow */}
@@ -873,13 +647,12 @@ export default function LiveFloorMap({
     setHiddenZones(hidden);
   };
 
+  const effectiveSvgSource = svgSource || (floorplanUrl && (floorplanUrl.trim().startsWith('<svg') || floorplanUrl.startsWith('data:image/svg')) ? (floorplanUrl.startsWith('data:') ? decodeURIComponent(floorplanUrl.split(',')[1] || '') : floorplanUrl) : null);
   const isCustomFloorplan = Boolean(
     floorplanUrl && 
     typeof floorplanUrl === 'string' && 
     floorplanUrl.trim().length > 5 && 
-    !floorplanUrl.startsWith('data:image/svg') &&
-    !floorplanUrl.includes('unsplash') &&
-    (floorplanUrl.startsWith('blob:') || floorplanUrl.startsWith('data:image/png') || floorplanUrl.startsWith('data:image/jpeg') || floorplanUrl.startsWith('data:image/webp'))
+    !effectiveSvgSource
   );
   const currentBlueprintUrl = isCustomFloorplan ? (floorplanUrl as string) : '';
 
@@ -966,10 +739,10 @@ export default function LiveFloorMap({
         className="relative w-full h-full rounded-xl shadow-2xl transition-transform duration-75 ease-out border-4 border-slate-300 overflow-hidden bg-white"
         style={{ transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)` }}
       >
-        {svgSource ? (
+        {effectiveSvgSource ? (
           <div 
             className="absolute inset-0 w-full h-full pointer-events-none" 
-            dangerouslySetInnerHTML={{ __html: svgSource }}
+            dangerouslySetInnerHTML={{ __html: effectiveSvgSource }}
           />
         ) : isCustomFloorplan ? (
           <img 
@@ -985,6 +758,7 @@ export default function LiveFloorMap({
             activeZones={activeZones}
             people={people}
             vehicles={vehicles}
+            projectName={projectName}
             onSelectEntity={onSelectEntity}
           />
         )}

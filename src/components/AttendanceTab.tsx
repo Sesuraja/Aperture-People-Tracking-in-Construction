@@ -13,8 +13,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 import { db, collection, addDoc, updateDoc, setDoc, doc, onSnapshot, getDocs } from '../lib/db';
 import DailyReportingTaskModal from './DailyReportingTaskModal';
-import { useTracking } from '../context/TrackingContext';
+import { useTracking, useTerminology } from '../context/TrackingContext';
 import webSocketService from '../lib/webSocketService';
+
 
 export interface AttendanceRecord {
   id: string;
@@ -75,80 +76,12 @@ const SHIFT_OPTIONS: Array<'Day Shift (07:00-15:30)' | 'Night Shift (19:00-03:30
   'Swing OT (15:00-23:30)'
 ];
 
-const MOCK_LEAVE_DEFAULTS: LeaveRecord[] = [
-  {
-    id: 'LV-101',
-    personId: 'HH-1002',
-    name: 'David Chen',
-    department: 'Electrical & MEP',
-    type: 'Medical Leave',
-    startDate: '2026-08-18',
-    endDate: '2026-08-20',
-    reason: 'Post-operative physical therapy & vision check',
-    status: 'APPROVED',
-    approvedBy: 'Marcus Vance (EHS Lead)',
-    createdAt: '2026-08-15T08:30:00Z'
-  },
-  {
-    id: 'LV-102',
-    personId: 'HH-1003',
-    name: 'Sarah Connor',
-    department: 'Heavy Equipment & Crane',
-    type: 'Safety Training',
-    startDate: '2026-08-19',
-    endDate: '2026-08-21',
-    reason: 'Tower Crane Master Operator Re-certification Program',
-    status: 'APPROVED',
-    approvedBy: 'Marcus Vance (EHS Lead)',
-    createdAt: '2026-08-16T10:15:00Z'
-  },
-  {
-    id: 'LV-103',
-    personId: 'HH-1005',
-    name: 'Carlos Mendez',
-    department: 'Concrete & Masonry',
-    type: 'Annual Leave',
-    startDate: '2026-08-24',
-    endDate: '2026-08-28',
-    reason: 'Annual family summer vacation',
-    status: 'PENDING',
-    approvedBy: 'Pending EHS Review',
-    createdAt: '2026-08-17T14:20:00Z'
-  },
-  {
-    id: 'LV-104',
-    personId: 'HH-1006',
-    name: 'Fatima Al-Mansoor',
-    department: 'HVAC & Mechanical',
-    type: 'Emergency',
-    startDate: '2026-08-19',
-    endDate: '2026-08-20',
-    reason: 'Urgent family medical emergency',
-    status: 'PENDING',
-    approvedBy: 'Pending EHS Review',
-    createdAt: '2026-08-19T07:45:00Z'
-  },
-  {
-    id: 'LV-105',
-    personId: 'HH-1007',
-    name: 'James Wilson',
-    department: 'Civil Infrastructure',
-    type: 'Safety Training',
-    startDate: '2026-08-12',
-    endDate: '2026-08-14',
-    reason: 'Confined Space & Trench Rescue Certification',
-    status: 'APPROVED',
-    approvedBy: 'Marcus Vance (EHS Lead)',
-    createdAt: '2026-08-10T11:00:00Z'
-  }
-];
-
-const MOCK_HOLIDAYS: Array<{ name: string; date: string; type: string }> = [
-  { name: 'National Construction Safety Day', date: '2026-08-03', type: 'Mandatory Safety Stand-Down' },
-  { name: 'Mid-Month Site Maintenance Recess', date: '2026-08-15', type: 'Planned Structural Downtime' },
-  { name: 'Labor & Trades Recognition Day', date: '2026-09-07', type: 'Federal Public Holiday' },
-  { name: 'Quarterly EHS Compliance Audit Day', date: '2026-09-25', type: 'Site Safety Review' }
-];
+export interface SiteHoliday {
+  id?: string;
+  name: string;
+  date: string;
+  type: string;
+}
 
 export default function AttendanceTab({ people }: { people: Person[] }) {
   const [activeSubTab, setActiveSubTab] = useState<'roster' | 'live_feed' | 'calendar' | 'shifts' | 'heatmap' | 'departments' | 'payroll'>('roster');
@@ -158,6 +91,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   const [attendanceLogs, setAttendanceLogs] = useState<AttendanceRecord[]>([]);
   const [leaveRequests, setLeaveRequests] = useState<LeaveRecord[]>([]);
   const [shiftSchedules, setShiftSchedules] = useState<ShiftScheduleRecord[]>([]);
+  const [siteHolidays, setSiteHolidays] = useState<SiteHoliday[]>([]);
   const [dbLoading, setDbLoading] = useState(true);
 
   // Filters
@@ -218,6 +152,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   });
 
   const trackingCtx = useTracking();
+  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+
 
   useEffect(() => {
     const checkMongo = async () => {
@@ -247,6 +183,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     let unsubscribeAttendance = () => {};
     let unsubscribeLeave = () => {};
     let unsubscribeShifts = () => {};
+    let unsubscribeHolidays = () => {};
 
     const syncAttendanceData = async () => {
       setDbLoading(true);
@@ -278,6 +215,15 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           setShiftSchedules(shifts);
         });
 
+        // Listen to site_holidays
+        unsubscribeHolidays = onSnapshot(collection(db, 'site_holidays'), (snapshot) => {
+          const hols: SiteHoliday[] = [];
+          snapshot.forEach(docSnap => {
+            hols.push({ id: docSnap.id, ...docSnap.data() } as SiteHoliday);
+          });
+          setSiteHolidays(hols);
+        });
+
       } catch (err) {
         console.warn('Error subscribing to attendance collections:', err);
       } finally {
@@ -291,6 +237,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
       unsubscribeAttendance();
       unsubscribeLeave();
       unsubscribeShifts();
+      unsubscribeHolidays();
     };
   }, [people]);
 
@@ -300,16 +247,28 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     const loadDbPeople = async () => {
       try {
         const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
-        const res = await fetch('/api/data/registered_people', {
-          headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data)) {
-            setDbPeople(data);
+        const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+        const [regRes, peopleRes] = await Promise.allSettled([
+          fetch('/api/data/registered_people', { headers }).then(r => r.ok ? r.json() : []),
+          fetch('/api/data/people', { headers }).then(r => r.ok ? r.json() : [])
+        ]);
+
+        const rawList = [
+          ...(regRes.status === 'fulfilled' && Array.isArray(regRes.value) ? regRes.value : []),
+          ...(peopleRes.status === 'fulfilled' && Array.isArray(peopleRes.value) ? peopleRes.value : [])
+        ];
+
+        const dedupeMap = new Map<string, Person>();
+        rawList.forEach(p => {
+          if (p && p.id && !dedupeMap.has(p.id)) {
+            dedupeMap.set(p.id, p);
           }
-        }
-      } catch {}
+        });
+
+        setDbPeople(Array.from(dedupeMap.values()));
+      } catch (err) {
+        console.warn('Error loading dbPeople in AttendanceTab:', err);
+      }
     };
     loadDbPeople();
     window.addEventListener('gao_refresh_data', loadDbPeople);
@@ -531,7 +490,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   // Approve / Reject Leave Request in MongoDB
   const handleUpdateLeaveStatus = async (leaveId: string, newStatus: 'APPROVED' | 'REJECTED') => {
     try {
-      const target = leaveRequests.find(l => l.id === leaveId) || MOCK_LEAVE_DEFAULTS.find(l => l.id === leaveId);
+      const target = leaveRequests.find(l => l.id === leaveId);
       const updatedObj = {
         ...(target || { id: leaveId, name: 'Worker' }),
         status: newStatus,
@@ -1188,7 +1147,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
       {/* 3. CALENDAR & LEAVE LOG TAB */}
       {activeSubTab === 'calendar' && (() => {
-        const effectiveLeaves = leaveRequests.length > 0 ? leaveRequests : MOCK_LEAVE_DEFAULTS;
+        const effectiveLeaves = leaveRequests;
         const filteredLeaves = effectiveLeaves.filter(l => {
           if (leaveStatusFilter === 'ALL') return true;
           return l.status === leaveStatusFilter;
@@ -1202,7 +1161,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           return selectedCalendarDay >= start && selectedCalendarDay <= end;
         });
 
-        const selectedDayHoliday = MOCK_HOLIDAYS.find(h => {
+        const selectedDayHoliday = siteHolidays.find(h => {
           if (!h || !h.date) return false;
           return parseInt((h.date || '').split('-')[2] || '0', 10) === selectedCalendarDay;
         });
@@ -1256,7 +1215,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                       return dayNum >= start && dayNum <= end;
                     });
 
-                    const holiday = MOCK_HOLIDAYS.find(h => {
+                    const holiday = siteHolidays.find(h => {
                       if (!h || !h.date) return false;
                       return parseInt((h.date || '').split('-')[2] || '0', 10) === dayNum;
                     });
@@ -1515,12 +1474,17 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                   Upcoming Site Holidays & Safety Recess
                 </h4>
                 <div className="space-y-2">
-                  {MOCK_HOLIDAYS.map(h => (
-                    <div key={h.date} className="p-2.5 bg-blue-50/50 dark:bg-slate-900 border border-blue-100 dark:border-slate-700 rounded-xl text-xs space-y-0.5">
+                  {siteHolidays.map(h => (
+                    <div key={h.date || h.name} className="p-2.5 bg-blue-50/50 dark:bg-slate-900 border border-blue-100 dark:border-slate-700 rounded-xl text-xs space-y-0.5">
                       <div className="font-bold text-blue-900 dark:text-blue-200">{h.name}</div>
                       <div className="text-slate-500 text-[10px] font-mono">{h.date} • {h.type}</div>
                     </div>
                   ))}
+                  {siteHolidays.length === 0 && (
+                    <div className="py-4 text-center text-slate-400 text-xs">
+                      No site holidays scheduled in database.
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

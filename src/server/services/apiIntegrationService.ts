@@ -287,18 +287,16 @@ export async function executeThirdPartyApiSync(apiIdOrConfig: string | ThirdPart
     telemetryItems = testRes.sampleRecords;
   }
 
-  // If endpoint returned empty array or format is empty, inject simulated demo payload for that integration to confirm full pipeline
+  // If endpoint returned empty array or format is empty, do not fabricate simulated data
   if (telemetryItems.length === 0) {
-    telemetryItems = [
-      {
-        TagID: `TAG_API_${Math.floor(10000 + Math.random() * 90000)}`,
-        FirstName: 'External',
-        LastName: 'API Worker',
-        Location: 'Zone 1 - Main Yard',
-        rssi: -58,
-        timestamp: nowIso
-      }
-    ];
+    return {
+      success: true,
+      apiName: config.name,
+      recordsIngested: 0,
+      latencyMs: testRes.latencyMs,
+      aiAnalyzed: 0,
+      message: 'Connection successful. 0 records found in upstream feed.'
+    };
   }
 
   // STEP 3 & 4: Data Validation & AI Engine Analysis & MongoDB Storage
@@ -336,12 +334,9 @@ export async function bootstrapDefaultThirdPartyApis(): Promise<void> {
         id: 'gao_uhf_realtime_api',
         name: 'GAO RFID Realtime Telemetry Feed',
         description: 'Standard GAO UHF-RFID GetTagsInRealtime polling stream',
-        endpointUrl: 'https://www.i360services.com/peopletrackinguhf/api/GetTagsInRealtime',
+        endpointUrl: 'https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io/api/GetTagsInRealtime',
         method: 'GET',
-        authType: 'apiKey',
-        apiKey: 'aperture_live_key_gao991283x',
-        apiKeyHeader: 'X-API-Key',
-        apiKeyLocation: 'header',
+        authType: 'none',
         pollingEnabled: true,
         pollingIntervalSeconds: 10,
         lastStatus: 'SUCCESS',
@@ -353,12 +348,9 @@ export async function bootstrapDefaultThirdPartyApis(): Promise<void> {
         id: 'gao_uhf_history_api',
         name: 'GAO RFID Historical Log Synchronizer',
         description: 'Synchronizes historical badge dwell and movement events',
-        endpointUrl: 'https://www.i360services.com/peopletrackinguhf/api/GetHistoryRecords/0/50',
+        endpointUrl: 'https://c72fe02c-76af-4b77-b300-74aeb1abc7e8.mock.pstmn.io/api/GetHistoryRecords/0/50',
         method: 'GET',
-        authType: 'apiKey',
-        apiKey: 'aperture_live_key_gao991283x',
-        apiKeyHeader: 'X-API-Key',
-        apiKeyLocation: 'header',
+        authType: 'none',
         pollingEnabled: false,
         pollingIntervalSeconds: 60,
         lastStatus: 'IDLE',

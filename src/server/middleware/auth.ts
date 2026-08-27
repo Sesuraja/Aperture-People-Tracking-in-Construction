@@ -16,6 +16,8 @@ export interface AuthenticatedUser {
   email: string;
   name?: string;
   role: string;
+  organizationId: string;
+  isPlatformAdmin?: boolean;
   tokenVersion?: number;
 }
 
@@ -23,13 +25,16 @@ export interface AuthRequest extends Request {
   user?: AuthenticatedUser;
 }
 
-export function generateToken(user: AuthenticatedUser): string {
+export function generateToken(user: Partial<AuthenticatedUser> & { id: string; email: string; role: string }): string {
+  const orgId = user.organizationId || 'demo';
   return jwt.sign(
     {
       id: user.id,
       email: user.email,
       name: user.name || '',
       role: user.role,
+      organizationId: orgId,
+      isPlatformAdmin: Boolean(user.isPlatformAdmin),
       tokenVersion: user.tokenVersion || 1
     },
     JWT_SECRET,
@@ -92,6 +97,7 @@ export function generateDemoToken(): string {
     email: 'demo@aperture.io',
     name: 'Interactive Demo User',
     role: 'admin',
+    organizationId: 'demo',
     tokenVersion: 1
   });
 }
@@ -103,13 +109,22 @@ export function verifyToken(token: string): AuthenticatedUser | null {
       email: 'demo@aperture.io',
       name: 'Interactive Demo User',
       role: 'admin',
+      organizationId: 'demo',
       tokenVersion: 1
     };
   }
 
   try {
-    const decoded = jwt.verify(token, JWT_SECRET) as AuthenticatedUser;
-    return decoded;
+    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    return {
+      id: decoded.id,
+      email: decoded.email,
+      name: decoded.name || '',
+      role: decoded.role || 'viewer',
+      organizationId: decoded.organizationId || 'demo',
+      isPlatformAdmin: Boolean(decoded.isPlatformAdmin),
+      tokenVersion: decoded.tokenVersion || 1
+    };
   } catch {
     return null;
   }
@@ -166,6 +181,8 @@ export async function verifyFirebaseTokenRS256(token: string): Promise<Authentic
       email: verifiedPayload.email || '',
       name: verifiedPayload.name || verifiedPayload.displayName || '',
       role: verifiedPayload.role || 'viewer',
+      organizationId: verifiedPayload.organizationId || 'demo',
+      isPlatformAdmin: Boolean(verifiedPayload.isPlatformAdmin),
       tokenVersion: 1
     };
   } catch (err) {
@@ -191,13 +208,30 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
     token = req.headers['x-access-token'] as string;
   }
 
-  // Seamlessly authenticate demo/guest/anonymous frontend clients
-  if (!token || token === 'demo' || token === 'guest' || token === 'null' || token === 'undefined') {
+  const isDemoExplicit = req.headers['x-demo-mode'] === 'true' || req.query.demo === 'true' || token === 'demo';
+
+  if (!token || token === 'null' || token === 'undefined') {
+    if (isDemoExplicit) {
+      req.user = {
+        id: 'demo_user_01',
+        email: 'demo@aperture.io',
+        name: 'Site Administrator',
+        role: 'admin',
+        organizationId: 'demo',
+        tokenVersion: 1
+      };
+      return next();
+    }
+    return res.status(401).json({ error: 'Authentication required. No authorization token provided.' });
+  }
+
+  if (token === 'demo' || token === 'guest') {
     req.user = {
       id: 'demo_user_01',
       email: 'demo@aperture.io',
       name: 'Site Administrator',
       role: 'admin',
+      organizationId: 'demo',
       tokenVersion: 1
     };
     return next();
@@ -209,39 +243,51 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
   }
 
   if (!user) {
-    // Default fallback to demo admin session to ensure MongoDB data access never fails
-    req.user = {
-      id: 'demo_user_01',
-      email: 'demo@aperture.io',
-      name: 'Site Administrator',
-      role: 'admin',
-      tokenVersion: 1
-    };
-    return next();
+    if (isDemoExplicit) {
+      req.user = {
+        id: 'demo_user_01',
+        email: 'demo@aperture.io',
+        name: 'Site Administrator',
+        role: 'admin',
+        organizationId: 'demo',
+        tokenVersion: 1
+      };
+      return next();
+    }
+    return res.status(401).json({ error: 'Invalid or expired authorization token' });
   }
 
   // Session revocation validation against user DB record & DB sync
   if (user.id) {
     try {
-      let userDoc = await getDocById('users', user.id);
+      let userDoc = await getDocById('users', user.id, user.organizationId);
       if (!userDoc && user.email) {
-        const users = await getCollectionDocs('users');
-        userDoc = users.find((u: any) => u.email?.toLowerCase() === user.email?.toLowerCase());
+        const users = await getCollectionDocs('users', undefined, user.organizationId);
+        userDoc = users.find((u: any) => u.email?.toLowerCase() === user?.email?.toLowerCase());
+      }
+      if (!userDoc && user.email) {
+        // Fallback global check during login sync
+        const allUsers = await getCollectionDocs('users');
+        userDoc = allUsers.find((u: any) => u.email?.toLowerCase() === user?.email?.toLowerCase());
       }
 
       if (userDoc) {
         if (userDoc.tokenVersion && userDoc.tokenVersion > (user.tokenVersion || 1)) {
           return res.status(401).json({ error: 'Session revoked. Please log in again.' });
         }
-        // Sync role and details from database
+        // Sync role, organizationId, and details from database
         user.role = userDoc.role || user.role;
+        user.organizationId = userDoc.organizationId || user.organizationId || 'demo';
+        user.isPlatformAdmin = Boolean(userDoc.isPlatformAdmin || user.isPlatformAdmin);
         user.name = userDoc.name || userDoc.displayName || user.name;
         user.id = userDoc.id || user.id;
       } else {
         // If the user is authenticated in Firebase but doesn't exist in local DB, bootstrap them
         const isInitialAdmin = user.email?.toLowerCase() === 'sigmund.t.d@gaostaff.com' || user.email?.endsWith('@gaostaff.com');
         const role = isInitialAdmin ? 'admin' : 'viewer';
+        const orgId = user.organizationId || 'demo';
         user.role = role;
+        user.organizationId = orgId;
 
         const newUserDoc = {
           id: user.id,
@@ -250,13 +296,18 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
           name: user.name || user.email?.split('@')[0] || 'User',
           displayName: user.name || user.email?.split('@')[0] || 'User',
           role: role,
+          organizationId: orgId,
           createdAt: new Date().toISOString()
         };
-        await upsertDoc('users', newUserDoc);
+        await upsertDoc('users', newUserDoc, orgId);
       }
     } catch (err) {
       console.warn('[Auth Middleware] Token DB check and sync failed:', err);
     }
+  }
+
+  if (!user.organizationId) {
+    user.organizationId = 'demo';
   }
 
   req.user = user;

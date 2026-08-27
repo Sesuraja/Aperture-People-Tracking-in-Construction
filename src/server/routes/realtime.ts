@@ -83,18 +83,20 @@ realtimeRouter.get('/ws/info', (req: Request, res: Response) => {
 realtimeRouter.post('/ws/broadcast', (req: Request, res: Response) => {
   try {
     const { type, payload } = req.body || {};
+    const orgId = (req as any).user?.organizationId || req.body?.organizationId || 'demo';
     const eventType = type || 'custom_broadcast';
     const eventPayload = payload || req.body || {};
 
-    broadcastWebSocketEvent(eventType, eventPayload);
+    broadcastWebSocketEvent(eventType, eventPayload, orgId);
 
     // Also push to recent events buffer for polling/SSE
-    pushRealtimeEventToBuffer({ type: eventType, payload: eventPayload, source: 'WebSocket API' });
+    pushRealtimeEventToBuffer({ type: eventType, payload: eventPayload, organizationId: orgId, source: 'WebSocket API' });
 
     return res.json({
       success: true,
       method: 'WebSocket',
       broadcastedType: eventType,
+      organizationId: orgId,
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
@@ -116,9 +118,11 @@ realtimeRouter.get('/sse/subscribe', (req: Request, res: Response) => {
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
 
-  res.write(`event: connected\ndata: ${JSON.stringify({ status: 'connected', method: 'SSE', timestamp: new Date().toISOString() })}\n\n`);
+  const orgId = (req as any).user?.organizationId || (req.query.organizationId as string) || 'demo';
 
-  addSseSubscriber(res);
+  res.write(`event: connected\ndata: ${JSON.stringify({ status: 'connected', method: 'SSE', organizationId: orgId, timestamp: new Date().toISOString() })}\n\n`);
+
+  addSseSubscriber(res, orgId);
 
   req.on('close', () => {
     removeSseSubscriber(res);
@@ -132,17 +136,19 @@ realtimeRouter.get('/sse/subscribe', (req: Request, res: Response) => {
 realtimeRouter.post('/sse/broadcast', (req: Request, res: Response) => {
   try {
     const { event, payload } = req.body || {};
+    const orgId = (req as any).user?.organizationId || req.body?.organizationId || 'demo';
     const eventName = event || 'notification';
     const eventData = payload || req.body || {};
 
-    broadcastSseEvent(eventName, eventData);
+    broadcastSseEvent(eventName, eventData, orgId);
 
-    pushRealtimeEventToBuffer({ event: eventName, payload: eventData, source: 'SSE API' });
+    pushRealtimeEventToBuffer({ event: eventName, payload: eventData, organizationId: orgId, source: 'SSE API' });
 
     return res.json({
       success: true,
       method: 'SSE',
       event: eventName,
+      organizationId: orgId,
       timestamp: new Date().toISOString()
     });
   } catch (err: any) {
@@ -457,6 +463,7 @@ realtimeRouter.get('/poll', (req: Request, res: Response) => {
  */
 realtimeRouter.post('/ingest', async (req: Request, res: Response) => {
   try {
+    const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
     const protocol = req.body?.protocol || 'HTTP Ingestion';
     const rawEvents = req.body?.events || req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
 
@@ -464,17 +471,18 @@ realtimeRouter.post('/ingest', async (req: Request, res: Response) => {
       return res.status(400).json({ success: false, error: 'Expected non-empty array of tag event objects' });
     }
 
-    const result = await bulkWriteRfidRealtimeEvents(rawEvents, protocol);
+    const result = await bulkWriteRfidRealtimeEvents(rawEvents, protocol, orgId);
 
-    // Cross-broadcast normalized scan to all real-time stream clients
-    broadcastWebSocketEvent('tag_update_bulk', { count: result.totalProcessed, protocol });
-    broadcastSseEvent('tag_update_bulk', { count: result.totalProcessed, protocol });
-    pushRealtimeEventToBuffer({ type: 'unified_ingest', count: result.totalProcessed, protocol, source: 'Unified Ingest API' });
+    // Cross-broadcast normalized scan to all real-time stream clients in this organization
+    broadcastWebSocketEvent('tag_update_bulk', { count: result.totalProcessed, protocol, organizationId: orgId }, orgId);
+    broadcastSseEvent('tag_update_bulk', { count: result.totalProcessed, protocol, organizationId: orgId }, orgId);
+    pushRealtimeEventToBuffer({ type: 'unified_ingest', count: result.totalProcessed, protocol, organizationId: orgId, source: 'Unified Ingest API' });
 
     return res.json({
       success: true,
       message: `Successfully normalized and ingested ${result.totalProcessed} events into 'rfid_realtime_events' collection`,
       protocol,
+      organizationId: orgId,
       result
     });
   } catch (err: any) {

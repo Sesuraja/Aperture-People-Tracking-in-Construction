@@ -35,7 +35,6 @@ import ApertureLogo, { ApertureLogoMark } from './components/ApertureLogo';
 import { startGaoSync, stopGaoSync } from './lib/gaoSyncService';
 import { doc, getDoc, setDoc, db } from './lib/db';
 
-import LocationsTab from './components/LocationsTab';
 import { TrackingProvider } from './context/TrackingContext';
 
 export type AppMode = 'real' | 'demo' | null;
@@ -94,9 +93,9 @@ export default function App() {
     const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
     const savedMode = typeof window !== 'undefined' ? localStorage.getItem('gao_app_mode') : null;
     if (token) return 'real';
-    if (savedMode === 'real' || savedMode === 'demo') return savedMode as AppMode;
-    // Default to 'demo' to ensure instant preview and prevent blank/white screen on initial load
-    return 'demo';
+    if (savedMode === 'demo') return 'demo';
+    // Default to null so the user is presented with the Login page first
+    return null;
   });
 
   const changeMode = (newMode: AppMode) => {
@@ -367,7 +366,9 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
               <ApertureLogo variant="horizontal" size="sm" />
               <div className="flex items-center gap-1.5 mt-2 px-0.5">
                 <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 tracking-tight leading-tight">
-                  People Tracking in Construction
+                  {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config')
+                    ? JSON.parse(localStorage.getItem('gao_industry_config') || '{}').appTitle || 'Aperture People Tracking'
+                    : 'Aperture People Tracking'}
                 </span>
               </div>
             </div>
@@ -391,7 +392,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Search className="w-3.5 h-3.5 text-slate-400 group-hover:text-[#007BC4] transition shrink-0" />
-                <span className="truncate text-xs font-normal">Search workers & commands...</span>
+                <span className="truncate text-xs font-normal">Search {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config') ? (JSON.parse(localStorage.getItem('gao_industry_config') || '{}').terminology?.personnelPlural || 'workforce') : 'workforce'} & commands...</span>
               </div>
               <kbd className="text-[9px] font-mono font-semibold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded shadow-2xs shrink-0 ml-1.5 inline-flex items-center justify-center leading-none">
                 ⌘K
@@ -399,6 +400,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
             </button>
           )}
         </div>
+
 
         {/* Grouped Domain Navigation */}
         <nav className="flex flex-col gap-4 px-2.5 flex-1 overflow-y-auto min-h-0">

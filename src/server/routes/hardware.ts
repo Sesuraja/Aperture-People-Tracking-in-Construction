@@ -10,15 +10,125 @@ import {
   HardwareReader,
   TagEntityMapping
 } from '../services/hardwareIntegrationService.js';
+import {
+  validateGaoNativeEvent,
+  mapGaoNativeToDirect,
+  parseGaoNativeBody,
+} from '../services/gaoEventMapper.js';
+
+import { requireAuth, verifyToken } from '../middleware/auth.js';
 
 export const hardwareRouter = Router();
 
+function getReqOrgId(req: Request): string {
+  if ((req as any).user?.organizationId) {
+    return (req as any).user.organizationId;
+  }
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    const decoded = verifyToken(token);
+    if (decoded?.organizationId) return decoded.organizationId;
+  }
+  return req.body?.organizationId || (req.query.organizationId as string) || 'demo';
+}
+
+// ===========================================================================
+// 1. HARDWARE INGESTION WEBHOOKS (Direct pushes from physical RFID Readers)
+// ===========================================================================
+
+// POST /api/hardware/gao-native (GAO 216031A Native JSON Push)
+hardwareRouter.post('/gao-native', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
+  try {
+    const events = parseGaoNativeBody(req.body);
+    if (events.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Request body must be a GaoNativeEvent object or array of GaoNativeEvent objects'
+      });
+    }
+
+    const readerIdOverride = (req.query.readerId as string) || undefined;
+    const results: any[] = [];
+
+    for (const rawEvent of events) {
+      const validation = validateGaoNativeEvent(rawEvent);
+      if (!validation.valid) {
+        results.push({ success: false, epc: (rawEvent as any).epc, errors: validation.errors });
+        continue;
+      }
+
+      // Use ?readerId query param, or fall back to serialno/customcode from the GAO event
+      const apertureReaderId = readerIdOverride || rawEvent.serialno || rawEvent.customcode || '100EHH8325020026';
+      const scanPayload = mapGaoNativeToDirect(rawEvent, apertureReaderId, 'gao216031a');
+
+      try {
+        const result = await processDirectHardwareScan(scanPayload, orgId);
+        results.push({
+          success: true,
+          epc: rawEvent.epc,
+          readerId: apertureReaderId,
+          antenna: rawEvent.ant,
+          ...result
+        });
+      } catch (innerErr: any) {
+        results.push({ success: false, epc: rawEvent.epc, error: innerErr.message });
+      }
+    }
+
+    const allOk = results.every(r => r.success);
+    return res.status(allOk ? 200 : 207).json({
+      success: allOk,
+      processedCount: results.filter(r => r.success).length,
+      failedCount: results.filter(r => !r.success).length,
+      results,
+      organizationId: orgId
+    });
+  } catch (err: any) {
+    console.error('[Hardware Router] GAO native ingestion error:', err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/hardware/scan (Generic Hardware Scan Push)
+hardwareRouter.post('/scan', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
+  try {
+    const { readerId, antennaId, tagId, rssi, timestamp, protocol } = req.body || {};
+    if (!tagId) {
+      return res.status(400).json({ success: false, error: 'tagId is required' });
+    }
+
+    const result = await processDirectHardwareScan({
+      readerId: readerId || 'GAO-UHF-DEFAULT',
+      antennaId: Number(antennaId) || 1,
+      tagId: String(tagId),
+      rssi: rssi !== undefined ? Number(rssi) : -60,
+      timestamp: timestamp || new Date().toISOString(),
+      protocol: protocol || 'Direct RFID Push'
+    }, orgId);
+
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ===========================================================================
+// 2. PROTECTED MANAGEMENT & ADMIN ROUTES (Requires User Authentication)
+// ===========================================================================
+hardwareRouter.use(requireAuth);
+
 // GET /api/hardware/readers
 hardwareRouter.get('/readers', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
-    await bootstrapDefaultHardware();
-    const readers = await getCollectionDocs('hardware_readers');
-    return res.json({ success: true, count: readers.length, readers });
+    if (orgId === 'demo') {
+      await bootstrapDefaultHardware();
+    }
+    const readers = await getCollectionDocs('hardware_readers', undefined, orgId);
+    return res.json({ success: true, count: readers.length, readers, organizationId: orgId });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message || 'Failed to list hardware readers' });
   }
@@ -26,6 +136,7 @@ hardwareRouter.get('/readers', async (req: Request, res: Response) => {
 
 // POST /api/hardware/readers
 hardwareRouter.post('/readers', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
     const reader: Partial<HardwareReader> = req.body || {};
     if (!reader.name || !reader.readerId) {
@@ -54,7 +165,7 @@ hardwareRouter.post('/readers', async (req: Request, res: Response) => {
       updatedAt: nowIso
     };
 
-    await upsertDoc('hardware_readers', savedReader);
+    await upsertDoc('hardware_readers', savedReader, orgId);
     return res.json({ success: true, message: 'Hardware reader saved in MongoDB', reader: savedReader });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -63,9 +174,10 @@ hardwareRouter.post('/readers', async (req: Request, res: Response) => {
 
 // DELETE /api/hardware/readers/:id
 hardwareRouter.delete('/readers/:id', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
     const { id } = req.params;
-    const deleted = await deleteDocById('hardware_readers', id);
+    const deleted = await deleteDocById('hardware_readers', id, orgId);
     return res.json({ success: deleted, message: deleted ? 'Reader deleted' : 'Reader not found' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -74,10 +186,13 @@ hardwareRouter.delete('/readers/:id', async (req: Request, res: Response) => {
 
 // GET /api/hardware/mappings
 hardwareRouter.get('/mappings', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
-    await bootstrapDefaultHardware();
-    const mappings = await getCollectionDocs('hardware_tag_mappings');
-    return res.json({ success: true, count: mappings.length, mappings });
+    if (orgId === 'demo') {
+      await bootstrapDefaultHardware();
+    }
+    const mappings = await getCollectionDocs('hardware_tag_mappings', undefined, orgId);
+    return res.json({ success: true, count: mappings.length, mappings, organizationId: orgId });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -85,6 +200,7 @@ hardwareRouter.get('/mappings', async (req: Request, res: Response) => {
 
 // POST /api/hardware/mappings
 hardwareRouter.post('/mappings', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
     const mapping: Partial<TagEntityMapping> = req.body || {};
     if (!mapping.tagId || !mapping.entityName) {
@@ -106,7 +222,7 @@ hardwareRouter.post('/mappings', async (req: Request, res: Response) => {
       createdAt: mapping.createdAt || nowIso
     };
 
-    await upsertDoc('hardware_tag_mappings', savedMapping);
+    await upsertDoc('hardware_tag_mappings', savedMapping, orgId);
     return res.json({ success: true, message: 'Tag mapping saved in MongoDB', mapping: savedMapping });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -115,9 +231,10 @@ hardwareRouter.post('/mappings', async (req: Request, res: Response) => {
 
 // DELETE /api/hardware/mappings/:id
 hardwareRouter.delete('/mappings/:id', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
     const { id } = req.params;
-    const deleted = await deleteDocById('hardware_tag_mappings', id);
+    const deleted = await deleteDocById('hardware_tag_mappings', id, orgId);
     return res.json({ success: deleted, message: deleted ? 'Mapping removed' : 'Mapping not found' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -126,6 +243,7 @@ hardwareRouter.delete('/mappings/:id', async (req: Request, res: Response) => {
 
 // POST /api/hardware/scan (Direct Scan Ingestion: Hardware → AI Engine → MongoDB → Dashboard)
 hardwareRouter.post('/scan', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
     const { readerId, antennaId, tagId, rssi, timestamp, protocol } = req.body || {};
     if (!tagId) {
@@ -139,7 +257,7 @@ hardwareRouter.post('/scan', async (req: Request, res: Response) => {
       rssi: rssi !== undefined ? Number(rssi) : -60,
       timestamp: timestamp || new Date().toISOString(),
       protocol: protocol || 'Direct RFID Push'
-    });
+    }, orgId);
 
     return res.json(result);
   } catch (err: any) {
@@ -149,6 +267,7 @@ hardwareRouter.post('/scan', async (req: Request, res: Response) => {
 
 // POST /api/hardware/test-scan (Interactive scanner tool for Settings tab)
 hardwareRouter.post('/test-scan', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
     const { readerId, antennaId, tagId, rssi } = req.body || {};
     const effectiveTag = tagId || 'E28011606000020788842D31';
@@ -161,7 +280,7 @@ hardwareRouter.post('/test-scan', async (req: Request, res: Response) => {
       rssi: rssi !== undefined ? Number(rssi) : -55,
       timestamp: new Date().toISOString(),
       protocol: 'Direct Hardware Test Ping'
-    });
+    }, orgId);
 
     return res.json({
       success: true,
@@ -175,10 +294,13 @@ hardwareRouter.post('/test-scan', async (req: Request, res: Response) => {
 
 // GET /api/hardware/status (Health telemetry summary)
 hardwareRouter.get('/status', async (req: Request, res: Response) => {
+  const orgId = getReqOrgId(req);
   try {
-    await bootstrapDefaultHardware();
-    const readers: HardwareReader[] = await getCollectionDocs('hardware_readers');
-    const mappings: TagEntityMapping[] = await getCollectionDocs('hardware_tag_mappings');
+    if (orgId === 'demo') {
+      await bootstrapDefaultHardware();
+    }
+    const readers: HardwareReader[] = await getCollectionDocs('hardware_readers', undefined, orgId);
+    const mappings: TagEntityMapping[] = await getCollectionDocs('hardware_tag_mappings', undefined, orgId);
 
     const totalScans = readers.reduce((acc, r) => acc + (r.totalScans || 0), 0);
     const onlineReaders = readers.filter(r => r.status === 'ONLINE' || r.status === 'SCANNING').length;
@@ -189,7 +311,8 @@ hardwareRouter.get('/status', async (req: Request, res: Response) => {
       totalReaders: readers.length,
       totalTagMappings: mappings.length,
       totalScansProcessed: totalScans,
-      readers
+      readers,
+      organizationId: orgId
     });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });

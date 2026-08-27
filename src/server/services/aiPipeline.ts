@@ -122,14 +122,15 @@ function classifyTelemetryRules(
  */
 export async function processTelemetryWithAI(
   payloads: TelemetryPayload | TelemetryPayload[],
-  sourceProtocol: string = 'API Key Server'
+  sourceProtocol: string = 'API Key Server',
+  organizationId: string = 'demo'
 ): Promise<{ success: boolean; processedCount: number; analyzedResults: AIAnalysisResult[] }> {
   const items = Array.isArray(payloads) ? payloads : [payloads];
   const analyzedResults: AIAnalysisResult[] = [];
   const nowIso = new Date().toISOString();
 
-  // Load registered personnel for matching
-  const peopleList = (await getCollectionDocs('personnel')) || (await getCollectionDocs('registered_people')) || [];
+  // Load registered personnel for matching within the organization
+  const peopleList = (await getCollectionDocs('personnel', undefined, organizationId)) || (await getCollectionDocs('registered_people', undefined, organizationId)) || [];
   const apiKey = getGeminiApiKey();
 
   for (const item of items) {
@@ -137,6 +138,7 @@ export async function processTelemetryWithAI(
     const tagId = String(item.TagID || item.tagId || item.epc || item.id || `TAG_${Date.now()}`);
     const location = String(item.Location || item.location || item.LocationName || item.zone || 'Zone 1');
     const timestamp = item.Timestamp || item.timestamp || item.EnterTime || nowIso;
+    const orgId = item.organizationId || organizationId;
 
     // Match person
     const matchedPerson = peopleList.find(
@@ -209,6 +211,7 @@ Respond strictly with valid JSON:
     // 2. STORE DATA IN MONGODB
     const tagDocument = {
       id: tagId,
+      organizationId: orgId,
       TagID: tagId,
       Timestamp: timestamp,
       Location: location,
@@ -226,19 +229,21 @@ Respond strictly with valid JSON:
     };
 
     // Upsert into real_time_tags & live_tags
-    await upsertDoc('real_time_tags', tagDocument);
-    await upsertDoc('live_tags', tagDocument);
+    await upsertDoc('real_time_tags', tagDocument, orgId);
+    await upsertDoc('live_tags', tagDocument, orgId);
 
     // Upsert historical scan event
     await upsertDoc('rfid_realtime_events', {
       id: `evt_${Date.now()}_${tagId}`,
+      organizationId: orgId,
       ...tagDocument,
       receivedAt: nowIso
-    });
+    }, orgId);
 
     // Store in tag_history
     await upsertDoc('tag_history', {
       id: `hist_${tagId}_${Date.now()}`,
+      organizationId: orgId,
       TagID: tagId,
       FirstName: firstName,
       LastName: lastName,
@@ -247,11 +252,12 @@ Respond strictly with valid JSON:
       LeaveTime: timestamp,
       Duration: 0.1,
       ...tagDocument
-    });
+    }, orgId);
 
     // Save AI Insight to MongoDB
     const insightDoc = {
       id: `insight_${Date.now()}_${tagId}`,
+      organizationId: orgId,
       title: `AI Analysis: ${location} (${aiResult.aiRiskLevel})`,
       category: aiResult.aiRiskLevel === 'SAFE' ? 'Operational Info' : 'Safety & Risk Alert',
       impact: aiResult.aiRiskLevel,
@@ -261,12 +267,13 @@ Respond strictly with valid JSON:
       location,
       createdAt: nowIso
     };
-    await upsertDoc('ai_insights', insightDoc);
+    await upsertDoc('ai_insights', insightDoc, orgId);
 
     // If High or Critical Anomaly, create incident in MongoDB
     if (aiResult.aiAnomaly && (aiResult.aiRiskLevel === 'HIGH' || aiResult.aiRiskLevel === 'CRITICAL')) {
       const incidentDoc = {
         id: `inc_${Date.now()}_${tagId}`,
+        organizationId: orgId,
         title: aiResult.aiAnomaly.title,
         category: 'Exclusion Zone Breach',
         severity: aiResult.aiAnomaly.severity === 'CRITICAL' ? 'Critical' : 'High',
@@ -279,18 +286,19 @@ Respond strictly with valid JSON:
         aiScore: aiResult.aiRiskScore,
         createdAt: nowIso
       };
-      await upsertDoc('incidents', incidentDoc);
+      await upsertDoc('incidents', incidentDoc, orgId);
     }
 
     // Update Personnel currentZone in MongoDB
     if (matchedPerson) {
       await upsertDoc('personnel', {
         ...matchedPerson,
+        organizationId: orgId,
         currentZone: location,
         zone: location,
         lastSeen: timestamp,
         updatedAt: nowIso
-      });
+      }, orgId);
     }
   }
 

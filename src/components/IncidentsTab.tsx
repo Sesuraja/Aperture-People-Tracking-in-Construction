@@ -14,6 +14,8 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs, isMongoActive, db } from '../lib/db';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
+import { useTerminology } from '../context/TrackingContext';
+
 
 const INCIDENT_CATEGORIES: { name: IncidentCategory; icon: React.ElementType; color: string; bg: string }[] = [
   { name: 'Near Miss', icon: AlertTriangle, color: 'text-amber-600', bg: 'bg-amber-50 dark:bg-amber-950/40' },
@@ -50,150 +52,10 @@ function formatIncidentTimestamp(ts: any): string {
   }
 }
 
-const DEFAULT_ENTERPRISE_INCIDENTS: EnterpriseIncident[] = [
-  {
-    id: 'INC-2026-101',
-    title: 'Excavation Area Environmental & Gas Telemetry Anomaly',
-    category: 'Near Miss',
-    severity: 'High',
-    workflowStatus: 'Investigation',
-    locationZone: 'Excavation Area',
-    reportedAt: '2026-08-08T09:30:00.000Z',
-    reportedBy: 'Field Safety Officer (Elena)',
-    assignedOfficer: 'Marcus (Contractor Lead)',
-    assignedRole: 'Lead Investigator',
-    equipmentInvolved: 'Gas Sensor SENS-09 / Excavator EX-04',
-    hazardClass: 'Airborne Contaminants & Confined Space',
-    injuredPersonnelCount: 0,
-    description: 'Autonomous environmental telemetry detected localized gas accumulation spike (CO > 45ppm) during deep foundation excavation. Auto-evacuation alarm triggered; workers exited via Reader R5 within 2 minutes safely.',
-    aiAnalysis: {
-      severityScore: 82,
-      aiSummary: 'Autonomous environmental telemetry detected localized gas accumulation spike during deep foundation drilling.',
-      probableRootCause: 'Faulty auxiliary ventilation blower damper flap failed to open during high-output excavator trenching.',
-      contributingFactors: [
-        'High ambient humidity and reduced natural air exchange in excavation pit.',
-        'Simultaneous excavation engine idling near unvented intake duct.'
-      ],
-      capaRecommendations: [
-        'Replace mechanical airflow solenoid on Blower System #4.',
-        'Mandate continuous 4-gas portable wearable monitors for all personnel entering Excavation Area.',
-        'Implement automated engine-cutoff interlock on stationary plant in enclosed areas.'
-      ],
-      regulatoryImpact: 'OSHA 1926.1204 Confined Space Hazard Protocol - Internal investigation and log required.'
-    },
-    witnessStatements: [
-      {
-        id: 'ws_1',
-        witnessName: 'David (Rebar Lead)',
-        witnessRole: 'Rebar Lead',
-        company: 'Apex Steelworks',
-        interviewedBy: 'Marcus',
-        timestamp: '10:05 AM',
-        statement: 'Heard the audible siren chirp from the fixed reader and our hardhat beacons flashed amber. Everyone proceeded immediately to Assembly Point.'
-      }
-    ],
-    attachments: [
-      {
-        id: 'att_1',
-        fileName: 'Gas_Sensor_Telemtry_Log_Aug8.pdf',
-        fileType: 'Telemetry Log',
-        fileUrl: 'https://images.unsplash.com/photo-1581092160607-ee22621dd758?w=600&auto=format&fit=crop&q=80',
-        uploadedBy: 'Elena',
-        uploadedAt: '2026-08-08 09:45 AM',
-        fileSize: '1.8 MB'
-      }
-    ],
-    timeline: [
-      { id: 't_1', timestamp: '09:30 AM', title: 'Automated Telemetry Alarm', description: 'Sensor SENS-09 triggered high threshold alert.', actor: 'System IoT Service', statusChange: 'Open' },
-      { id: 't_2', timestamp: '09:35 AM', title: 'Incident Assigned', description: 'Marcus Vance assigned as lead investigator.', actor: 'System AI Router', statusChange: 'Assigned' },
-      { id: 't_3', timestamp: '10:00 AM', title: 'Investigation Initiated', description: 'Air duct solenoid inspection underway.', actor: 'Elena Rostova', statusChange: 'Investigation' }
-    ],
-    correctiveActions: [
-      { id: 'ca_1', actionItem: 'Inspect and replace duct flap damper motor', assignedTo: 'HVAC Maintenance Tech', dueDate: '2026-08-09', isCompleted: false },
-      { id: 'ca_2', actionItem: 'Calibrate environmental gas sensors at Reader R5', assignedTo: 'IoT Systems Team', dueDate: '2026-08-09', isCompleted: true }
-    ]
-  },
-  {
-    id: 'INC-2026-102',
-    title: 'Structure Work Area Scaffolding Platform Safety Check',
-    category: 'Near Miss',
-    severity: 'Critical',
-    workflowStatus: 'Corrective Action',
-    locationZone: 'Structure Work Area',
-    reportedAt: '2026-08-07T14:15:00.000Z',
-    reportedBy: 'Site Inspector (Elena)',
-    assignedOfficer: 'Elena (Structural Inspector)',
-    assignedRole: 'Structural Safety Lead',
-    equipmentInvolved: 'Structure Work Scaffolding Module 3B',
-    hazardClass: 'Working at Heights & Dropped Objects',
-    injuredPersonnelCount: 0,
-    description: 'During crane lifting operation, a loose toe-board and staging plank shifted on Structure Work Area deck. Dislodged plank fell 8 meters into drop zone netting.',
-    aiAnalysis: {
-      severityScore: 89,
-      aiSummary: 'Unsecured scaffolding toe-board dislodged due to wind vibration and crane wash.',
-      probableRootCause: 'Subcontractor crew omitted secondary locking pin during morning platform extension.',
-      contributingFactors: [
-        'Sudden wind gust exceeding 35 km/h.',
-        'Inadequate pre-shift daily scaffolding handover sign-off.'
-      ],
-      capaRecommendations: [
-        'Implement daily digital QR scaffolding tag check prior to shift start.',
-        'Enforce secondary safety tethering on all tools and loose timbers above 2 meters.'
-      ],
-      regulatoryImpact: 'OSHA 1926.451 Scaffolding General Safety Criteria.'
-    },
-    witnessStatements: [],
-    attachments: [],
-    timeline: [
-      { id: 't_1', timestamp: '02:15 PM', title: 'Near Miss Reported', description: 'Plank caught in safety netting.', actor: 'Elena', statusChange: 'Open' },
-      { id: 't_2', timestamp: '03:00 PM', title: 'Scaffold Closed for Inspection', description: 'Red Tag applied to Module 3B.', actor: 'Elena', statusChange: 'Corrective Action' }
-    ],
-    correctiveActions: [
-      { id: 'ca_1', actionItem: 'Full structural clamp audit of Scaffolding Tower 3', assignedTo: 'Scaffold Subcontractor', dueDate: '2026-08-08', isCompleted: true }
-    ]
-  },
-  {
-    id: 'INC-2026-103',
-    title: 'Crane Operating Zone Tag Entry Alert',
-    category: 'Exclusion Zone Breach',
-    severity: 'Medium',
-    workflowStatus: 'Closed',
-    locationZone: 'Crane Operating Zone',
-    reportedAt: '2026-08-06T11:00:00.000Z',
-    reportedBy: 'Field Safety Officer (Marcus)',
-    assignedOfficer: 'Marcus (Contractor Lead)',
-    assignedRole: 'Site Safety Lead',
-    equipmentInvolved: 'UHF RFID Hardhat Tag #HH-1008 / Reader Portal R2',
-    hazardClass: 'Overhead Crane Radius & Personnel Intrusion',
-    injuredPersonnelCount: 0,
-    description: 'UHF Reader Portal R2 registered an active personnel hardhat tag inside the Crane Operating Zone while an active steel beam lift was underway. Reader triggered automated siren alarm and supervisor alert.',
-    aiAnalysis: {
-      severityScore: 68,
-      aiSummary: 'Personnel hardhat tag detected inside exclusion zone during active crane hoist operation.',
-      probableRootCause: 'Subcontractor mason walked past staging barrier without noticing activated warning strobe.',
-      contributingFactors: ['Noise level from adjacent concrete vibrator masked initial audible chime.'],
-      capaRecommendations: ['Install directional UHF barrier beam at Exclusion Zone C entry with visual LED strip.'],
-      regulatoryImpact: 'OSHA 1926.1424 Exclusion Zone Personnel Clearance Logged.'
-    },
-    witnessStatements: [],
-    attachments: [],
-    timeline: [
-      { id: 't_1', timestamp: '11:00 AM', title: 'Tag Breach Detected', description: 'Hardhat Tag #8B-F1-0A scanned inside Crane Radius.', actor: 'Reader R-02', statusChange: 'Open' },
-      { id: 't_2', timestamp: '11:02 AM', title: 'Personnel Escorted Out', description: 'Worker guided back to safe laydown zone.', actor: 'Frank Reynolds', statusChange: 'Closed' }
-    ],
-    correctiveActions: [
-      { id: 'ca_1', actionItem: 'Re-align directional UHF antenna at Crane Zone C boundary', assignedTo: 'IoT Field Tech', dueDate: '2026-08-06', isCompleted: true }
-    ],
-    approvalSignOff: {
-      approvedBy: 'Marcus Vance (EHS Director)',
-      approvedAt: '2026-08-06T15:00:00.000Z',
-      comments: 'Automatic RFID perimeter alarm verified. Worker briefed on exclusion protocols.'
-    }
-  }
-];
-
 export default function IncidentsTab() {
+  const { config, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
   const [incidents, setIncidents] = useState<EnterpriseIncident[]>([]);
+
   const [selectedIncident, setSelectedIncident] = useState<EnterpriseIncident | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
@@ -342,16 +204,14 @@ export default function IncidentsTab() {
     } : undefined
   });
 
-  // Sync with MongoDB / Firestore (Listen to both incidents_enterprise and incidents collections)
+  // Sync with MongoDB (Listen to both incidents_enterprise and incidents collections)
   useEffect(() => {
     let enterpriseDocs: EnterpriseIncident[] = [];
     let standardDocs: EnterpriseIncident[] = [];
 
     const updateCombined = () => {
       const map = new Map<string, EnterpriseIncident>();
-      // Seed default incidents first
-      DEFAULT_ENTERPRISE_INCIDENTS.forEach(inc => map.set(inc.id, inc));
-      // Overwrite/Add MongoDB incidents
+      // Add MongoDB incidents
       [...enterpriseDocs, ...standardDocs].forEach(inc => map.set(inc.id, inc));
       
       const combined = Array.from(map.values()).sort((a, b) => 

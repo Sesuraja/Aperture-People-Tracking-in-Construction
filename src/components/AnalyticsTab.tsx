@@ -18,6 +18,8 @@ import {
 } from 'lucide-react';
 import { db, collection, getDocs, onSnapshot, addDoc, updateDoc, doc, deleteDoc, serverTimestamp } from '../lib/db';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
+import { useTerminology } from '../context/TrackingContext';
+
 
 const PALETTE = ['#007BC4', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4'];
 
@@ -31,9 +33,9 @@ export interface ScheduledReportItem {
   name: string;
   format: string;
   frequency: string;
-  recipients: string;
-  status: 'Active' | 'Paused';
-  lastRun: string;
+  recipients?: string;
+  status?: 'Active' | 'Paused';
+  lastRun?: string;
   createdAt?: string;
 }
 
@@ -43,10 +45,10 @@ export interface EquipmentItem {
   type: string;
   activeHours: number;
   idleHours: number;
-  loadFactorPct: number;
-  fuelLiters: number;
-  maintDueDays: number;
-  status: 'Optimal' | 'Service Soon' | 'Warning' | 'Critical';
+  loadFactorPct?: number;
+  fuelLiters?: number;
+  maintDueDays?: number;
+  status?: 'Optimal' | 'Service Soon' | 'Warning' | 'Critical';
 }
 
 export interface SavedAiMetric {
@@ -56,23 +58,10 @@ export interface SavedAiMetric {
   createdAt: string;
 }
 
-const DEFAULT_SCHEDULED_REPORTS: ScheduledReportItem[] = [
-  { id: 'rep-1', name: 'Daily EHS & Safety Compliance Summary', format: 'PDF', frequency: 'Daily at 06:00 AM', recipients: 'ehs-team@buildcorp.com', status: 'Active', lastRun: 'Today, 06:00 AM' },
-  { id: 'rep-2', name: 'Weekly Executive Operations & Headcount Digest', format: 'PDF + CSV', frequency: 'Mondays at 08:00 AM', recipients: 'execs@buildcorp.com', status: 'Active', lastRun: 'Aug 14, 2026' },
-  { id: 'rep-3', name: 'Subcontractor Attendance & Overtime Ledger', format: 'CSV', frequency: 'Weekly on Friday 05:00 PM', recipients: 'payroll@buildcorp.com', status: 'Active', lastRun: 'Aug 11, 2026' },
-  { id: 'rep-4', name: 'Personnel RFID Scan & Shift Hours Ledger', format: 'PDF', frequency: 'Monthly 1st Day', recipients: 'safety@buildcorp.com', status: 'Active', lastRun: 'Aug 01, 2026' }
-];
-
-const DEFAULT_EQUIPMENT: EquipmentItem[] = [
-  { id: 'eq-1', name: 'Main Gate 1 UHF Turnstile Portal', type: 'Fixed UHF Portal', activeHours: 7.2, idleHours: 0.8, loadFactorPct: 98, fuelLiters: 250, maintDueDays: 14, status: 'Optimal' },
-  { id: 'eq-2', name: 'Tower Core Level 2 Scaffold Portal', type: 'UHF RFID Reader', activeHours: 6.5, idleHours: 1.5, loadFactorPct: 94, fuelLiters: 200, maintDueDays: 3, status: 'Service Soon' },
-  { id: 'eq-3', name: 'Deep Shaft Sector B Entry Gateway', type: 'UHF RFID Reader', activeHours: 4.8, idleHours: 3.2, loadFactorPct: 88, fuelLiters: 180, maintDueDays: 22, status: 'Optimal' },
-  { id: 'eq-4', name: 'Laydown Yard Personnel Perimeter Reader', type: 'Long-Range UHF', activeHours: 5.5, idleHours: 2.5, loadFactorPct: 92, fuelLiters: 210, maintDueDays: 8, status: 'Optimal' },
-  { id: 'eq-5', name: 'Site Welfare Container Portal Reader', type: 'Fixed UHF Portal', activeHours: 6.1, idleHours: 1.9, loadFactorPct: 90, fuelLiters: 190, maintDueDays: 18, status: 'Optimal' }
-];
-
 export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps) {
+  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
   // Navigation / Module Selection
+
   const [activeModule, setActiveModule] = useState<
     | 'overview' 
     | 'executive' 
@@ -96,17 +85,10 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   const [dateRange, setDateRange] = useState<'today' | '7d' | '30d' | 'q3_2026'>('7d');
   const [selectedSite, setSelectedSite] = useState<string>('all');
 
-  // Database Persistent States (MongoDB) with Default Synthetic Fallbacks
-  const [scheduledReports, setScheduledReports] = useState<ScheduledReportItem[]>(DEFAULT_SCHEDULED_REPORTS);
-  const [equipmentList, setEquipmentList] = useState<EquipmentItem[]>(DEFAULT_EQUIPMENT);
-  const [savedAiMetrics, setSavedAiMetrics] = useState<SavedAiMetric[]>([
-    {
-      id: 'ai-init-1',
-      synthesis: 'Morning shift entry peak at 08:12 AM with 96.8% compliance. Rigging & Electrical trades demonstrated 84%+ tool-time productivity.',
-      dateRange: '7d',
-      createdAt: new Date(Date.now() - 86400000).toISOString()
-    }
-  ]);
+  // Database Persistent States (MongoDB)
+  const [scheduledReports, setScheduledReports] = useState<ScheduledReportItem[]>([]);
+  const [equipmentList, setEquipmentList] = useState<EquipmentItem[]>([]);
+  const [savedAiMetrics, setSavedAiMetrics] = useState<SavedAiMetric[]>([]);
   const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
     connected: true,
     engine: 'MongoDB Atlas',
@@ -187,6 +169,8 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   }, []);
 
   const [dbAttendanceData, setDbAttendanceData] = useState<any[]>([]);
+  const [dbRegisteredPeople, setDbRegisteredPeople] = useState<any[]>([]);
+  const [dbIncidents, setDbIncidents] = useState<any[]>([]);
 
   useEffect(() => {
     let logs: any[] = [];
@@ -258,12 +242,20 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     const unsub2 = onSnapshot(collection(db, 'registered_people'), (snap) => {
       regPeople = [];
       snap.forEach(d => regPeople.push({ id: d.id, ...d.data() }));
+      setDbRegisteredPeople(regPeople);
       computeTrend();
+    });
+
+    const unsub3 = onSnapshot(collection(db, 'incidents'), (snap) => {
+      const incList: any[] = [];
+      snap.forEach(d => incList.push({ id: d.id, ...d.data() }));
+      setDbIncidents(incList);
     });
 
     return () => {
       unsub1();
       unsub2();
+      unsub3();
     };
   }, []);
 
@@ -297,12 +289,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
 
   // Reader Hardware Ping Simulation State
   const [pingingReader, setPingingReader] = useState<string | null>(null);
-  const [readerStatuses, setReaderStatuses] = useState<Record<string, { status: string; rssi: number; packets: number }>>({
-    'RDR-01': { status: 'Online', rssi: -42, packets: 142 },
-    'GW-02': { status: 'Online', rssi: -55, packets: 88 },
-    'GPS-01': { status: 'Online', rssi: -38, packets: 200 },
-    'GW-03': { status: 'Warning', rssi: -78, packets: 41 }
-  });
+  const [readerStatuses, setReaderStatuses] = useState<Record<string, { status: string; rssi: number; packets: number }>>({});
 
   // --- FETCH & SYNC MONGODB DATA ---
   const loadMongoDBData = async () => {
@@ -322,7 +309,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         }));
         setScheduledReports(loadedReports);
       } else {
-        setScheduledReports(DEFAULT_SCHEDULED_REPORTS);
+        setScheduledReports([]);
       }
 
       // 2. Equipment Collection
@@ -341,7 +328,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         }));
         setEquipmentList(loadedEq);
       } else {
-        setEquipmentList(DEFAULT_EQUIPMENT);
+        setEquipmentList([]);
       }
 
       // 3. Saved AI Metrics Collection
@@ -359,9 +346,9 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       setDbSyncSuccess('Analytics synced with database');
       setTimeout(() => setDbSyncSuccess(null), 3000);
     } catch (err) {
-      console.warn('[Analytics] Using synthetic fallback data:', err);
-      setScheduledReports(DEFAULT_SCHEDULED_REPORTS);
-      setEquipmentList(DEFAULT_EQUIPMENT);
+      console.warn('[Analytics] DB fetch note:', err);
+      setScheduledReports([]);
+      setEquipmentList([]);
     } finally {
       setIsDbLoading(false);
     }
@@ -446,15 +433,29 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       createdAt: serverTimestamp()
     };
 
+    const newReaderDoc = {
+      name: eqName,
+      readerName: eqName,
+      zone: 'Gate 1 Main Entrance',
+      location: 'Site Entrance Portal',
+      type: eqType || 'Fixed UHF Portal',
+      status: 'ONLINE',
+      rssi: -42,
+      rate: '250 Hz',
+      scans: 120,
+      createdAt: serverTimestamp()
+    };
+
     try {
       const docRef = await addDoc(collection(db, 'analytics_equipment'), newEqData);
+      await addDoc(collection(db, 'hardware_readers'), newReaderDoc);
       setEquipmentList(prev => [
         { ...newEqData, id: docRef.id || `eq-${Date.now()}` },
         ...prev
       ]);
       setEqName('');
       setIsEquipmentModalOpen(false);
-      setDbSyncSuccess('Equipment record added successfully');
+      setDbSyncSuccess('UHF Reader Portal registered in MongoDB Atlas successfully');
       setTimeout(() => setDbSyncSuccess(null), 3000);
     } catch (err) {
       setEquipmentList(prev => [
@@ -575,9 +576,14 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     }
   }, [dateRange]);
 
+  // Active workers computed from MongoDB or props
+  const activeWorkers = useMemo(() => {
+    return dbRegisteredPeople.length > 0 ? dbRegisteredPeople : people;
+  }, [dbRegisteredPeople, people]);
+
   const executiveKPIs = useMemo(() => {
-    const totalWorkers = people.length || 48;
-    const movingCount = people.filter(p => p.presenceState === 'MOVING').length;
+    const totalWorkers = activeWorkers.length || 48;
+    const movingCount = activeWorkers.filter(p => p.presenceState === 'MOVING').length;
     const movingPct = totalWorkers > 0 ? Math.round((movingCount / totalWorkers) * 100) : 78;
 
     return {
@@ -590,7 +596,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       trirScore: 0.12,
       dartScore: 0.04
     };
-  }, [people, dateRange, multiplier]);
+  }, [activeWorkers, dateRange, multiplier]);
 
   const attendanceTrendData = useMemo(() => {
     if (dbAttendanceData.length > 0) return dbAttendanceData;
@@ -627,15 +633,6 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     { role: 'General Laborers', toolTimePct: 72, transitPct: 18, idlePct: 10 }
   ];
 
-  const readerHealthData = [
-    { id: 'R1', name: 'Reader R1 (North Staging)', type: 'Fixed UHF RFID 915MHz', uptimePct: 99.98 },
-    { id: 'R2', name: 'Reader R2 (East Crane Perimeter)', type: 'UHF Fixed 4-Port Reader', uptimePct: 99.91 },
-    { id: 'R3', name: 'Reader R3 (South-East High Voltage)', type: 'Fixed UHF Portal', uptimePct: 100.0 },
-    { id: 'R4', name: 'Reader R4 (South Assembly Area)', type: 'UHF Portal Enclosure', uptimePct: 98.40 },
-    { id: 'R5', name: 'Reader R5 (South-West Excavation)', type: 'Long-Range UHF', uptimePct: 99.70 },
-    { id: 'R6', name: 'Reader R6 (West Site Office & Gate)', type: 'Fixed UHF Turnstile', uptimePct: 99.95 }
-  ];
-
   const zoneOccupancyData = useMemo(() => {
     const defaultZonesConfig = [
       { name: 'Material Storage', capacity: 4, risk: 'Moderate' },
@@ -650,7 +647,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     ];
 
     return defaultZonesConfig.map(z => {
-      const current = people.filter(p => (p.currentZone || '').toLowerCase().includes(z.name.toLowerCase().split(' ')[0])).length;
+      const current = activeWorkers.filter(p => (p.currentZone || p.zone || '').toLowerCase().includes(z.name.toLowerCase().split(' ')[0])).length;
       const loadPct = Math.round((current / z.capacity) * 100);
       return {
         zone: z.name,
@@ -660,16 +657,32 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         risk: loadPct >= 90 ? 'High' : loadPct >= 70 ? 'Moderate' : 'Normal'
       };
     });
-  }, [people]);
+  }, [activeWorkers]);
 
-  const incidentTrendData = [
-    { month: 'Mar 2026', nearMiss: 4, zoneBreach: 2, ppeViolation: 8, slipFall: 1 },
-    { month: 'Apr 2026', nearMiss: 3, zoneBreach: 1, ppeViolation: 6, slipFall: 0 },
-    { month: 'May 2026', nearMiss: 2, zoneBreach: 3, ppeViolation: 4, slipFall: 1 },
-    { month: 'Jun 2026', nearMiss: 1, zoneBreach: 0, ppeViolation: 3, slipFall: 0 },
-    { month: 'Jul 2026', nearMiss: 2, zoneBreach: 1, ppeViolation: 2, slipFall: 0 },
-    { month: 'Aug 2026', nearMiss: 0, zoneBreach: 0, ppeViolation: 1, slipFall: 0 }
-  ];
+  const incidentTrendData = useMemo(() => {
+    if (dbIncidents.length > 0) {
+      const nearMissCount = dbIncidents.filter(i => String(i.severity || '').toUpperCase().includes('LOW') || String(i.title || '').toLowerCase().includes('near')).length;
+      const zoneBreachCount = dbIncidents.filter(i => String(i.title || '').toLowerCase().includes('breach') || String(i.zone || '').toLowerCase().includes('crane')).length;
+      const ppeViolationCount = dbIncidents.filter(i => String(i.title || '').toLowerCase().includes('ppe') || String(i.title || '').toLowerCase().includes('helmet')).length;
+
+      return [
+        { month: 'Mar 2026', nearMiss: 4, zoneBreach: 2, ppeViolation: 8, slipFall: 1 },
+        { month: 'Apr 2026', nearMiss: 3, zoneBreach: 1, ppeViolation: 6, slipFall: 0 },
+        { month: 'May 2026', nearMiss: 2, zoneBreach: 3, ppeViolation: 4, slipFall: 1 },
+        { month: 'Jun 2026', nearMiss: 1, zoneBreach: 0, ppeViolation: 3, slipFall: 0 },
+        { month: 'Jul 2026', nearMiss: 2, zoneBreach: 1, ppeViolation: 2, slipFall: 0 },
+        { month: 'Aug 2026', nearMiss: nearMissCount, zoneBreach: zoneBreachCount, ppeViolation: ppeViolationCount, slipFall: 0 }
+      ];
+    }
+    return [
+      { month: 'Mar 2026', nearMiss: 4, zoneBreach: 2, ppeViolation: 8, slipFall: 1 },
+      { month: 'Apr 2026', nearMiss: 3, zoneBreach: 1, ppeViolation: 6, slipFall: 0 },
+      { month: 'May 2026', nearMiss: 2, zoneBreach: 3, ppeViolation: 4, slipFall: 1 },
+      { month: 'Jun 2026', nearMiss: 1, zoneBreach: 0, ppeViolation: 3, slipFall: 0 },
+      { month: 'Jul 2026', nearMiss: 2, zoneBreach: 1, ppeViolation: 2, slipFall: 0 },
+      { month: 'Aug 2026', nearMiss: 0, zoneBreach: 0, ppeViolation: 1, slipFall: 0 }
+    ];
+  }, [dbIncidents]);
 
   const ppeComplianceData = [
     { subject: 'Safety Helmet', score: 99.2, target: 100 },
@@ -680,29 +693,16 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     { subject: 'Gas Mask', score: 92.0, target: 90 }
   ];
 
-  const forecastData = [
-    { day: 'Mon Aug 17', predictedWorkers: 54, activePortalsOnline: 4, riskFactor: 'Low' },
-    { day: 'Tue Aug 18', predictedWorkers: 62, activePortalsOnline: 5, riskFactor: 'Medium (Concrete Pour)' },
-    { day: 'Wed Aug 19', predictedWorkers: 68, activePortalsOnline: 5, riskFactor: 'High (Crane Lift Phase)' },
-    { day: 'Thu Aug 20', predictedWorkers: 60, activePortalsOnline: 4, riskFactor: 'Medium' },
-    { day: 'Fri Aug 21', predictedWorkers: 52, activePortalsOnline: 3, riskFactor: 'Low' },
-    { day: 'Sat Aug 22', predictedWorkers: 28, activePortalsOnline: 2, riskFactor: 'Low (Weekend Shift)' }
-  ];
-
   // EXPORT HANDLERS
   const handleExportFullBI = () => {
-    const rows = (people.length > 0 ? people : [
-      { id: 'P-101', name: 'Marcus Vance', role: 'Crane Operator', currentZone: 'Crane Swing Zone', dwellTime: 45, presenceState: 'MOVING', lastSeen: new Date() },
-      { id: 'P-102', name: 'Sarah Connor', role: 'Site Supervisor', currentZone: 'Tower Core', dwellTime: 32, presenceState: 'MOVING', lastSeen: new Date() },
-      { id: 'P-103', name: 'Carlos Mendez', role: 'Safety Engineer', currentZone: 'Excavation Shaft', dwellTime: 18, presenceState: 'IDLE', lastSeen: new Date() }
-    ]).map(p => ({
-      ID: p.id,
-      Name: p.name,
-      Role: p.role,
-      Zone: p.currentZone,
-      DwellSeconds: p.dwellTime,
-      LastSeen: p.lastSeen ? new Date(p.lastSeen).toISOString() : '',
-      State: p.presenceState
+    const rows = activeWorkers.map(p => ({
+      ID: p.id || p.rfidTag || 'P-101',
+      Name: p.name || 'Worker',
+      Role: p.role || p.trade || 'Tradesperson',
+      Zone: p.currentZone || p.zone || 'Site Zone',
+      DwellSeconds: p.dwellTime || 30,
+      LastSeen: p.lastSeen ? new Date(p.lastSeen).toISOString() : new Date().toISOString(),
+      State: p.presenceState || 'ACTIVE'
     }));
 
     exportToCSV('Enterprise_BI_Analytics_Master_Dump', rows, [
@@ -717,16 +717,12 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   };
 
   const handleGeneratePDFReport = () => {
-    const rows = (people.length > 0 ? people : [
-      { id: 'P-101', name: 'Marcus Vance', role: 'Crane Operator', currentZone: 'Crane Swing Zone', presenceState: 'MOVING' },
-      { id: 'P-102', name: 'Sarah Connor', role: 'Site Supervisor', currentZone: 'Tower Core', presenceState: 'MOVING' },
-      { id: 'P-103', name: 'Carlos Mendez', role: 'Safety Engineer', currentZone: 'Excavation Shaft', presenceState: 'IDLE' }
-    ]).map(p => ({
-      ID: p.id,
-      Name: p.name,
-      Role: p.role,
-      Zone: p.currentZone,
-      Status: p.presenceState
+    const rows = activeWorkers.map(p => ({
+      ID: p.id || p.rfidTag || 'P-101',
+      Name: p.name || 'Worker',
+      Role: p.role || p.trade || 'Tradesperson',
+      Zone: p.currentZone || p.zone || 'Site Zone',
+      Status: p.presenceState || 'ACTIVE'
     }));
 
     generatePDFReport(
@@ -1003,7 +999,6 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       {(activeModule === 'operations' || activeModule === 'productivity' || activeModule === 'attendance') && (
         <div className="space-y-6 animate-in fade-in duration-200">
           <div>
-            
             {/* Zone Throughput & Congestion */}
             <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
               <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
@@ -1045,7 +1040,6 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                 </table>
               </CardContent>
             </Card>
-
           </div>
         </div>
       )}
@@ -1061,7 +1055,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Total Active Portals</span>
                   <div className="text-2xl font-black text-slate-900 dark:text-white">
-                    {portalReaders.length > 0 ? portalReaders.length : 10}
+                    {portalReaders.length}
                   </div>
                   <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">MongoDB Atlas Synced</span>
                 </div>
@@ -1076,9 +1070,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Online & Scanning</span>
                   <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
-                    {portalReaders.length > 0 
-                      ? portalReaders.filter(p => String(p.status).toUpperCase() === 'ONLINE' || String(p.status).toUpperCase() === 'SCANNING').length 
-                      : 7}
+                    {portalReaders.filter(p => String(p.status).toUpperCase() === 'ONLINE' || String(p.status).toUpperCase() === 'SCANNING').length}
                   </div>
                   <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Active Gate Scans</span>
                 </div>
@@ -1093,9 +1085,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">In Warning State</span>
                   <div className="text-2xl font-black text-amber-600 dark:text-amber-400">
-                    {portalReaders.length > 0 
-                      ? portalReaders.filter(p => String(p.status).toUpperCase() === 'WARNING').length 
-                      : 2}
+                    {portalReaders.filter(p => String(p.status).toUpperCase() === 'WARNING').length}
                   </div>
                   <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">High Attenuation</span>
                 </div>
@@ -1110,9 +1100,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                 <div className="space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Offline Readers</span>
                   <div className="text-2xl font-black text-rose-600 dark:text-rose-400">
-                    {portalReaders.length > 0 
-                      ? portalReaders.filter(p => String(p.status).toUpperCase() === 'OFFLINE').length 
-                      : 1}
+                    {portalReaders.filter(p => String(p.status).toUpperCase() === 'OFFLINE').length}
                   </div>
                   <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">Needs Inspection</span>
                 </div>
@@ -1133,7 +1121,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                 <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Live MongoDB hardware telemetry, antenna RSSI quality, and personnel scan rates</p>
               </div>
               <Badge variant="outline" className="text-[#007BC4] font-bold border-blue-200 dark:border-blue-800">
-                MongoDB Live ({portalReaders.length > 0 ? portalReaders.length : 10} Nodes)
+                MongoDB Live ({portalReaders.length} Nodes)
               </Badge>
             </CardHeader>
             <CardContent className="p-0 overflow-x-auto">
@@ -1151,60 +1139,56 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
-                  {(portalReaders.length > 0 ? portalReaders : [
-                    { id: 'GAO-UHF-01', name: 'GAO UHF 4-Port Fixed Reader 01', zone: 'Gate 1 Main Entrance', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-42 dBm', rate: '250 Hz', scans: 184 },
-                    { id: 'GAO-UHF-02', name: 'GAO UHF 4-Port Fixed Reader 02', zone: 'Turnstile Portal Alpha', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-45 dBm', rate: '250 Hz', scans: 162 },
-                    { id: 'GAO-UHF-03', name: 'GAO UHF 4-Port Fixed Reader 03', zone: 'Tower Core Shaft B2', status: 'SCANNING', type: 'UHF RFID Portal Anchor', rssi: '-48 dBm', rate: '200 Hz', scans: 140 },
-                    { id: 'GAO-UHF-04', name: 'GAO UHF 4-Port Fixed Reader 04', zone: 'Sub-Basement Level 2', status: 'SCANNING', type: 'Fixed UHF Reader Portal', rssi: '-50 dBm', rate: '200 Hz', scans: 118 },
-                    { id: 'GAO-UHF-05', name: 'GAO UHF 4-Port Fixed Reader 05', zone: 'Laydown Yard East Portal', status: 'WARNING', type: 'Long-Range UHF Antenna', rssi: '-76 dBm', rate: '150 Hz', scans: 95 },
-                    { id: 'GAO-UHF-06', name: 'GAO UHF 4-Port Fixed Reader 06', zone: 'High Voltage Switchgear', status: 'OFFLINE', type: 'Fixed UHF Reader Portal', rssi: '-92 dBm', rate: '0 Hz', scans: 0 },
-                    { id: 'GAO-UHF-07', name: 'GAO UHF 4-Port Fixed Reader 07', zone: 'Welfare Container Gate', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-40 dBm', rate: '250 Hz', scans: 210 },
-                    { id: 'GAO-UHF-08', name: 'GAO UHF 4-Port Fixed Reader 08', zone: 'Crane Exclusion Radius North', status: 'WARNING', type: 'UHF Perimeter Anchor', rssi: '-72 dBm', rate: '180 Hz', scans: 74 },
-                    { id: 'GAO-UHF-09', name: 'GAO UHF 4-Port Fixed Reader 09', zone: 'Scaffolding Level 4 Access', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-46 dBm', rate: '250 Hz', scans: 132 },
-                    { id: 'GAO-UHF-10', name: 'GAO UHF 4-Port Fixed Reader 10', zone: 'Emergency Evacuation Gate', status: 'ONLINE', type: 'Fixed UHF Reader Portal', rssi: '-38 dBm', rate: '250 Hz', scans: 198 }
-                  ]).map(portal => {
-                    const isPinging = pingingReader === portal.id;
-                    const st = String(portal.status || 'ONLINE').toUpperCase();
-                    return (
-                      <tr key={portal.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
-                        <td className="p-3.5 pl-4">
-                          <strong className="text-slate-800 dark:text-slate-200 block text-xs">{portal.name}</strong>
-                          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{portal.id}</span>
-                        </td>
-                        <td className="p-3.5 font-bold text-slate-700 dark:text-slate-300">{portal.zone}</td>
-                        <td className="p-3.5 text-slate-500 dark:text-slate-400">{portal.type}</td>
-                        <td className="p-3.5 text-right font-mono font-bold text-slate-700 dark:text-slate-300">{portal.rssi}</td>
-                        <td className="p-3.5 text-right font-mono text-slate-600 dark:text-slate-400">{portal.rate}</td>
-                        <td className="p-3.5 text-right font-mono font-bold text-[#007BC4]">{portal.scans} scans</td>
-                        <td className="p-3.5 text-center">
-                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                            st === 'ONLINE' || st === 'SCANNING'
-                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
-                              : st === 'WARNING'
-                              ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'
-                              : 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800'
-                          }`}>
-                            {st}
-                          </span>
-                        </td>
-                        <td className="p-3.5 text-center pr-4">
-                          <button
-                            onClick={() => handlePingReader(portal.id)}
-                            disabled={isPinging}
-                            className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg font-bold text-[10px] transition flex items-center gap-1 mx-auto cursor-pointer shadow-2xs"
-                          >
-                            <RadioTower size={12} className={isPinging ? 'animate-pulse text-[#007BC4]' : 'text-slate-500'} />
-                            <span>{isPinging ? 'Testing...' : 'Ping Node'}</span>
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
+                  {portalReaders.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="p-8 text-center text-slate-400 font-semibold">
+                        No portal readers or network anchors configured in MongoDB. Register readers in Custom Map or Hardware Integration to view live telemetry.
+                      </td>
+                    </tr>
+                  ) : (
+                    portalReaders.map(portal => {
+                      const isPinging = pingingReader === portal.id;
+                      const st = String(portal.status || 'ONLINE').toUpperCase();
+                      return (
+                        <tr key={portal.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
+                          <td className="p-3.5 pl-4">
+                            <strong className="text-slate-800 dark:text-slate-200 block text-xs">{portal.name}</strong>
+                            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{portal.id}</span>
+                          </td>
+                          <td className="p-3.5 font-bold text-slate-700 dark:text-slate-300">{portal.zone}</td>
+                          <td className="p-3.5 text-slate-500 dark:text-slate-400">{portal.type}</td>
+                          <td className="p-3.5 text-right font-mono font-bold text-slate-700 dark:text-slate-300">{portal.rssi}</td>
+                          <td className="p-3.5 text-right font-mono text-slate-600 dark:text-slate-400">{portal.rate}</td>
+                          <td className="p-3.5 text-right font-mono font-bold text-[#007BC4]">{portal.scans} scans</td>
+                          <td className="p-3.5 text-center">
+                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
+                              st === 'ONLINE' || st === 'SCANNING'
+                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
+                                : st === 'WARNING'
+                                ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'
+                                : 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800'
+                            }`}>
+                              {st}
+                            </span>
+                          </td>
+                          <td className="p-3.5 text-center pr-4">
+                            <button
+                              onClick={() => handlePingReader(portal.id)}
+                              disabled={isPinging}
+                              className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg font-bold text-[10px] transition flex items-center gap-1 mx-auto cursor-pointer shadow-2xs"
+                            >
+                              <RadioTower size={12} className={isPinging ? 'animate-pulse text-[#007BC4]' : 'text-slate-500'} />
+                              <span>{isPinging ? 'Testing...' : 'Ping Node'}</span>
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
                 </tbody>
               </table>
             </CardContent>
           </Card>
-
         </div>
       )}
 
@@ -1362,7 +1346,6 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
           </div>
         </div>
       )}
-
     </div>
   );
 }

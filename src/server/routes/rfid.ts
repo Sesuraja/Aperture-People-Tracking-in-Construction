@@ -124,17 +124,14 @@ function getDefaultRealtimeTags() {
 
 // 1. GET /api/GetHistoryTotalCount
 const handleGetTotalCount = async (req: Request, res: Response) => {
+  const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
   try {
-    const isDemo = req.query.demo === 'true' || req.headers['x-demo-mode'] === 'true';
-    const history = await getCollectionDocs('tag_history');
-    let total = history.length;
-    if (total === 0 && isDemo) {
-      total = getDefaultHistoryRecords().length;
-    }
+    const history = await getCollectionDocs('tag_history', undefined, orgId);
+    const total = history.length;
     
     // According to GAO spec: Response body is plain number e.g. 100 with application/json header
     if (req.query.format === 'object') {
-      return res.json({ totalCount: total, count: total });
+      return res.json({ totalCount: total, count: total, organizationId: orgId });
     }
     res.setHeader('Content-Type', 'application/json');
     return res.status(200).send(String(total));
@@ -152,14 +149,11 @@ const handleGetHistory = async (req: Request, res: Response) => {
   const skipCount = parseInt(req.params.SkipCount || req.params.skip || (req.query.skip as string) || '0', 10);
   const rawTake = parseInt(req.params.TakeCount || req.params.take || (req.query.take as string) || '50', 10);
   const takeCount = Math.min(Math.max(1, rawTake), 200); // Max value is 200 per GAO spec
-  const isDemo = req.query.demo === 'true' || req.headers['x-demo-mode'] === 'true';
+  const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
 
   try {
-    const dbHistory = await getCollectionDocs('tag_history');
-    let records = dbHistory;
-    if (records.length === 0 && isDemo) {
-      records = getDefaultHistoryRecords();
-    }
+    const dbHistory = await getCollectionDocs('tag_history', undefined, orgId);
+    const records = dbHistory;
 
     // Ensure all records strictly match the GAO specification fields
     const formattedRecords = records.map((item: any) => {
@@ -210,14 +204,11 @@ rfidRouter.get('/history', handleGetHistory);
 
 // 3. GET /api/GetTagsInRealtime
 const handleGetRealtime = async (req: Request, res: Response) => {
-  const isDemo = req.query.demo === 'true' || req.headers['x-demo-mode'] === 'true';
+  const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
 
   try {
-    const liveTags = await getCollectionDocs('live_tags');
-    let tagsToProcess = liveTags;
-    if (tagsToProcess.length === 0 && isDemo) {
-      tagsToProcess = getDefaultRealtimeTags();
-    }
+    const liveTags = await getCollectionDocs('live_tags', undefined, orgId);
+    const tagsToProcess = liveTags;
 
     const formattedTags = tagsToProcess.map((item: any) => {
       const ts = item.Timestamp || item.timestamp || item.lastSeen || new Date().toISOString();
@@ -276,6 +267,7 @@ function requireDeviceApiKey(req: Request, res: Response, next: () => void) {
 
 // POST /api/rfid/scan - Post new tag scans into system
 rfidRouter.post('/scan', requireDeviceApiKey, async (req: Request, res: Response) => {
+  const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
   const parseResult = scanSchema.safeParse(req.body);
   if (!parseResult.success) {
     return res.status(400).json({
@@ -291,13 +283,11 @@ rfidRouter.post('/scan', requireDeviceApiKey, async (req: Request, res: Response
   const lastName = data.LastName || (data.name ? data.name.split(' ').slice(1).join(' ') : 'Member');
   
   const now = new Date();
-  const timestampIso = now.toISOString();
-  const utcDateTimeStr = formatUtcDateTime(now);
-  const utcTimestampMsStr = formatUtcTimestampMs(now);
 
   try {
     const scanPayload = {
       TagID: tagId,
+      organizationId: orgId,
       Location: location,
       FirstName: firstName,
       LastName: lastName,
@@ -307,17 +297,19 @@ rfidRouter.post('/scan', requireDeviceApiKey, async (req: Request, res: Response
       readerId: data.readerId
     };
 
-    const aiResult = await processTelemetryWithAI(scanPayload, 'HTTP API Scan');
+    const aiResult = await processTelemetryWithAI(scanPayload, 'HTTP API Scan', orgId);
 
     await logAuditEvent({
+      organizationId: orgId,
       action: 'RFID_SCAN_EVENT',
       resource: 'rfid',
-      details: { TagID: tagId, worker: `${firstName} ${lastName}`, Location: location },
+      details: { TagID: tagId, worker: `${firstName} ${lastName}`, Location: location, organizationId: orgId },
       ip: req.ip
     });
 
     return res.json({
       message: 'Scan recorded and analyzed by AI Engine successfully',
+      organizationId: orgId,
       scanRecord: aiResult.analyzedResults[0]
     });
   } catch (err: any) {
@@ -328,16 +320,18 @@ rfidRouter.post('/scan', requireDeviceApiKey, async (req: Request, res: Response
 
 // POST /api/rfid/realtime-tags/bulk - Process raw incoming WebSocket tag streams and perform bulk write to MongoDB 'real_time_tags'
 rfidRouter.post('/realtime-tags/bulk', requireDeviceApiKey, async (req: Request, res: Response) => {
+  const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
   try {
     const rawTags = req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
     if (!Array.isArray(rawTags) || rawTags.length === 0) {
       return res.status(400).json({ error: 'Array of tag records required in body' });
     }
 
-    const aiResult = await processTelemetryWithAI(rawTags, 'HTTP Bulk Stream');
+    const aiResult = await processTelemetryWithAI(rawTags, 'HTTP Bulk Stream', orgId);
 
     return res.json({
       success: true,
+      organizationId: orgId,
       message: `Successfully processed AI analysis & bulk write of ${aiResult.processedCount} tags into MongoDB collections.`,
       analyzedResults: aiResult.analyzedResults
     });
@@ -348,10 +342,11 @@ rfidRouter.post('/realtime-tags/bulk', requireDeviceApiKey, async (req: Request,
 });
 
 rfidRouter.post('/bulk-ingest', requireDeviceApiKey, async (req: Request, res: Response) => {
+  const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'demo';
   try {
     const rawTags = req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
-    const aiResult = await processTelemetryWithAI(rawTags, 'Bulk Ingest Stream');
-    return res.json({ success: true, processedCount: aiResult.processedCount, analyzedResults: aiResult.analyzedResults });
+    const aiResult = await processTelemetryWithAI(rawTags, 'Bulk Ingest Stream', orgId);
+    return res.json({ success: true, organizationId: orgId, processedCount: aiResult.processedCount, analyzedResults: aiResult.analyzedResults });
   } catch (err: any) {
     return res.status(500).json({ error: err.message || 'Failed bulk ingest' });
   }

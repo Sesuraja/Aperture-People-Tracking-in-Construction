@@ -60,7 +60,10 @@ export interface DirectHardwareScanPayload {
 /**
  * 1. Process Direct Hardware Scan (Reader → Software → Data Processing → AI Engine → MongoDB → Dashboard)
  */
-export async function processDirectHardwareScan(scan: DirectHardwareScanPayload): Promise<{
+export async function processDirectHardwareScan(
+  scan: DirectHardwareScanPayload,
+  organizationId: string = 'demo'
+): Promise<{
   success: boolean;
   resolvedEntity: { name: string; type: string; role?: string };
   resolvedZone: string;
@@ -72,7 +75,7 @@ export async function processDirectHardwareScan(scan: DirectHardwareScanPayload)
   const rawTagId = String(scan.tagId || `TAG_${Date.now()}`).trim();
 
   // STEP 1: RESOLVE READER & ANTENNA ZONE MAPPING
-  const readers: HardwareReader[] = await getCollectionDocs('hardware_readers');
+  const readers: HardwareReader[] = await getCollectionDocs('hardware_readers', undefined, organizationId);
   const matchedReader = readers.find(r => r.readerId === scan.readerId || r.id === scan.readerId);
   
   let resolvedZone = 'Main Facility Perimeter';
@@ -85,8 +88,8 @@ export async function processDirectHardwareScan(scan: DirectHardwareScanPayload)
   }
 
   // STEP 2: RESOLVE TAG TO USER/ASSET MAPPING
-  const tagMappings: TagEntityMapping[] = await getCollectionDocs('hardware_tag_mappings');
-  const people: any[] = (await getCollectionDocs('registered_people')) || [];
+  const tagMappings: TagEntityMapping[] = await getCollectionDocs('hardware_tag_mappings', undefined, organizationId);
+  const people: any[] = (await getCollectionDocs('registered_people', undefined, organizationId)) || [];
   
   const matchedTag = tagMappings.find(t => t.tagId.toLowerCase() === rawTagId.toLowerCase());
   const matchedPerson = people.find((p: any) => (p.tagId || p.TagID || p.badgeId || p.id)?.toLowerCase() === rawTagId.toLowerCase());
@@ -115,6 +118,7 @@ export async function processDirectHardwareScan(scan: DirectHardwareScanPayload)
   const telemetry: TelemetryPayload = {
     TagID: rawTagId,
     tagId: rawTagId,
+    organizationId,
     Location: resolvedZone,
     LocationName: resolvedZone,
     Timestamp: scan.timestamp || nowIso,
@@ -127,7 +131,7 @@ export async function processDirectHardwareScan(scan: DirectHardwareScanPayload)
   };
 
   // STEP 4: PASS THROUGH AI ENGINE & PERSIST IN MONGODB
-  const aiResult = await processTelemetryWithAI([telemetry], `Direct Hardware: ${matchedReader?.name || scan.readerId}`);
+  const aiResult = await processTelemetryWithAI([telemetry], `Direct Hardware: ${matchedReader?.name || scan.readerId}`, organizationId);
   const analyzed = aiResult.analyzedResults[0];
 
   // STEP 5: UPDATE READER HEALTH & STATS IN MONGODB
@@ -140,8 +144,8 @@ export async function processDirectHardwareScan(scan: DirectHardwareScanPayload)
       lastPingAt: nowIso,
       updatedAt: nowIso
     };
-    await upsertDoc('hardware_readers', updatedReader);
-    broadcastWebSocketEvent('hardware_reader_update', updatedReader);
+    await upsertDoc('hardware_readers', updatedReader, organizationId);
+    broadcastWebSocketEvent('hardware_reader_update', updatedReader, organizationId);
   }
 
   // STEP 6: UPDATE TAG MAPPING LAST SEEN
@@ -150,7 +154,7 @@ export async function processDirectHardwareScan(scan: DirectHardwareScanPayload)
       ...matchedTag,
       lastSeenAt: nowIso,
       lastSeenZone: resolvedZone
-    });
+    }, organizationId);
   }
 
   return {
@@ -171,9 +175,28 @@ export async function processDirectHardwareScan(scan: DirectHardwareScanPayload)
  * 2. Bootstrap default Hardware Readers and Tag Mappings
  */
 export async function bootstrapDefaultHardware(): Promise<void> {
-  const existingReaders = await getCollectionDocs('hardware_readers');
+  const existingReaders = await getCollectionDocs('hardware_readers', undefined, 'demo');
   if (existingReaders.length === 0) {
     const defaultReaders: HardwareReader[] = [
+      {
+        id: 'reader_meeting_room_216031a',
+        readerId: '100EHH8325020026',
+        name: 'Meeting Room Portal (GAO 216031A)',
+        model: 'GAO 216031A UHF RFID Reader',
+        ipAddress: '192.168.1.120',
+        port: 8080,
+        protocol: 'HTTP Push',
+        powerDbm: 30,
+        sensitivityDbm: -75,
+        status: 'ONLINE',
+        antennas: [
+          { port: 1, name: 'Antenna 1 (Built-in Inside Meeting Room / Chair)', zoneId: 'zone_meeting_room_in', zoneName: 'Meeting Room (Inside)', direction: 'IN', powerDbm: 30 },
+          { port: 2, name: 'Antenna 2 (Top Ceiling / Facing Outside Corridor)', zoneId: 'zone_meeting_room_out', zoneName: 'Meeting Room (Outside / Corridor)', direction: 'OUT', powerDbm: 30 }
+        ],
+        totalScans: 0,
+        lastPingAt: new Date().toISOString(),
+        createdAt: new Date().toISOString()
+      },
       {
         id: 'reader_gate_01',
         readerId: 'GAO-UHF-818-A',
@@ -233,11 +256,11 @@ export async function bootstrapDefaultHardware(): Promise<void> {
     ];
 
     for (const reader of defaultReaders) {
-      await upsertDoc('hardware_readers', reader);
+      await upsertDoc('hardware_readers', reader, 'demo');
     }
   }
 
-  const existingMappings = await getCollectionDocs('hardware_tag_mappings');
+  const existingMappings = await getCollectionDocs('hardware_tag_mappings', undefined, 'demo');
   if (existingMappings.length === 0) {
     const defaultMappings: TagEntityMapping[] = [
       {
@@ -287,11 +310,35 @@ export async function bootstrapDefaultHardware(): Promise<void> {
         assignedZone: 'HQ & Site A',
         status: 'ACTIVE',
         createdAt: new Date().toISOString()
+      },
+      {
+        id: 'map_05',
+        tagId: '000000010000000000051509',
+        entityType: 'PERSONNEL',
+        entityId: 'EMP-51509',
+        entityName: 'Johnathan Hayes',
+        roleOrTrade: 'Operations Lead',
+        department: 'Project Management',
+        assignedZone: 'Meeting Room (Inside)',
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: 'map_06',
+        tagId: 'E2806894',
+        entityType: 'PERSONNEL',
+        entityId: 'EMP-6894',
+        entityName: 'Sarah Jenkins',
+        roleOrTrade: 'Site Engineer',
+        department: 'Engineering & EHS',
+        assignedZone: 'Meeting Room (Inside)',
+        status: 'ACTIVE',
+        createdAt: new Date().toISOString()
       }
     ];
 
     for (const map of defaultMappings) {
-      await upsertDoc('hardware_tag_mappings', map);
+      await upsertDoc('hardware_tag_mappings', map, 'demo');
     }
   }
 }

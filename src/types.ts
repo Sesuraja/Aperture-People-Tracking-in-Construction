@@ -314,3 +314,6 @@ export interface EmergencyBroadcast {
   status: 'ACTIVE' | 'CLEARED';
 }
 
+export type { IndustryConfig, IndustryTerminology } from './constants/industryPresets';
+
+

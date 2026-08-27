@@ -1,7 +1,3 @@
-import dns from 'dns';
-// Override system DNS with reliable public resolvers so MongoDB Atlas SRV records resolve correctly
-dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
-
 import dotenv from 'dotenv';
 dotenv.config();
 
@@ -27,20 +23,14 @@ import { hardwareRouter } from './src/server/routes/hardware.js';
 import { realtimeRouter } from './src/server/routes/realtime.js';
 import { demoRouter } from './src/server/routes/demo.js';
 import { errorHandler } from './src/server/middleware/errorHandler.js';
+import { initMockGaoAdapter } from './src/server/services/mockGaoAdapter.js';
 
 export const app = express();
 app.set('trust proxy', 1);
 
 async function startServer() {
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
   const httpServer = http.createServer(app);
-
-  // Initialize DB and bootstrap Admin user if specified
-  await initDatabase();
-  startRealTimeTagsCleanupJob(15, 60);
-  startPollingService();
-  await bootstrapAdminUser();
-  initWebSocketServer(httpServer);
 
   // Helmet HTTP security headers (configured for iframe & SPA compatibility)
   app.use(helmet({
@@ -113,8 +103,30 @@ async function startServer() {
     });
   }
 
+  // Initialize WebSocket and Background Services
+  initWebSocketServer(httpServer);
+
+  // Initialize DB asynchronously without blocking HTTP server startup
+  initDatabase().then(async () => {
+    startRealTimeTagsCleanupJob(15, 60);
+    startPollingService();
+    await bootstrapAdminUser();
+  }).catch((e) => {
+    console.warn('[DB Service] Async DB initialization note:', e?.message);
+  });
+
+  // Initialize GAO216031A Mock Adapter (bootstraps readers; auto-starts if GAO_SIMULATOR_ENABLED=true)
+  initMockGaoAdapter().catch((e: any) => {
+    console.warn('[Server] GAO Mock Adapter init warning (non-fatal):', e?.message);
+  });
+
   httpServer.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Server] GAO People Tracking Server running on http://0.0.0.0:${PORT} (WS on /ws)`);
+    console.log(`\n=======================================================`);
+    console.log(`🚀 Aperture Construction People Tracking System Ready!`);
+    console.log(`🌐 Local Web Dashboard: http://localhost:${PORT}`);
+    console.log(`📡 Network Access:      http://0.0.0.0:${PORT}`);
+    console.log(`🔌 WebSocket Stream:    ws://localhost:${PORT}/ws`);
+    console.log(`=======================================================\n`);
   });
 }
 

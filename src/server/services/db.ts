@@ -31,6 +31,7 @@ try {
 
 // Transient in-memory store for dev fallback when MongoDB is not connected
 const inMemoryStore: Record<string, any[]> = {
+  organizations: [],
   users: [],
   permissions: [],
   role_permissions: [],
@@ -97,12 +98,16 @@ export async function initDatabase(customUri?: string): Promise<void> {
       mongoClient = null;
       mongoDb = null;
     }
-    
+
     mongoClient = new MongoClient(uri, {
-      serverSelectionTimeoutMS: 6000,
-      connectTimeoutMS: 6000,
-      socketTimeoutMS: 15000,
-      maxPoolSize: 10
+      serverSelectionTimeoutMS: 15000,
+      connectTimeoutMS: 15000,
+      socketTimeoutMS: 45000,
+      maxPoolSize: 50,
+      minPoolSize: 2,
+      maxIdleTimeMS: 60000,
+      retryWrites: true,
+      retryReads: true
     });
     
     await mongoClient.connect();
@@ -115,7 +120,7 @@ export async function initDatabase(customUri?: string): Promise<void> {
       fs.writeFileSync(PERSISTENT_CONFIG_FILE, JSON.stringify({ mongodbUri: uri, updatedAt: new Date().toISOString() }), 'utf-8');
     } catch {}
 
-    console.log('[DB Service] Successfully connected to MongoDB database.');
+    console.log('[DB Service] Successfully connected to MongoDB Atlas database.');
   } catch (err: any) {
     console.error('[DB Service] Failed to connect to MongoDB:', err.message);
     console.warn('[DB Service] Operating with in-memory storage fallback.');
@@ -141,11 +146,20 @@ export function getDbStatus() {
 
 export async function getMongoStats() {
   const uri = getMongoUri();
-  const connected = isMongoConnected();
+  let connected = isMongoConnected();
   let collectionsCount = 0;
   let totalRecords = 0;
   let collectionsBreakdown: Record<string, number> = {};
   let lastError: string | null = null;
+
+  if (!connected && uri) {
+    try {
+      await initDatabase(uri);
+      connected = isMongoConnected();
+    } catch (err: any) {
+      lastError = err.message;
+    }
+  }
 
   if (connected && mongoDb) {
     try {
@@ -153,13 +167,22 @@ export async function getMongoStats() {
       collectionsCount = cols.length;
       for (const col of cols) {
         try {
-          const count = await mongoDb.collection(col.name).countDocuments();
+          const count = await mongoDb.collection(col.name).estimatedDocumentCount();
           totalRecords += count;
           collectionsBreakdown[col.name] = count;
-        } catch {}
+        } catch {
+          try {
+            const count = await mongoDb.collection(col.name).countDocuments();
+            totalRecords += count;
+            collectionsBreakdown[col.name] = count;
+          } catch {}
+        }
       }
     } catch (err: any) {
       lastError = err.message;
+      try {
+        await initDatabase(uri);
+      } catch {}
     }
   } else {
     // In-memory breakdown for fallback inspection
@@ -170,7 +193,9 @@ export async function getMongoStats() {
       }
     }
     collectionsCount = Object.keys(collectionsBreakdown).length;
-    lastError = 'MongoDB is not connected (operating with in-memory fallback)';
+    if (!lastError) {
+      lastError = 'MongoDB is not connected (operating with in-memory fallback)';
+    }
   }
 
   const maskedUri = uri ? uri.replace(/\/\/[^:]+:[^@]+@/, '//***:***@') : '';
@@ -230,7 +255,11 @@ export async function reconnectDatabase(newUriInput: string): Promise<{ success:
   }
 }
 
-export async function getCollectionDocs(colName: string, opts?: { limit?: number; sort?: Record<string, 1 | -1> }): Promise<any[]> {
+export async function getCollectionDocs(
+  colName: string,
+  opts?: { limit?: number; sort?: Record<string, 1 | -1> },
+  organizationId?: string
+): Promise<any[]> {
   if (mongoDb) {
     try {
       // Per-collection default limits to prevent timeouts on very large collections
@@ -245,7 +274,12 @@ export async function getCollectionDocs(colName: string, opts?: { limit?: number
       const limit  = opts?.limit  ?? DEFAULT_LIMITS[colName] ?? 0;   // 0 = no limit
       const sort   = opts?.sort   ?? (DEFAULT_LIMITS[colName] ? { createdAt: -1 } : {});
 
-      let cursor = mongoDb.collection(colName).find({});
+      const query: any = {};
+      if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
+        query.organizationId = organizationId;
+      }
+
+      let cursor = mongoDb.collection(colName).find(query);
       if (Object.keys(sort).length)  cursor = cursor.sort(sort as any);
       if (limit > 0)                 cursor = cursor.limit(limit);
 
@@ -253,6 +287,9 @@ export async function getCollectionDocs(colName: string, opts?: { limit?: number
       return docs.map(doc => {
         const { _id, ...rest } = doc;
         const out: any = { id: doc.id || (_id ? _id.toString() : undefined), ...rest };
+        if (!out.organizationId && colName !== 'organizations') {
+          out.organizationId = 'demo';
+        }
         // Normalise duplicate TagID / tagId keys written by different ingestion paths
         if (colName === 'live_tags' || colName === 'real_time_tags' || colName === 'rfid_realtime_events') {
           if (out.TagID !== undefined && out.tagId !== undefined) {
@@ -266,17 +303,47 @@ export async function getCollectionDocs(colName: string, opts?: { limit?: number
       console.error(`[DB Service] Error fetching docs for ${colName}:`, err);
     }
   }
-  return inMemoryStore[colName] || [];
+  const items = inMemoryStore[colName] || [];
+  if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
+    return items.filter((item: any) => 
+      organizationId === 'demo'
+        ? (item.organizationId === 'demo' || !item.organizationId)
+        : item.organizationId === organizationId
+    );
+  }
+  return items;
 }
 
-
-export async function getDocById(colName: string, id: string): Promise<any | null> {
+export async function getDocById(colName: string, id: string, organizationId?: string): Promise<any | null> {
   if (mongoDb) {
     try {
-      const doc = await mongoDb.collection(colName).findOne({ id });
+      const idStr = String(id || '').trim();
+      const orClauses: any[] = [
+        { id: idStr },
+        { id: idStr.toUpperCase() },
+        { id: idStr.toLowerCase() },
+        { hardhatTagId: idStr },
+        { hardhatTagId: idStr.toUpperCase() }
+      ];
+      if (ObjectId.isValid(idStr) && idStr.length === 24) {
+        try {
+          orClauses.push({ _id: new ObjectId(idStr) });
+        } catch {}
+      }
+
+      const query: any = { $or: orClauses };
+      if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
+        query.organizationId = organizationId;
+      }
+
+      const doc = await mongoDb.collection(colName).findOne(query);
       if (doc) {
         const { _id, ...rest } = doc;
-        return { id: doc.id, ...rest };
+        const out: any = { id: doc.id || (_id ? _id.toString() : idStr), ...rest };
+        if (!out.organizationId && colName !== 'organizations') {
+          out.organizationId = 'demo';
+        }
+        return out;
       }
       return null;
     } catch (err) {
@@ -284,10 +351,21 @@ export async function getDocById(colName: string, id: string): Promise<any | nul
     }
   }
   const items = inMemoryStore[colName] || [];
-  return items.find((i: any) => i.id === id) || null;
+  const idLower = String(id || '').toLowerCase().trim();
+  const doc = items.find((i: any) => 
+    i.id === id || 
+    String(i.id || '').toLowerCase().trim() === idLower || 
+    String(i.hardhatTagId || '').toLowerCase().trim() === idLower
+  );
+  if (!doc) return null;
+  if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
+    const docOrg = doc.organizationId || 'demo';
+    if (docOrg !== organizationId) return null; // IDOR protected: do not return other tenant's document
+  }
+  return doc;
 }
 
-export async function upsertDoc(colName: string, doc: any): Promise<any> {
+export async function upsertDoc(colName: string, doc: any, organizationId?: string): Promise<any> {
   if (!doc.id) {
     doc.id = `${colName}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
   }
@@ -295,19 +373,31 @@ export async function upsertDoc(colName: string, doc: any): Promise<any> {
   const cleanDoc = { ...doc };
   delete (cleanDoc as any)._id;
 
+  // Enforce organizationId on tenant-scoped collections
+  if (colName === 'organizations') {
+    cleanDoc.organizationId = cleanDoc.id;
+  } else {
+    cleanDoc.organizationId = organizationId || cleanDoc.organizationId || 'demo';
+  }
+
   if (mongoDb) {
     try {
       const idStr = String(cleanDoc.id || '').trim();
+      const matchFilter: any = {
+        $or: [
+          { id: idStr },
+          { id: idStr.toUpperCase() },
+          { id: idStr.toLowerCase() },
+          { hardhatTagId: idStr },
+          { hardhatTagId: idStr.toUpperCase() }
+        ]
+      };
+      if (cleanDoc.organizationId && colName !== 'organizations') {
+        matchFilter.organizationId = cleanDoc.organizationId;
+      }
+
       await mongoDb.collection(colName).updateOne(
-        {
-          $or: [
-            { id: idStr },
-            { id: idStr.toUpperCase() },
-            { id: idStr.toLowerCase() },
-            { hardhatTagId: idStr },
-            { hardhatTagId: idStr.toUpperCase() }
-          ]
-        },
+        matchFilter,
         { $set: cleanDoc },
         { upsert: true }
       );
@@ -320,7 +410,15 @@ export async function upsertDoc(colName: string, doc: any): Promise<any> {
   if (!inMemoryStore[colName]) {
     inMemoryStore[colName] = [];
   }
-  const idx = inMemoryStore[colName].findIndex((item: any) => item.id === cleanDoc.id);
+  const idLower = String(cleanDoc.id || '').toLowerCase().trim();
+  const idx = inMemoryStore[colName].findIndex((item: any) => {
+    const sameId = item.id === cleanDoc.id || String(item.id || '').toLowerCase().trim() === idLower;
+    if (colName !== 'organizations') {
+      return sameId && (item.organizationId || 'demo') === cleanDoc.organizationId;
+    }
+    return sameId;
+  });
+
   if (idx >= 0) {
     inMemoryStore[colName][idx] = cleanDoc;
   } else {
@@ -329,7 +427,7 @@ export async function upsertDoc(colName: string, doc: any): Promise<any> {
   return cleanDoc;
 }
 
-export async function deleteDocById(colName: string, id: string): Promise<boolean> {
+export async function deleteDocById(colName: string, id: string, organizationId?: string): Promise<boolean> {
   if (mongoDb) {
     try {
       const idStr = String(id || '').trim();
@@ -346,7 +444,11 @@ export async function deleteDocById(colName: string, id: string): Promise<boolea
           orClauses.push({ _id: new ObjectId(idStr) });
         } catch {}
       }
-      const result = await mongoDb.collection(colName).deleteMany({ $or: orClauses });
+      const filter: any = { $or: orClauses };
+      if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
+        filter.organizationId = organizationId;
+      }
+      const result = await mongoDb.collection(colName).deleteMany(filter);
       return (result.deletedCount || 0) > 0;
     } catch (err) {
       console.error(`[DB Service] Error deleting doc ${id} in ${colName}:`, err);
@@ -356,23 +458,31 @@ export async function deleteDocById(colName: string, id: string): Promise<boolea
   if (inMemoryStore[colName]) {
     const initLen = inMemoryStore[colName].length;
     const idLower = String(id || '').toLowerCase().trim();
-    inMemoryStore[colName] = inMemoryStore[colName].filter((item: any) => 
-      item.id !== id && 
-      String(item.id || '').toLowerCase().trim() !== idLower && 
-      String(item.hardhatTagId || '').toLowerCase().trim() !== idLower
-    );
+    inMemoryStore[colName] = inMemoryStore[colName].filter((item: any) => {
+      const matchesId = (
+        item.id === id || 
+        String(item.id || '').toLowerCase().trim() === idLower || 
+        String(item.hardhatTagId || '').toLowerCase().trim() === idLower
+      );
+      if (!matchesId) return true; // keep
+      if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
+        const itemOrg = item.organizationId || 'demo';
+        if (itemOrg !== organizationId) return true; // not matching org, keep (prevent IDOR delete)
+      }
+      return false; // delete
+    });
     return inMemoryStore[colName].length < initLen;
   }
   return false;
 }
 
-export async function deleteDocsByFilter(colName: string, predicate: (doc: any) => boolean): Promise<number> {
-  const docs = await getCollectionDocs(colName);
+export async function deleteDocsByFilter(colName: string, predicate: (doc: any) => boolean, organizationId?: string): Promise<number> {
+  const docs = await getCollectionDocs(colName, undefined, organizationId);
   const toDelete = docs.filter(predicate);
   let count = 0;
 
   for (const doc of toDelete) {
-    const deleted = await deleteDocById(colName, doc.id);
+    const deleted = await deleteDocById(colName, doc.id, organizationId);
     if (deleted) count++;
   }
 
@@ -382,27 +492,30 @@ export async function deleteDocsByFilter(colName: string, predicate: (doc: any) 
 export async function logAuditEvent(event: {
   userId?: string;
   userEmail?: string;
+  organizationId?: string;
   action: string;
   resource: string;
   details?: any;
   ip?: string;
 }): Promise<void> {
+  const orgId = event.organizationId || 'demo';
   const auditDoc = {
     id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
     timestamp: new Date().toISOString(),
     userId: event.userId || 'system',
     userEmail: event.userEmail || 'system',
+    organizationId: orgId,
     action: event.action,
     resource: event.resource,
     details: event.details || {},
     ip: event.ip || 'unknown'
   };
 
-  await upsertDoc('audit_logs', auditDoc);
+  await upsertDoc('audit_logs', auditDoc, orgId);
 }
 
-export async function getAuditLogs(limitCount = 100): Promise<any[]> {
-  const logs = await getCollectionDocs('audit_logs');
+export async function getAuditLogs(limitCount = 100, organizationId?: string): Promise<any[]> {
+  const logs = await getCollectionDocs('audit_logs', undefined, organizationId);
   return logs
     .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
     .slice(0, limitCount);
@@ -412,7 +525,11 @@ export async function getAuditLogs(limitCount = 100): Promise<any[]> {
  * Normalizes multi-protocol real-time stream events (WebSocket, SSE, MQTT, Webhook)
  * to { TagID, Timestamp, Location } structure and performs bulk write to 'rfid_realtime_events' collection.
  */
-export async function bulkWriteRfidRealtimeEvents(rawEvents: any[], protocol: string = 'Multi-Protocol'): Promise<{ insertedCount: number; modifiedCount: number; totalProcessed: number }> {
+export async function bulkWriteRfidRealtimeEvents(
+  rawEvents: any[],
+  protocol: string = 'Multi-Protocol',
+  organizationId: string = 'demo'
+): Promise<{ insertedCount: number; modifiedCount: number; totalProcessed: number }> {
   if (!Array.isArray(rawEvents) || rawEvents.length === 0) {
     return { insertedCount: 0, modifiedCount: 0, totalProcessed: 0 };
   }
@@ -442,6 +559,7 @@ export async function bulkWriteRfidRealtimeEvents(rawEvents: any[], protocol: st
 
     return {
       id: docId,
+      organizationId: raw.organizationId || organizationId,
       TagID: tagId,
       Timestamp: timestampMs,
       Location: location,
@@ -459,7 +577,7 @@ export async function bulkWriteRfidRealtimeEvents(rawEvents: any[], protocol: st
     try {
       const operations = normalizedDocs.map((doc) => ({
         updateOne: {
-          filter: { id: doc.id },
+          filter: { id: doc.id, organizationId: doc.organizationId },
           update: { $set: doc },
           upsert: true
         }
@@ -470,7 +588,7 @@ export async function bulkWriteRfidRealtimeEvents(rawEvents: any[], protocol: st
       modifiedCount = result.modifiedCount || 0;
 
       // Also mirror/update real_time_tags & live_tags
-      await bulkWriteRealtimeTags(normalizedDocs);
+      await bulkWriteRealtimeTags(normalizedDocs, organizationId);
 
       return { insertedCount, modifiedCount, totalProcessed: rawEvents.length };
     } catch (err: any) {
@@ -480,9 +598,9 @@ export async function bulkWriteRfidRealtimeEvents(rawEvents: any[], protocol: st
 
   // Fallback in-memory persistence
   for (const doc of normalizedDocs) {
-    await upsertDoc('rfid_realtime_events', doc);
-    await upsertDoc('real_time_tags', doc);
-    await upsertDoc('live_tags', doc);
+    await upsertDoc('rfid_realtime_events', doc, doc.organizationId);
+    await upsertDoc('real_time_tags', doc, doc.organizationId);
+    await upsertDoc('live_tags', doc, doc.organizationId);
     insertedCount++;
   }
 
@@ -492,7 +610,10 @@ export async function bulkWriteRfidRealtimeEvents(rawEvents: any[], protocol: st
 /**
  * Bulk writes real-time tag documents into MongoDB collection 'real_time_tags'
  */
-export async function bulkWriteRealtimeTags(tags: any[]): Promise<{ insertedCount: number; updatedCount: number; totalProcessed: number }> {
+export async function bulkWriteRealtimeTags(
+  tags: any[],
+  organizationId: string = 'demo'
+): Promise<{ insertedCount: number; updatedCount: number; totalProcessed: number }> {
   if (!Array.isArray(tags) || tags.length === 0) {
     return { insertedCount: 0, updatedCount: 0, totalProcessed: 0 };
   }
@@ -500,39 +621,41 @@ export async function bulkWriteRealtimeTags(tags: any[]): Promise<{ insertedCoun
   let insertedCount = 0;
   let updatedCount = 0;
 
+  const normalizedTags = tags.map(rawTag => {
+    const tagId = rawTag.TagID || rawTag.tagId || rawTag.epc || `TAG_${Date.now()}`;
+    const orgId = rawTag.organizationId || organizationId;
+    return {
+      id: tagId,
+      organizationId: orgId,
+      TagID: tagId,
+      Timestamp: rawTag.Timestamp || new Date().toISOString(),
+      Location: rawTag.Location || rawTag.LocationName || rawTag.zone || 'Zone1',
+      FirstName: rawTag.FirstName || 'Staff',
+      LastName: rawTag.LastName || 'User',
+      rssi: rawTag.rssi !== undefined ? Number(rawTag.rssi) : -60,
+      status: rawTag.status || 'Active',
+      lastSyncAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+  });
+
   if (mongoDb) {
     try {
-      const operations = tags.map((rawTag) => {
-        const tagId = rawTag.TagID || rawTag.tagId || rawTag.epc || `TAG_${Date.now()}`;
-        const docToUpsert = {
-          id: tagId,
-          TagID: tagId,
-          Timestamp: rawTag.Timestamp || new Date().toISOString(),
-          Location: rawTag.Location || rawTag.LocationName || rawTag.zone || 'Zone1',
-          FirstName: rawTag.FirstName || 'Staff',
-          LastName: rawTag.LastName || 'User',
-          rssi: rawTag.rssi !== undefined ? Number(rawTag.rssi) : -60,
-          status: rawTag.status || 'Active',
-          lastSyncAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        };
-
-        return {
-          updateOne: {
-            filter: { TagID: tagId },
-            update: { $set: docToUpsert },
-            upsert: true
-          }
-        };
-      });
+      const operations = normalizedTags.map((docToUpsert) => ({
+        updateOne: {
+          filter: { TagID: docToUpsert.TagID, organizationId: docToUpsert.organizationId },
+          update: { $set: docToUpsert },
+          upsert: true
+        }
+      }));
 
       const result = await mongoDb.collection('real_time_tags').bulkWrite(operations, { ordered: false });
       insertedCount = result.upsertedCount || 0;
       updatedCount = result.modifiedCount || 0;
       
       // Also mirror to live_tags collection
-      for (const t of tags) {
-        await upsertDoc('live_tags', t);
+      for (const t of normalizedTags) {
+        await upsertDoc('live_tags', t, t.organizationId);
       }
 
       return { insertedCount, updatedCount, totalProcessed: tags.length };
@@ -542,21 +665,9 @@ export async function bulkWriteRealtimeTags(tags: any[]): Promise<{ insertedCoun
   }
 
   // Fallback for in-memory store
-  for (const t of tags) {
-    const tagId = t.TagID || t.tagId || t.epc || `TAG_${Date.now()}`;
-    const cleanDoc = {
-      id: tagId,
-      TagID: tagId,
-      Timestamp: t.Timestamp || new Date().toISOString(),
-      Location: t.Location || t.LocationName || t.zone || 'Zone1',
-      FirstName: t.FirstName || 'Staff',
-      LastName: t.LastName || 'User',
-      rssi: t.rssi !== undefined ? Number(t.rssi) : -60,
-      status: t.status || 'Active',
-      lastSyncAt: new Date().toISOString()
-    };
-    await upsertDoc('real_time_tags', cleanDoc);
-    await upsertDoc('live_tags', cleanDoc);
+  for (const cleanDoc of normalizedTags) {
+    await upsertDoc('real_time_tags', cleanDoc, cleanDoc.organizationId);
+    await upsertDoc('live_tags', cleanDoc, cleanDoc.organizationId);
     updatedCount++;
   }
 
@@ -602,8 +713,7 @@ export async function cleanupStaleRealTimeTags(maxAgeMinutes: number = 60): Prom
     cleanedCount = initialLen - inMemoryStore['real_time_tags'].length;
   }
 
-  const remainingCount = (inMemoryStore['real_time_tags'] || []).length;
-  return { cleanedCount, remainingCount };
+  return { cleanedCount, remainingCount: inMemoryStore['real_time_tags']?.length || 0 };
 }
 
 export const DEFAULT_PERMANENT_ZONES = [
@@ -1830,7 +1940,7 @@ export const DEFAULT_COMPLIANCE_FRAMEWORKS = [
 ];
 
 export const DEFAULT_RETENTION_POLICIES = [
-  { id: 'POL-01', dataType: 'Real-time Tag Telemetry & GPS Coordinates', retentionPeriodDays: 90, autoPurge: true, encryptionType: 'AES-256 GCM', lastPurgeDate: '2026-08-01', storageLocation: 'Encrypted Cloud Firestore' },
+  { id: 'POL-01', dataType: 'Real-time Tag Telemetry & GPS Coordinates', retentionPeriodDays: 90, autoPurge: true, encryptionType: 'AES-256 GCM', lastPurgeDate: '2026-08-01', storageLocation: 'Encrypted MongoDB Atlas' },
   { id: 'POL-02', dataType: 'Workplace Incidents & Root Cause Analysis', retentionPeriodDays: 2555, autoPurge: false, encryptionType: 'AES-256 + Immutable WORM', lastPurgeDate: 'Never (7-Year OSHA Mandatory)', storageLocation: 'Enterprise WORM Storage' },
   { id: 'POL-03', dataType: 'Worker Attendance & Time Punches', retentionPeriodDays: 1095, autoPurge: true, encryptionType: 'AES-256', lastPurgeDate: '2026-08-01', storageLocation: 'Payroll Archive Storage' },
   { id: 'POL-04', dataType: 'Visitor Access Logs & NDA Signatures', retentionPeriodDays: 365, autoPurge: true, encryptionType: 'AES-256', lastPurgeDate: '2026-08-01', storageLocation: 'Visitor Records Database' }
@@ -1855,40 +1965,57 @@ export const DEFAULT_VEHICLES = [
 export async function seedAllDemoData(force: boolean = false): Promise<{ success: boolean; seededCollections: Record<string, number> }> {
   const result: Record<string, number> = {};
   
+  // Seed demo organization
+  await upsertDoc('organizations', {
+    id: 'demo',
+    name: 'Metro Commercial Tower (Demo)',
+    slug: 'demo',
+    status: 'active',
+    plan: 'enterprise',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  }, 'demo');
+  result['organizations'] = 1;
+
   const seedCollection = async (colName: string, defaultData: any[]) => {
     let count = 0;
     if (mongoDb) {
       try {
-        count = await mongoDb.collection(colName).countDocuments({}, { limit: 1 });
+        count = await mongoDb.collection(colName).countDocuments({ organizationId: 'demo' }, { limit: 1 });
       } catch {
         count = 0;
       }
     } else {
-      count = (inMemoryStore[colName] || []).length;
+      count = (inMemoryStore[colName] || []).filter((i: any) => (i.organizationId || 'demo') === 'demo').length;
     }
 
+    const stampedData = defaultData.map(item => ({
+      ...item,
+      organizationId: item.organizationId || 'demo'
+    }));
+
     if (force || count === 0) {
-      if (mongoDb && defaultData.length > 0) {
+      if (mongoDb && stampedData.length > 0) {
         try {
-          const ops = defaultData.map(item => ({
+          const ops = stampedData.map(item => ({
             updateOne: {
-              filter: { id: item.id || `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}` },
+              filter: { id: item.id || `doc_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`, organizationId: 'demo' },
               update: { $set: item },
               upsert: true
             }
           }));
           await mongoDb.collection(colName).bulkWrite(ops, { ordered: false });
         } catch {
-          for (const item of defaultData) {
-            await upsertDoc(colName, item);
+          for (const item of stampedData) {
+            await upsertDoc(colName, item, 'demo');
           }
         }
       } else {
-        for (const item of defaultData) {
-          await upsertDoc(colName, item);
+        for (const item of stampedData) {
+          await upsertDoc(colName, item, 'demo');
         }
       }
-      result[colName] = defaultData.length;
+      result[colName] = stampedData.length;
     } else {
       result[colName] = count;
     }
@@ -1920,7 +2047,7 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
     await seedCollection('vehicles', DEFAULT_VEHICLES);
 
     // Map config
-    await upsertDoc('map_configurations', DEFAULT_MAP_CONFIG);
+    await upsertDoc('map_configurations', { ...DEFAULT_MAP_CONFIG, organizationId: 'demo' }, 'demo');
 
     // --- Seed Real-Time Tags from DEFAULT_PEOPLE ---
     const DEFAULT_LIVE_TAGS = DEFAULT_PEOPLE.map((p) => {
@@ -1937,6 +2064,7 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
       const zoneId = zoneMap[p.currentZone] || 'zone_tower_core';
       return {
         id: p.hardhatTagId,
+        organizationId: 'demo',
         TagID: p.hardhatTagId,
         Timestamp: new Date().toISOString(),
         Location: p.currentZone,
@@ -1966,6 +2094,7 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
         const leaveTime = new Date(now - enterOffset + (30 + Math.random() * 90) * 60000);
         return {
           id: `hist_${p.hardhatTagId}_${zIdx}`,
+          organizationId: 'demo',
           TagID: p.hardhatTagId,
           FirstName: p.name.split(' ')[0],
           LastName: p.name.split(' ').slice(1).join(' ') || '',
@@ -1987,6 +2116,7 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
     const DEFAULT_AI_INSIGHTS = [
       {
         id: 'ai_insight_demo_001',
+        organizationId: 'demo',
         title: 'AI Analysis: Heavy Crane & Exclusion Area (HIGH)',
         category: 'Safety & Risk Alert',
         impact: 'HIGH',
@@ -2010,6 +2140,7 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
       },
       {
         id: 'ai_insight_demo_002',
+        organizationId: 'demo',
         title: 'AI Analysis: Excavation & Foundation Pit (MEDIUM)',
         category: 'Safety & Risk Alert',
         impact: 'MEDIUM',
@@ -2032,6 +2163,7 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
       },
       {
         id: 'ai_insight_demo_003',
+        organizationId: 'demo',
         title: 'AI Analysis: Site Office & Welfare Container (SAFE)',
         category: 'Operational Info',
         impact: 'SAFE',
@@ -2057,6 +2189,7 @@ export async function seedAllDemoData(force: boolean = false): Promise<{ success
     const DEFAULT_INCIDENTS = [
       {
         id: 'inc_demo_001',
+        organizationId: 'demo',
         title: 'Crane Exclusion Radius Entry — Unverified Permit',
         category: 'Exclusion Zone Breach',
         severity: 'High',

@@ -15,7 +15,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { collection, onSnapshot, doc, setDoc, updateDoc, deleteDoc, getDocs, db } from '../lib/db';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 import { useWebSocket } from '../lib/useWebSocket';
+import { useTerminology } from '../context/TrackingContext';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area, PieChart, Pie, Cell, CartesianGrid } from 'recharts';
+
 
 const CATEGORY_CONFIG: Record<AlertCategory, { icon: React.ElementType; color: string; bg: string; border: string }> = {
   Emergency: { icon: Siren, color: 'text-rose-600', bg: 'bg-rose-50 dark:bg-rose-950/40', border: 'border-rose-200 dark:border-rose-800' },
@@ -381,7 +383,9 @@ function getTimestampMs(ts: any): number {
 }
 
 export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] }) {
+  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
   const [activeSubTab, setActiveSubTab] = useState<'feed' | 'rules' | 'broadcast' | 'heatmap' | 'analytics'>('feed');
+
 
   // Filters & State
   const [selectedCategory, setSelectedCategory] = useState<AlertCategory | 'All'>('All');
@@ -557,7 +561,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     });
   };
 
-  // MongoDB & Firestore Sync
+  // MongoDB Sync
   useEffect(() => {
     let entAlerts: AIAlert[] = [];
     let stdAlerts: AIAlert[] = [];
@@ -565,9 +569,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
 
     const mergeAndSetAlerts = () => {
       const map = new Map<string, AIAlert>();
-      // Seed default alerts first
-      INITIAL_ENTERPRISE_ALERTS.forEach(a => map.set(a.id, a));
-      // Overwrite / add MongoDB alerts
+      // Add MongoDB alerts
       [...entAlerts, ...stdAlerts, ...incAlerts].forEach(a => map.set(a.id, a));
 
       const combined = Array.from(map.values())
@@ -684,7 +686,12 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     const resolved = alertList.filter(a => a.status === 'Resolved' || a.resolved).length;
     const emergencyCount = alertList.filter(a => a.category === 'Emergency' && a.status !== 'Resolved').length;
 
-    return { total, critical, inProgress, escalated, resolved, emergencyCount };
+    const alertsWithSla = alertList.filter(a => a.escalation?.elapsedMinutes !== undefined && a.escalation.elapsedMinutes > 0);
+    const avgSla = alertsWithSla.length > 0 
+      ? `${(alertsWithSla.reduce((sum, a) => sum + (a.escalation?.elapsedMinutes || 0), 0) / alertsWithSla.length).toFixed(1)}m` 
+      : '5.4m';
+
+    return { total, critical, inProgress, escalated, resolved, emergencyCount, avgSla };
   }, [alertList]);
 
   // Handle Acknowledge Alert (New -> In Progress)
@@ -1435,7 +1442,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
 
             <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-3.5 shadow-sm">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Avg SLA Response</span>
-              <span className="text-2xl font-black text-slate-800 dark:text-slate-200">8.4m</span>
+              <span className="text-2xl font-black text-slate-800 dark:text-slate-200">{metrics.avgSla}</span>
             </div>
           </div>
 

@@ -35,7 +35,7 @@ export interface DailyReportSummary {
  * Executes the automated daily reporting task:
  * 1. Collects and calculates attendance & safety compliance metrics
  * 2. Compiles a PDF printable record with Aperture branding & summary boxes
- * 3. Saves a permanent daily report log into Firestore / MongoDB
+ * 3. Saves a permanent daily report log into MongoDB
  */
 export async function executeDailyReportingTask(
   peopleData?: Person[],
@@ -148,7 +148,7 @@ export async function executeDailyReportingTask(
     pdfFileName
   };
 
-  // 4. Save Record to Firestore / MongoDB collection `daily_reports`
+  // 4. Save Record to MongoDB collection `daily_reports`
   try {
     const docRef = doc(db, 'daily_reports', reportId);
     await setDoc(docRef, {
