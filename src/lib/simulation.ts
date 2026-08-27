@@ -240,93 +240,107 @@ export function useSimulation(mode: 'real' | null, activeProjectId: string = 'me
     if (mode === 'real') {
        setIsLoading(false);
        
-       const syncRealtime = async () => {
-         if (!isMounted) return;
-         try {
-           const liveTags = await gaoApi.getTagsInRealtime();
-           
-           const latestTagInfo: Record<string, any> = {};
-           liveTags.forEach(tag => {
-              if (tag.TagID) {
-                latestTagInfo[tag.TagID] = tag;
-              }
-           });
+        const parseTagTimestamp = (ts: string) => {
+          if (!ts) return new Date();
+          try {
+            const iso = ts.trim().replace(' ', 'T');
+            const d = new Date(iso.endsWith('Z') ? iso : `${iso}Z`);
+            if (!isNaN(d.getTime())) return d;
+            const fallback = new Date(ts);
+            if (!isNaN(fallback.getTime())) return fallback;
+          } catch {}
+          return new Date();
+        };
 
-           setPeople((prev) => {
-             const nextPeople = [...prev];
+        const syncRealtime = async () => {
+          if (!isMounted) return;
+          try {
+            const liveTags = await gaoApi.getTagsInRealtime();
+            
+            const latestTagInfo: Record<string, any> = {};
+            liveTags.forEach(tag => {
+               if (tag.TagID) {
+                 latestTagInfo[tag.TagID] = tag;
+               }
+            });
 
-             if (Object.keys(latestTagInfo).length === 0) return nextPeople;
+            setPeople((prev) => {
+              const nextPeople = [...prev];
 
-             Object.values(latestTagInfo).forEach(tag => {
-                let p = nextPeople.find(x => x.id === tag.TagID);
-                let targetZone = normalizeZoneName(tag.Location, activeProjectId);
-                const rect = getZoneRect(targetZone, activeProjectId, dynamicZones);
-                
-                const registered = registeredPeopleRef.current[tag.TagID];
-                const pName = registered ? registered.name : `Tag ${tag.TagID.substring(0, 6).toUpperCase()}`;
-                const pRole = registered ? registered.role : 'Visitor';
+              if (Object.keys(latestTagInfo).length === 0) return nextPeople;
 
-                if (!p) {
-                   p = {
-                     id: tag.TagID,
-                     name: pName,
-                     role: pRole,
-                     currentZone: targetZone,
-                     presenceState: 'IDLE',
-                     dwellTime: 0,
-                     x: rect.x + rect.width / 2,
-                     y: rect.y + rect.height / 2,
-                     lastSeen: new Date(tag.Timestamp + "Z"),
-                     trail: []
-                   };
-                   nextPeople.push(p);
-                } else {
-                   p.lastSeen = new Date(tag.Timestamp + "Z");
-                   p.name = pName;
-                   p.role = pRole;
-                   if (p.currentZone !== targetZone) {
-                       p.currentZone = targetZone;
-                       p.dwellTime = 0;
-                       p.presenceState = 'IDLE';
-                   }
-                }
-             });
+              Object.values(latestTagInfo).forEach(tag => {
+                 let p = nextPeople.find(x => x.id === tag.TagID);
+                 let targetZone = normalizeZoneName(tag.Location, activeProjectId);
+                 const rect = getZoneRect(targetZone, activeProjectId, dynamicZones);
+                 
+                 const registered = registeredPeopleRef.current[tag.TagID];
+                 const pName = registered ? registered.name : (tag.personName || `Tag ${tag.TagID.substring(0, 8).toUpperCase()}`);
+                 const pRole = registered ? registered.role : (tag.role || 'Personnel');
+                 const parsedDate = parseTagTimestamp(tag.Timestamp);
 
-             // Calculate occupancy bounds 
-             const currentOccupancy: Record<string, number> = {};
-             nextPeople.forEach(p => {
-                const registered = registeredPeopleRef.current[p.id];
-                if (registered) {
-                   p.name = registered.name;
-                   p.role = registered.role;
-                }
-                currentOccupancy[p.currentZone] = (currentOccupancy[p.currentZone] || 0) + 1;
-             });
+                 if (!p) {
+                    p = {
+                      id: tag.TagID,
+                      name: pName,
+                      role: pRole,
+                      currentZone: targetZone,
+                      presenceState: 'IDLE',
+                      dwellTime: 0,
+                      x: rect.x + rect.width / 2,
+                      y: rect.y + rect.height / 2,
+                      lastSeen: parsedDate,
+                      trail: []
+                    };
+                    nextPeople.push(p);
+                 } else {
+                    p.lastSeen = parsedDate;
+                    p.name = pName;
+                    p.role = pRole;
+                    if (p.currentZone !== targetZone) {
+                        p.currentZone = targetZone;
+                        p.dwellTime = 0;
+                        p.presenceState = 'IDLE';
+                    }
+                 }
+              });
 
-             Object.entries(currentOccupancy).forEach(([zone, count]) => {
-                const limit = occupancyLimitsRef.current[zone];
-                if (limit && count > limit) {
-                   const now = Date.now();
-                   const lastAlerted = alertedZonesRef.current[zone] || 0;
-                   if (now - lastAlerted > 60000) {
-                      alertedZonesRef.current[zone] = now;
-                      addDoc(collection(db, 'alerts'), {
-                        type: 'warning',
-                        message: `OVERCAPACITY: ${zone} exceeded max occupancy of ${limit}. Currently ${count}.`,
-                        timestamp: new Date()
-                      }).catch(error => handleDbError(error, OperationType.WRITE, 'alerts'));
-                   }
-                }
-             });
+              // Calculate occupancy bounds 
+              const currentOccupancy: Record<string, number> = {};
+              nextPeople.forEach(p => {
+                 const registered = registeredPeopleRef.current[p.id];
+                 if (registered) {
+                    p.name = registered.name;
+                    p.role = registered.role;
+                 }
+                 currentOccupancy[p.currentZone] = (currentOccupancy[p.currentZone] || 0) + 1;
+              });
+
+              Object.entries(currentOccupancy).forEach(([zone, count]) => {
+                 const limit = occupancyLimitsRef.current[zone];
+                 if (limit && count > limit) {
+                    const now = Date.now();
+                    const lastAlerted = alertedZonesRef.current[zone] || 0;
+                    if (now - lastAlerted > 60000) {
+                       alertedZonesRef.current[zone] = now;
+                       addDoc(collection(db, 'alerts'), {
+                         type: 'warning',
+                         message: `OVERCAPACITY: ${zone} exceeded max occupancy of ${limit}. Currently ${count}.`,
+                         timestamp: new Date()
+                       }).catch(error => handleDbError(error, OperationType.WRITE, 'alerts'));
+                    }
+                 }
+              });
 
               return nextPeople;
-           });
-         } catch (e: any) {
-           console.warn('Realtime tag sync warning:', e?.message || e);
-         }
-       };
+            });
+          } catch (e: any) {
+            console.warn('Realtime tag sync warning:', e?.message || e);
+          }
+        };
 
-       interval = setInterval(syncRealtime, 5000);
+        syncRealtime();
+        interval = setInterval(syncRealtime, 3000);
     }
 
      return () => {

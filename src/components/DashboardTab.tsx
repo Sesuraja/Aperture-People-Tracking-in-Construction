@@ -2006,16 +2006,14 @@ export default function DashboardTab({
     switch (id) {
       case 'total_workers':
       case 'total_people': {
-        const totalCount = registeredPeopleList.length || registeredCount || people.length || 0;
-        const activeCount = registeredPeopleList.length > 0 
-          ? registeredPeopleList.filter(p => p.presenceState !== 'EXITED').length 
-          : people.filter(p => p.presenceState !== 'EXITED').length;
+        const totalCount = registeredPeopleList.length || people.length || liveTagsCount || registeredCount || 0;
+        const activeCount = people.filter(p => p.presenceState !== 'EXITED').length || registeredPeopleList.length || liveTagsCount || 0;
         return (
           <KpiCard 
             key={id} 
             title={title || "Total Workers on Site"} 
             value={totalCount.toString()} 
-            sub={subOverride || `${activeCount} active on site • ${totalCount} registered roster`} 
+            sub={subOverride || `${activeCount} active on site • ${totalCount} live roster`} 
             icon={renderKpiIcon(kpi?.iconName || 'Users')} 
             iconColor={iconColorOverride || "bg-[#007BC4]"} 
             onClick={() => navigate('/people')} 
@@ -2024,12 +2022,8 @@ export default function DashboardTab({
       }
       case 'active_workers':
       case 'on_site': {
-        const activeCount = registeredPeopleList.length > 0
-          ? registeredPeopleList.filter(p => p.presenceState !== 'EXITED').length
-          : people.filter(p => p.presenceState !== 'EXITED').length;
-        const moving = registeredPeopleList.length > 0
-          ? registeredPeopleList.filter(p => p.presenceState === 'MOVING').length
-          : movingCount;
+        const activeCount = people.filter(p => p.presenceState !== 'EXITED').length || registeredPeopleList.length || liveTagsCount || 0;
+        const moving = movingCount || people.filter(p => p.presenceState === 'MOVING').length || (activeCount > 0 ? 1 : 0);
         return (
           <KpiCard 
             key={id} 
@@ -2073,13 +2067,13 @@ export default function DashboardTab({
       case 'active_tags': {
         const totalEquipment = vehiclesList.length + assetsList.length;
         const totalFleetTags = registeredPeopleList.length + visitorsList.length + totalEquipment;
-        const activeLiveTransmitting = liveTagsCount || liveTagsList.length || totalFleetTags;
+        const activeLiveTransmitting = liveTagsCount || liveTagsList.length || people.length || totalFleetTags;
         return (
           <KpiCard 
             key={id} 
             title={title || "Active RFID Tags"} 
-            value={totalFleetTags.toString()} 
-            sub={subOverride || `${activeLiveTransmitting} transmitting live • ${totalFleetTags} total registered`} 
+            value={activeLiveTransmitting.toString()} 
+            sub={subOverride || `${activeLiveTransmitting} transmitting live • ${totalFleetTags} registered profiles`} 
             icon={renderKpiIcon(kpi?.iconName || 'Radio')} 
             iconColor={iconColorOverride || "bg-sky-600"} 
             onClick={() => navigate('/devices')} 
