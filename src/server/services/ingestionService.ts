@@ -1,5 +1,6 @@
 import { processTelemetryWithAI, TelemetryPayload } from './aiPipeline.js';
 import { ApiConnectionConfig, saveConnection, getConnectionById } from './connectionsService.js';
+import { validateTelemetrySource } from './dataPolicy.js';
 
 export interface IngestionResult {
   success: boolean;
@@ -19,7 +20,7 @@ export function mapRawItemToTelemetry(item: any, mapping?: ApiConnectionConfig['
   const nameKey = mapping?.nameField || 'FirstName';
   const rssiKey = mapping?.rssiField || 'rssi';
 
-  const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.id || `TAG_${Date.now()}`;
+  const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.EPC || item.id || '';
   const location = item[locKey] || item.Location || item.location || item.LocationName || item.zone || 'Zone 1';
   const timestamp = item[timeKey] || item.Timestamp || item.timestamp || item.EnterTime || new Date().toISOString();
   const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(' ')[0] || 'Staff';
@@ -51,6 +52,18 @@ export async function ingestTelemetry(
   const startTime = Date.now();
   let connection: ApiConnectionConfig | null = null;
 
+  // 0. Validate Data Source Policy
+  const sourceValidation = validateTelemetrySource(sourceName);
+  if (!sourceValidation.valid) {
+    return {
+      success: false,
+      recordsProcessed: 0,
+      aiAnalyzed: 0,
+      latencyMs: Date.now() - startTime,
+      error: sourceValidation.error
+    };
+  }
+
   if (connectionId) {
     connection = await getConnectionById(connectionId);
   }
@@ -65,10 +78,11 @@ export async function ingestTelemetry(
       else if (Array.isArray(rawPayload.tags)) rawList = rawPayload.tags;
       else if (Array.isArray(rawPayload.records)) rawList = rawPayload.records;
       else if (Array.isArray(rawPayload.items)) rawList = rawPayload.items;
-      else rawList = [rawPayload];
+      else if (rawPayload.TagID || rawPayload.tagId || rawPayload.epc || rawPayload.id) rawList = [rawPayload];
     }
 
     if (rawList.length === 0) {
+      console.log(`[INGEST] source="${sourceName}" received empty or non-telemetry payload. Nothing written to MongoDB.`);
       return {
         success: true,
         recordsProcessed: 0,
@@ -77,8 +91,22 @@ export async function ingestTelemetry(
       };
     }
 
-    // 2. Map raw payloads to standard telemetry payloads
-    const telemetryItems = rawList.map(item => mapRawItemToTelemetry(item, connection?.dataMapping));
+    // 2. Map raw payloads to standard telemetry payloads and filter items without a valid tag identifier
+    const telemetryItems = rawList
+      .map(item => mapRawItemToTelemetry(item, connection?.dataMapping))
+      .filter(item => Boolean(item.TagID && item.TagID.trim() !== ''));
+
+    if (telemetryItems.length === 0) {
+      console.warn(`[INGEST] rejected: invalid external telemetry from source="${sourceName}" (missing tag identifiers)`);
+      return {
+        success: true,
+        recordsProcessed: 0,
+        aiAnalyzed: 0,
+        latencyMs: Date.now() - startTime
+      };
+    }
+
+    console.log(`[INGEST] source="${sourceName}" records=${telemetryItems.length}`);
 
     // 3. Process through AI, Database persistence, and live client broadcasts
     const aiResult = await processTelemetryWithAI(telemetryItems, sourceName);

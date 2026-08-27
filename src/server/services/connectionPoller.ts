@@ -1,4 +1,4 @@
-import { getAllConnections, buildHeaders, buildUrl, ApiConnectionConfig } from './connectionsService.js';
+import { getAllConnections, buildHeaders, buildUrl, saveConnection, ApiConnectionConfig } from './connectionsService.js';
 import { ingestTelemetry } from './ingestionService.js';
 
 let activePollers: Map<string, NodeJS.Timeout> = new Map();
@@ -7,8 +7,18 @@ let globalPollerInterval: NodeJS.Timeout | null = null;
 
 /**
  * Polls a single configured API endpoint
+ * Strictly requires connection.enabled !== false, connection.pollingEnabled === true, and valid endpointUrl.
+ * On failure, updates error status, logs the error, and NEVER injects synthetic fallback data.
  */
 export async function pollSingleConnection(config: ApiConnectionConfig): Promise<void> {
+  if (config.enabled === false) {
+    return;
+  }
+  if (!config.endpointUrl || typeof config.endpointUrl !== 'string' || !config.endpointUrl.trim()) {
+    console.warn(`[Connection Poller] Skipping "${config.name}": missing or empty endpointUrl`);
+    return;
+  }
+
   const targetUrl = buildUrl(config);
   const headers = buildHeaders(config);
 
@@ -41,15 +51,37 @@ export async function pollSingleConnection(config: ApiConnectionConfig): Promise
       throw new Error('Response is not valid JSON format');
     }
 
+    if (!parsedJson || (Array.isArray(parsedJson) && parsedJson.length === 0)) {
+      // Empty response: Update connection status without inserting fake data
+      const nowIso = new Date().toISOString();
+      await saveConnection({
+        ...config,
+        lastSyncAt: nowIso,
+        lastStatus: 'SUCCESS',
+        lastError: null,
+        updatedAt: nowIso
+      });
+      return;
+    }
+
     // Pass parsed payload to unified ingestion pipeline
     await ingestTelemetry(parsedJson, `API Poll: ${config.name}`, config.id);
   } catch (err: any) {
     clearTimeout(timeout);
-    const errMsg = err.name === 'AbortError' ? 'Request timed out after 8000ms' : (err.message || 'Network unreachable');
+    const errMsg = err.name === 'AbortError' ? 'Request timed out after 15000ms' : (err.message || 'Network unreachable');
     
-    // Log failures into the connection metadata
-    await ingestTelemetry(null, `API Poll: ${config.name}`, config.id).then(() => {}).catch(() => {});
+    // Log failure and update connection metadata without generating fake telemetry
     console.error(`[Connection Poller] Error polling "${config.name}":`, errMsg);
+    try {
+      const nowIso = new Date().toISOString();
+      await saveConnection({
+        ...config,
+        lastSyncAt: nowIso,
+        lastStatus: 'ERROR',
+        lastError: errMsg,
+        updatedAt: nowIso
+      });
+    } catch {}
   }
 }
 
@@ -64,7 +96,8 @@ export async function syncPollingSchedules(): Promise<void> {
     const activeIds = new Set<string>();
 
     for (const conn of connections) {
-      if (conn.pollingEnabled) {
+      const isEnabled = conn.enabled !== false && conn.pollingEnabled === true && Boolean(conn.endpointUrl && conn.endpointUrl.trim());
+      if (isEnabled) {
         activeIds.add(conn.id);
         const currentIntervalMs = Math.max((conn.pollingIntervalSeconds || 15) * 1000, 5000);
 

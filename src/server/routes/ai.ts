@@ -336,23 +336,29 @@ Respond ONLY with valid JSON with this exact structure:
 
     const parsed = parseCleanJSON(response.text || '{}');
 
-    // Save AI Analysis to MongoDB and broadcast to connected frontend clients
-    try {
-      const nowIso = new Date().toISOString();
-      const insightId = `ai_insight_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const doc = {
-        id: insightId,
-        organizationId: orgId,
-        ...parsed,
-        source: `Gemini 3.7 Flash (${indName})`,
-        timestamp: nowIso,
-        createdAt: nowIso
-      };
-      await upsertDoc('ai_insights', doc, orgId);
-      broadcastWebSocketEvent('ai_insight', doc, orgId);
-      broadcastSseEvent('ai_insight', doc, orgId);
-    } catch (dbErr) {
-      console.warn('[AI Router] Failed to save AI analysis to MongoDB:', dbErr);
+    // If no real scans were present, do not write analysis to MongoDB
+    if (combinedScans.length > 0 && parsed.anomalies && parsed.anomalies.length > 0) {
+      try {
+        const nowIso = new Date().toISOString();
+        const dateHourKey = nowIso.slice(0, 13); // e.g. 2026-08-27T22
+        const insightId = `ai_insight_${orgId}_${dateHourKey}`;
+        const doc = {
+          id: insightId,
+          organizationId: orgId,
+          ...parsed,
+          source: `Gemini 3.7 Flash (${indName})`,
+          timestamp: nowIso,
+          createdAt: nowIso
+        };
+        await upsertDoc('ai_insights', doc, orgId);
+        broadcastWebSocketEvent('ai_insight', doc, orgId);
+        broadcastSseEvent('ai_insight', doc, orgId);
+      } catch (dbErr) {
+        console.warn('[AI Router] Failed to save AI analysis to MongoDB:', dbErr);
+      }
+    } else {
+      broadcastWebSocketEvent('ai_insight', { organizationId: orgId, ...parsed }, orgId);
+      broadcastSseEvent('ai_insight', { organizationId: orgId, ...parsed }, orgId);
     }
 
     return res.json(parsed);

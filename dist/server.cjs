@@ -46,6 +46,55 @@ var import_mongodb = require("mongodb");
 var import_dotenv = __toESM(require("dotenv"), 1);
 var import_fs = __toESM(require("fs"), 1);
 var import_path = __toESM(require("path"), 1);
+
+// src/server/services/dataPolicy.ts
+var import_crypto = __toESM(require("crypto"), 1);
+function isProductionDataMode() {
+  const mode = (process.env.DATA_MODE || "production").trim().toLowerCase();
+  return mode !== "demo";
+}
+function isDemoDataMode() {
+  const mode = (process.env.DATA_MODE || "").trim().toLowerCase();
+  return mode === "demo";
+}
+function getDataMode() {
+  return isDemoDataMode() ? "demo" : "production";
+}
+function validateTelemetrySource(source) {
+  const s = String(source || "").trim().toLowerCase();
+  const isSynthetic = s.includes("demo") || s.includes("simulation") || s.includes("simulator") || s.includes("mock") || s.includes("fake") || s.includes("synthetic") || s.includes("dummy") || s.includes("sample");
+  if (isSynthetic) {
+    if (isProductionDataMode()) {
+      console.warn(`[INGEST] rejected: synthetic data rejected in production mode (DATA_MODE=${getDataMode()}, source="${source}")`);
+      return {
+        valid: false,
+        normalizedSource: s,
+        error: `[DEMO] Synthetic/demo data generation is disabled in production mode (DATA_MODE=${getDataMode()})`
+      };
+    }
+  }
+  return {
+    valid: true,
+    normalizedSource: source || "rfid_hardware"
+  };
+}
+function generateEventHash(tagId, timestamp, location, readerId, orgId = "default", externalEventId) {
+  if (externalEventId && String(externalEventId).trim()) {
+    return String(externalEventId).trim();
+  }
+  let tsStr = "";
+  if (timestamp instanceof Date) {
+    tsStr = timestamp.toISOString();
+  } else if (typeof timestamp === "number") {
+    tsStr = new Date(timestamp).toISOString();
+  } else {
+    tsStr = String(timestamp || "").trim();
+  }
+  const rawKey = `${String(tagId).trim().toUpperCase()}|${tsStr}|${String(location).trim().toUpperCase()}|${String(readerId || "").trim().toUpperCase()}|${String(orgId).trim()}`;
+  return import_crypto.default.createHash("sha256").update(rawKey).digest("hex").substring(0, 16);
+}
+
+// src/server/services/db.ts
 try {
   import_dns.default.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
 } catch {
@@ -114,6 +163,25 @@ function getMongoUri() {
   const uri = runtimeMongoUri || process.env.MONGODB_URI || "";
   return sanitizeMongoUri(uri);
 }
+async function initDatabaseIndexes() {
+  if (!mongoDb) return;
+  const indexSpecs = [
+    { col: "rfid_realtime_events", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "tag_history", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "real_time_tags", spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "live_tags", spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "hardware_readers", spec: { readerId: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "ai_insights", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } }
+  ];
+  for (const { col, spec, options } of indexSpecs) {
+    try {
+      await mongoDb.collection(col).createIndex(spec, options);
+    } catch (err) {
+      console.warn(`[DB Service] Index initialization note for ${col}:`, err.message);
+    }
+  }
+  console.log("[DB Service] MongoDB deduplication and uniqueness indexes initialized.");
+}
 async function initDatabase(customUri) {
   const rawUri = customUri || getMongoUri();
   const uri = sanitizeMongoUri(rawUri);
@@ -148,7 +216,8 @@ async function initDatabase(customUri) {
       import_fs.default.writeFileSync(PERSISTENT_CONFIG_FILE, JSON.stringify({ mongodbUri: uri, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }), "utf-8");
     } catch {
     }
-    console.log("[DB Service] Successfully connected to MongoDB Atlas database.");
+    console.log(`[DB Service] Successfully connected to MongoDB Atlas database (DATA_MODE=${getDataMode()}).`);
+    await initDatabaseIndexes();
   } catch (err) {
     console.error("[DB Service] Failed to connect to MongoDB:", err.message);
     console.warn("[DB Service] Operating with in-memory storage fallback.");
@@ -491,7 +560,8 @@ async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol
   let insertedCount = 0;
   let modifiedCount = 0;
   const normalizedDocs = rawEvents.map((raw) => {
-    const tagId = String(raw.TagID || raw.tagId || raw.epc || raw.EPC || raw.id || `TAG_${Date.now()}`);
+    const tagId = String(raw.TagID || raw.tagId || raw.epc || raw.EPC || raw.id || "");
+    if (!tagId) return null;
     const location = String(raw.Location || raw.location || raw.LocationName || raw.zone || raw.Zone || "Zone1");
     const rawTime = raw.Timestamp || raw.timestamp || raw.EnterTime || raw.time || nowIso;
     const d = new Date(rawTime);
@@ -504,10 +574,13 @@ async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol
     const ss = String(validDate.getUTCSeconds()).padStart(2, "0");
     const fff = String(validDate.getUTCMilliseconds()).padStart(3, "0");
     const timestampMs = `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}.${fff}`;
-    const docId = `evt_${tagId}_${validDate.getTime()}_${Math.random().toString(36).substring(2, 6)}`;
+    const orgId = raw.organizationId || organizationId;
+    const readerId = raw.readerId || raw.ReaderID || "APERTURE-READER-01";
+    const eventHash = raw.externalEventId || raw.eventId || generateEventHash(tagId, timestampMs, location, readerId, orgId);
+    const docId = `evt_${tagId}_${eventHash}`;
     return {
       id: docId,
-      organizationId: raw.organizationId || organizationId,
+      organizationId: orgId,
       TagID: tagId,
       Timestamp: timestampMs,
       Location: location,
@@ -515,11 +588,15 @@ async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol
       LastName: raw.LastName || raw.lastName || "Member",
       protocol: raw.protocol || protocol,
       rssi: raw.rssi !== void 0 ? Number(raw.rssi) : -60,
-      readerId: raw.readerId || raw.ReaderID || "APERTURE-READER-01",
+      readerId,
       antennaPort: raw.antennaPort || raw.antennaId || 1,
       receivedAt: nowIso
     };
-  });
+  }).filter(Boolean);
+  if (normalizedDocs.length === 0) {
+    return { insertedCount: 0, modifiedCount: 0, totalProcessed: 0 };
+  }
+  console.log(`[INGEST] source=${protocol} batchCount=${normalizedDocs.length} org=${organizationId}`);
   if (mongoDb) {
     try {
       const operations = normalizedDocs.map((doc) => ({
@@ -1107,7 +1184,7 @@ setInterval(() => {
 
 // src/server/middleware/auth.ts
 var import_jsonwebtoken = __toESM(require("jsonwebtoken"), 1);
-var import_crypto = __toESM(require("crypto"), 1);
+var import_crypto2 = __toESM(require("crypto"), 1);
 
 // src/constants/permissions.ts
 var DEFAULT_ROLE_PERMISSIONS = [
@@ -1136,7 +1213,7 @@ var DEFAULT_PERMISSIONS_MAP = {
 // src/server/middleware/auth.ts
 var jwtSecret = process.env.JWT_SECRET;
 if (!jwtSecret) {
-  jwtSecret = import_crypto.default.randomBytes(32).toString("hex");
+  jwtSecret = import_crypto2.default.randomBytes(32).toString("hex");
   console.warn("[Auth] JWT_SECRET not set in environment. Generated random per-boot secret. Set JWT_SECRET in production.");
 }
 var JWT_SECRET = jwtSecret;
@@ -1633,22 +1710,28 @@ Respond ONLY with valid JSON with this exact structure:
       }
     });
     const parsed = parseCleanJSON(response.text || "{}");
-    try {
-      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-      const insightId = `ai_insight_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const doc = {
-        id: insightId,
-        organizationId: orgId,
-        ...parsed,
-        source: `Gemini 3.7 Flash (${indName})`,
-        timestamp: nowIso,
-        createdAt: nowIso
-      };
-      await upsertDoc("ai_insights", doc, orgId);
-      broadcastWebSocketEvent("ai_insight", doc, orgId);
-      broadcastSseEvent("ai_insight", doc, orgId);
-    } catch (dbErr) {
-      console.warn("[AI Router] Failed to save AI analysis to MongoDB:", dbErr);
+    if (combinedScans.length > 0 && parsed.anomalies && parsed.anomalies.length > 0) {
+      try {
+        const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+        const dateHourKey = nowIso.slice(0, 13);
+        const insightId = `ai_insight_${orgId}_${dateHourKey}`;
+        const doc = {
+          id: insightId,
+          organizationId: orgId,
+          ...parsed,
+          source: `Gemini 3.7 Flash (${indName})`,
+          timestamp: nowIso,
+          createdAt: nowIso
+        };
+        await upsertDoc("ai_insights", doc, orgId);
+        broadcastWebSocketEvent("ai_insight", doc, orgId);
+        broadcastSseEvent("ai_insight", doc, orgId);
+      } catch (dbErr) {
+        console.warn("[AI Router] Failed to save AI analysis to MongoDB:", dbErr);
+      }
+    } else {
+      broadcastWebSocketEvent("ai_insight", { organizationId: orgId, ...parsed }, orgId);
+      broadcastSseEvent("ai_insight", { organizationId: orgId, ...parsed }, orgId);
     }
     return res.json(parsed);
   } catch (err) {
@@ -1993,7 +2076,12 @@ function classifyTelemetryRules(tagId, location, personName, rssi) {
     aiInsight
   };
 }
-async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server", organizationId = "demo") {
+async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server", organizationId = "default") {
+  const sourceValidation = validateTelemetrySource(sourceProtocol);
+  if (!sourceValidation.valid) {
+    console.warn(`[INGEST] Telemetry rejected by data policy: ${sourceValidation.error}`);
+    return { success: false, processedCount: 0, analyzedResults: [] };
+  }
   const items = Array.isArray(payloads) ? payloads : [payloads];
   const analyzedResults = [];
   const nowIso = (/* @__PURE__ */ new Date()).toISOString();
@@ -2001,10 +2089,16 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
   const apiKey = getGeminiApiKey();
   for (const item of items) {
     if (!item) continue;
-    const tagId = String(item.TagID || item.tagId || item.epc || item.id || `TAG_${Date.now()}`);
-    const location = String(item.Location || item.location || item.LocationName || item.zone || "Zone 1");
+    const tagId = String(item.TagID || item.tagId || item.epc || item.EPC || item.id || "").trim();
+    if (!tagId) continue;
+    const location = String(item.Location || item.location || item.LocationName || item.zone || "Zone 1").trim();
     const timestamp = item.Timestamp || item.timestamp || item.EnterTime || nowIso;
     const orgId = item.organizationId || organizationId;
+    const readerId = item.readerId || item.ReaderID || "APERTURE-READER-01";
+    const eventHash = item.externalEventId || item.eventId || generateEventHash(tagId, timestamp, location, readerId, orgId);
+    const eventDocId = `evt_${tagId}_${eventHash}`;
+    const histDocId = `hist_${tagId}_${eventHash}`;
+    console.log(`[INGEST] source=${sourceProtocol} device=${readerId} event=${eventHash} tag=${tagId}`);
     const matchedPerson = peopleList.find(
       (p) => p.tagId === tagId || p.TagID === tagId || p.badgeId === tagId || p.id === tagId
     );
@@ -2030,7 +2124,6 @@ Respond strictly with valid JSON:
   "aiInsight": "AI Alert: Heavy Crane exclusion boundary triggered. Audio siren warning dispatched."
 }`;
         const PRIMARY_MODEL = "gemini-3.6-flash";
-        const FALLBACK_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
         const response = await ai.models.generateContent({
           model: PRIMARY_MODEL,
           contents: prompt,
@@ -2073,6 +2166,8 @@ Respond strictly with valid JSON:
       FirstName: firstName,
       LastName: lastName,
       sourceProtocol,
+      readerId,
+      rssi: item.rssi !== void 0 ? Number(item.rssi) : -60,
       aiRiskScore: aiResult.aiRiskScore,
       aiRiskLevel: aiResult.aiRiskLevel,
       aiComplianceScore: aiResult.aiComplianceScore,
@@ -2084,13 +2179,15 @@ Respond strictly with valid JSON:
     await upsertDoc("real_time_tags", tagDocument, orgId);
     await upsertDoc("live_tags", tagDocument, orgId);
     await upsertDoc("rfid_realtime_events", {
-      id: `evt_${Date.now()}_${tagId}`,
+      id: eventDocId,
+      eventId: eventHash,
       organizationId: orgId,
       ...tagDocument,
       receivedAt: nowIso
     }, orgId);
     await upsertDoc("tag_history", {
-      id: `hist_${tagId}_${Date.now()}`,
+      id: histDocId,
+      eventId: eventHash,
       organizationId: orgId,
       TagID: tagId,
       FirstName: firstName,
@@ -2101,22 +2198,24 @@ Respond strictly with valid JSON:
       Duration: 0.1,
       ...tagDocument
     }, orgId);
-    const insightDoc = {
-      id: `insight_${Date.now()}_${tagId}`,
-      organizationId: orgId,
-      title: `AI Analysis: ${location} (${aiResult.aiRiskLevel})`,
-      category: aiResult.aiRiskLevel === "SAFE" ? "Operational Info" : "Safety & Risk Alert",
-      impact: aiResult.aiRiskLevel,
-      description: aiResult.aiInsight,
-      tagId,
-      personName: fullName,
-      location,
-      createdAt: nowIso
-    };
-    await upsertDoc("ai_insights", insightDoc, orgId);
+    if (aiResult.aiAnomaly || aiResult.aiRiskLevel === "HIGH" || aiResult.aiRiskLevel === "CRITICAL") {
+      const insightDoc = {
+        id: `insight_${tagId}_${eventHash}`,
+        organizationId: orgId,
+        title: `AI Analysis: ${location} (${aiResult.aiRiskLevel})`,
+        category: "Safety & Risk Alert",
+        impact: aiResult.aiRiskLevel,
+        description: aiResult.aiInsight,
+        tagId,
+        personName: fullName,
+        location,
+        createdAt: nowIso
+      };
+      await upsertDoc("ai_insights", insightDoc, orgId);
+    }
     if (aiResult.aiAnomaly && (aiResult.aiRiskLevel === "HIGH" || aiResult.aiRiskLevel === "CRITICAL")) {
       const incidentDoc = {
-        id: `inc_${Date.now()}_${tagId}`,
+        id: `inc_${tagId}_${eventHash}`,
         organizationId: orgId,
         title: aiResult.aiAnomaly.title,
         category: "Exclusion Zone Breach",
@@ -2157,7 +2256,7 @@ function mapRawItemToTelemetry(item, mapping) {
   const timeKey = mapping?.timestampField || "Timestamp";
   const nameKey = mapping?.nameField || "FirstName";
   const rssiKey = mapping?.rssiField || "rssi";
-  const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.id || `TAG_${Date.now()}`;
+  const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.EPC || item.id || "";
   const location = item[locKey] || item.Location || item.location || item.LocationName || item.zone || "Zone 1";
   const timestamp = item[timeKey] || item.Timestamp || item.timestamp || item.EnterTime || (/* @__PURE__ */ new Date()).toISOString();
   const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(" ")[0] || "Staff";
@@ -2178,6 +2277,16 @@ function mapRawItemToTelemetry(item, mapping) {
 async function ingestTelemetry(rawPayload, sourceName, connectionId) {
   const startTime = Date.now();
   let connection = null;
+  const sourceValidation = validateTelemetrySource(sourceName);
+  if (!sourceValidation.valid) {
+    return {
+      success: false,
+      recordsProcessed: 0,
+      aiAnalyzed: 0,
+      latencyMs: Date.now() - startTime,
+      error: sourceValidation.error
+    };
+  }
   if (connectionId) {
     connection = await getConnectionById(connectionId);
   }
@@ -2190,9 +2299,10 @@ async function ingestTelemetry(rawPayload, sourceName, connectionId) {
       else if (Array.isArray(rawPayload.tags)) rawList = rawPayload.tags;
       else if (Array.isArray(rawPayload.records)) rawList = rawPayload.records;
       else if (Array.isArray(rawPayload.items)) rawList = rawPayload.items;
-      else rawList = [rawPayload];
+      else if (rawPayload.TagID || rawPayload.tagId || rawPayload.epc || rawPayload.id) rawList = [rawPayload];
     }
     if (rawList.length === 0) {
+      console.log(`[INGEST] source="${sourceName}" received empty or non-telemetry payload. Nothing written to MongoDB.`);
       return {
         success: true,
         recordsProcessed: 0,
@@ -2200,7 +2310,17 @@ async function ingestTelemetry(rawPayload, sourceName, connectionId) {
         latencyMs: Date.now() - startTime
       };
     }
-    const telemetryItems = rawList.map((item) => mapRawItemToTelemetry(item, connection?.dataMapping));
+    const telemetryItems = rawList.map((item) => mapRawItemToTelemetry(item, connection?.dataMapping)).filter((item) => Boolean(item.TagID && item.TagID.trim() !== ""));
+    if (telemetryItems.length === 0) {
+      console.warn(`[INGEST] rejected: invalid external telemetry from source="${sourceName}" (missing tag identifiers)`);
+      return {
+        success: true,
+        recordsProcessed: 0,
+        aiAnalyzed: 0,
+        latencyMs: Date.now() - startTime
+      };
+    }
+    console.log(`[INGEST] source="${sourceName}" records=${telemetryItems.length}`);
     const aiResult = await processTelemetryWithAI(telemetryItems, sourceName);
     const latencyMs = Date.now() - startTime;
     const nowIso = (/* @__PURE__ */ new Date()).toISOString();
@@ -2247,6 +2367,13 @@ async function ingestTelemetry(rawPayload, sourceName, connectionId) {
 
 // src/server/services/connectionPoller.ts
 async function pollSingleConnection(config) {
+  if (config.enabled === false) {
+    return;
+  }
+  if (!config.endpointUrl || typeof config.endpointUrl !== "string" || !config.endpointUrl.trim()) {
+    console.warn(`[Connection Poller] Skipping "${config.name}": missing or empty endpointUrl`);
+    return;
+  }
   const targetUrl = buildUrl(config);
   const headers = buildHeaders(config);
   const controller = new AbortController();
@@ -2272,14 +2399,33 @@ async function pollSingleConnection(config) {
     } catch {
       throw new Error("Response is not valid JSON format");
     }
+    if (!parsedJson || Array.isArray(parsedJson) && parsedJson.length === 0) {
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      await saveConnection({
+        ...config,
+        lastSyncAt: nowIso,
+        lastStatus: "SUCCESS",
+        lastError: null,
+        updatedAt: nowIso
+      });
+      return;
+    }
     await ingestTelemetry(parsedJson, `API Poll: ${config.name}`, config.id);
   } catch (err) {
     clearTimeout(timeout);
-    const errMsg = err.name === "AbortError" ? "Request timed out after 8000ms" : err.message || "Network unreachable";
-    await ingestTelemetry(null, `API Poll: ${config.name}`, config.id).then(() => {
-    }).catch(() => {
-    });
+    const errMsg = err.name === "AbortError" ? "Request timed out after 15000ms" : err.message || "Network unreachable";
     console.error(`[Connection Poller] Error polling "${config.name}":`, errMsg);
+    try {
+      const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+      await saveConnection({
+        ...config,
+        lastSyncAt: nowIso,
+        lastStatus: "ERROR",
+        lastError: errMsg,
+        updatedAt: nowIso
+      });
+    } catch {
+    }
   }
 }
 

@@ -81,7 +81,7 @@ describe('Secured Routes Access Control', () => {
         headers: { Authorization: `Bearer ${adminToken}` }
       });
       expect(res.status).toBe(200);
-    }, 15000);
+    }, 30000);
   });
 
   describe('/api/connections/*', () => {

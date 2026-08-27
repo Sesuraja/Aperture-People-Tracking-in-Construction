@@ -114,17 +114,26 @@ function classifyTelemetryRules(
   };
 }
 
+import { generateEventHash, validateTelemetrySource } from './dataPolicy.js';
+
 /**
  * Main AI Engine pipeline processing tag & reader telemetry from ALL protocols.
  * 1. Analyzes telemetry (using Gemini API or AI rule engine)
- * 2. Stores structured results in MongoDB
+ * 2. Stores structured results in MongoDB (with deterministic deduplication)
  * 3. Streams updates via WebSockets, SSE, and MQTT
  */
 export async function processTelemetryWithAI(
   payloads: TelemetryPayload | TelemetryPayload[],
   sourceProtocol: string = 'API Key Server',
-  organizationId: string = 'demo'
+  organizationId: string = 'default'
 ): Promise<{ success: boolean; processedCount: number; analyzedResults: AIAnalysisResult[] }> {
+  // Validate source policy
+  const sourceValidation = validateTelemetrySource(sourceProtocol);
+  if (!sourceValidation.valid) {
+    console.warn(`[INGEST] Telemetry rejected by data policy: ${sourceValidation.error}`);
+    return { success: false, processedCount: 0, analyzedResults: [] };
+  }
+
   const items = Array.isArray(payloads) ? payloads : [payloads];
   const analyzedResults: AIAnalysisResult[] = [];
   const nowIso = new Date().toISOString();
@@ -135,10 +144,20 @@ export async function processTelemetryWithAI(
 
   for (const item of items) {
     if (!item) continue;
-    const tagId = String(item.TagID || item.tagId || item.epc || item.id || `TAG_${Date.now()}`);
-    const location = String(item.Location || item.location || item.LocationName || item.zone || 'Zone 1');
+    const tagId = String(item.TagID || item.tagId || item.epc || item.EPC || item.id || '').trim();
+    if (!tagId) continue; // Do not fabricate tags
+
+    const location = String(item.Location || item.location || item.LocationName || item.zone || 'Zone 1').trim();
     const timestamp = item.Timestamp || item.timestamp || item.EnterTime || nowIso;
     const orgId = item.organizationId || organizationId;
+    const readerId = item.readerId || item.ReaderID || 'APERTURE-READER-01';
+
+    // Generate deterministic event identifier for deduplication
+    const eventHash = item.externalEventId || item.eventId || generateEventHash(tagId, timestamp, location, readerId, orgId);
+    const eventDocId = `evt_${tagId}_${eventHash}`;
+    const histDocId = `hist_${tagId}_${eventHash}`;
+
+    console.log(`[INGEST] source=${sourceProtocol} device=${readerId} event=${eventHash} tag=${tagId}`);
 
     // Match person
     const matchedPerson = peopleList.find(
@@ -170,7 +189,6 @@ Respond strictly with valid JSON:
 }`;
 
         const PRIMARY_MODEL = 'gemini-3.6-flash';
-        const FALLBACK_MODELS = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
         const response = await ai.models.generateContent({
           model: PRIMARY_MODEL,
           contents: prompt,
@@ -208,7 +226,7 @@ Respond strictly with valid JSON:
 
     analyzedResults.push(aiResult);
 
-    // 2. STORE DATA IN MONGODB
+    // 2. STORE DATA IN MONGODB (Clean, Deduplicated Persistence)
     const tagDocument = {
       id: tagId,
       organizationId: orgId,
@@ -219,6 +237,8 @@ Respond strictly with valid JSON:
       FirstName: firstName,
       LastName: lastName,
       sourceProtocol,
+      readerId,
+      rssi: item.rssi !== undefined ? Number(item.rssi) : -60,
       aiRiskScore: aiResult.aiRiskScore,
       aiRiskLevel: aiResult.aiRiskLevel,
       aiComplianceScore: aiResult.aiComplianceScore,
@@ -228,21 +248,23 @@ Respond strictly with valid JSON:
       lastSyncAt: nowIso
     };
 
-    // Upsert into real_time_tags & live_tags
+    // Upsert into real_time_tags & live_tags (Current state collections: 1 document per unique tag)
     await upsertDoc('real_time_tags', tagDocument, orgId);
     await upsertDoc('live_tags', tagDocument, orgId);
 
-    // Upsert historical scan event
+    // Upsert historical scan event (Deduplicated with deterministic event ID)
     await upsertDoc('rfid_realtime_events', {
-      id: `evt_${Date.now()}_${tagId}`,
+      id: eventDocId,
+      eventId: eventHash,
       organizationId: orgId,
       ...tagDocument,
       receivedAt: nowIso
     }, orgId);
 
-    // Store in tag_history
+    // Store in tag_history (Deduplicated with deterministic event ID)
     await upsertDoc('tag_history', {
-      id: `hist_${tagId}_${Date.now()}`,
+      id: histDocId,
+      eventId: eventHash,
       organizationId: orgId,
       TagID: tagId,
       FirstName: firstName,
@@ -254,25 +276,27 @@ Respond strictly with valid JSON:
       ...tagDocument
     }, orgId);
 
-    // Save AI Insight to MongoDB
-    const insightDoc = {
-      id: `insight_${Date.now()}_${tagId}`,
-      organizationId: orgId,
-      title: `AI Analysis: ${location} (${aiResult.aiRiskLevel})`,
-      category: aiResult.aiRiskLevel === 'SAFE' ? 'Operational Info' : 'Safety & Risk Alert',
-      impact: aiResult.aiRiskLevel,
-      description: aiResult.aiInsight,
-      tagId,
-      personName: fullName,
-      location,
-      createdAt: nowIso
-    };
-    await upsertDoc('ai_insights', insightDoc, orgId);
+    // AI insights: Only create when there is a genuine safety event or high/critical anomaly (never on routine safe nominal reads)
+    if (aiResult.aiAnomaly || aiResult.aiRiskLevel === 'HIGH' || aiResult.aiRiskLevel === 'CRITICAL') {
+      const insightDoc = {
+        id: `insight_${tagId}_${eventHash}`,
+        organizationId: orgId,
+        title: `AI Analysis: ${location} (${aiResult.aiRiskLevel})`,
+        category: 'Safety & Risk Alert',
+        impact: aiResult.aiRiskLevel,
+        description: aiResult.aiInsight,
+        tagId,
+        personName: fullName,
+        location,
+        createdAt: nowIso
+      };
+      await upsertDoc('ai_insights', insightDoc, orgId);
+    }
 
-    // If High or Critical Anomaly, create incident in MongoDB
+    // If High or Critical Anomaly, create incident in MongoDB (Deduplicated with deterministic event ID)
     if (aiResult.aiAnomaly && (aiResult.aiRiskLevel === 'HIGH' || aiResult.aiRiskLevel === 'CRITICAL')) {
       const incidentDoc = {
-        id: `inc_${Date.now()}_${tagId}`,
+        id: `inc_${tagId}_${eventHash}`,
         organizationId: orgId,
         title: aiResult.aiAnomaly.title,
         category: 'Exclusion Zone Breach',

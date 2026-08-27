@@ -83,6 +83,29 @@ export function getMongoUri(): string {
   return sanitizeMongoUri(uri);
 }
 
+import { generateEventHash, isProductionDataMode, getDataMode } from './dataPolicy.js';
+
+export async function initDatabaseIndexes(): Promise<void> {
+  if (!mongoDb) return;
+  const indexSpecs = [
+    { col: 'rfid_realtime_events', spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: 'tag_history', spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: 'real_time_tags', spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: 'live_tags', spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: 'hardware_readers', spec: { readerId: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: 'ai_insights', spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } }
+  ];
+
+  for (const { col, spec, options } of indexSpecs) {
+    try {
+      await mongoDb.collection(col).createIndex(spec as any, options);
+    } catch (err: any) {
+      console.warn(`[DB Service] Index initialization note for ${col}:`, err.message);
+    }
+  }
+  console.log('[DB Service] MongoDB deduplication and uniqueness indexes initialized.');
+}
+
 export async function initDatabase(customUri?: string): Promise<void> {
   const rawUri = customUri || getMongoUri();
   const uri = sanitizeMongoUri(rawUri);
@@ -120,7 +143,10 @@ export async function initDatabase(customUri?: string): Promise<void> {
       fs.writeFileSync(PERSISTENT_CONFIG_FILE, JSON.stringify({ mongodbUri: uri, updatedAt: new Date().toISOString() }), 'utf-8');
     } catch {}
 
-    console.log('[DB Service] Successfully connected to MongoDB Atlas database.');
+    console.log(`[DB Service] Successfully connected to MongoDB Atlas database (DATA_MODE=${getDataMode()}).`);
+
+    // Initialize database deduplication indexes (safe, non-data-creating)
+    await initDatabaseIndexes();
   } catch (err: any) {
     console.error('[DB Service] Failed to connect to MongoDB:', err.message);
     console.warn('[DB Service] Operating with in-memory storage fallback.');
@@ -533,7 +559,8 @@ export async function bulkWriteRfidRealtimeEvents(
   let modifiedCount = 0;
 
   const normalizedDocs = rawEvents.map((raw) => {
-    const tagId = String(raw.TagID || raw.tagId || raw.epc || raw.EPC || raw.id || `TAG_${Date.now()}`);
+    const tagId = String(raw.TagID || raw.tagId || raw.epc || raw.EPC || raw.id || '');
+    if (!tagId) return null;
     const location = String(raw.Location || raw.location || raw.LocationName || raw.zone || raw.Zone || 'Zone1');
     const rawTime = raw.Timestamp || raw.timestamp || raw.EnterTime || raw.time || nowIso;
     const d = new Date(rawTime);
@@ -549,11 +576,14 @@ export async function bulkWriteRfidRealtimeEvents(
     const fff = String(validDate.getUTCMilliseconds()).padStart(3, '0');
     const timestampMs = `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}.${fff}`;
 
-    const docId = `evt_${tagId}_${validDate.getTime()}_${Math.random().toString(36).substring(2, 6)}`;
+    const orgId = raw.organizationId || organizationId;
+    const readerId = raw.readerId || raw.ReaderID || 'APERTURE-READER-01';
+    const eventHash = raw.externalEventId || raw.eventId || generateEventHash(tagId, timestampMs, location, readerId, orgId);
+    const docId = `evt_${tagId}_${eventHash}`;
 
     return {
       id: docId,
-      organizationId: raw.organizationId || organizationId,
+      organizationId: orgId,
       TagID: tagId,
       Timestamp: timestampMs,
       Location: location,
@@ -561,11 +591,17 @@ export async function bulkWriteRfidRealtimeEvents(
       LastName: raw.LastName || raw.lastName || 'Member',
       protocol: raw.protocol || protocol,
       rssi: raw.rssi !== undefined ? Number(raw.rssi) : -60,
-      readerId: raw.readerId || raw.ReaderID || 'APERTURE-READER-01',
+      readerId,
       antennaPort: raw.antennaPort || raw.antennaId || 1,
       receivedAt: nowIso
     };
-  });
+  }).filter(Boolean) as any[];
+
+  if (normalizedDocs.length === 0) {
+    return { insertedCount: 0, modifiedCount: 0, totalProcessed: 0 };
+  }
+
+  console.log(`[INGEST] source=${protocol} batchCount=${normalizedDocs.length} org=${organizationId}`);
 
   if (mongoDb) {
     try {

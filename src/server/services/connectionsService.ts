@@ -15,6 +15,7 @@ export interface ApiConnectionConfig {
   basicPassword?: string;
   customHeaders?: Record<string, string>;
   requestBody?: string;
+  enabled?: boolean;
   pollingEnabled?: boolean;
   pollingIntervalSeconds?: number;
   dataMapping?: {
