@@ -20,7 +20,6 @@ import { eventsRouter } from '../src/server/routes/events.js';
 import { mongodbRouter } from '../src/server/routes/mongodb.js';
 import { hardwareRouter } from '../src/server/routes/hardware.js';
 import { realtimeRouter } from '../src/server/routes/realtime.js';
-import { demoRouter } from '../src/server/routes/demo.js';
 import { errorHandler } from '../src/server/middleware/errorHandler.js';
 
 export const app = express();
@@ -93,7 +92,6 @@ app.use('/api/connections', connectionsRouter);
 app.use('/api/integrations', connectionsRouter);
 app.use('/api/hardware', hardwareRouter);
 app.use('/api/realtime', realtimeRouter);
-app.use('/api/demo', demoRouter);
 
 // Direct GAO RFID Root Aliases
 app.use('/GetHistoryTotalCount', rfidRouter);

@@ -21,9 +21,7 @@ import { eventsRouter } from './src/server/routes/events.js';
 import { mongodbRouter } from './src/server/routes/mongodb.js';
 import { hardwareRouter } from './src/server/routes/hardware.js';
 import { realtimeRouter } from './src/server/routes/realtime.js';
-import { demoRouter } from './src/server/routes/demo.js';
 import { errorHandler } from './src/server/middleware/errorHandler.js';
-import { initMockGaoAdapter } from './src/server/services/mockGaoAdapter.js';
 
 export const app = express();
 app.set('trust proxy', 1);
@@ -78,7 +76,6 @@ async function startServer() {
   app.use('/api/integrations', connectionsRouter);
   app.use('/api/hardware', hardwareRouter);
   app.use('/api/realtime', realtimeRouter);
-  app.use('/api/demo', demoRouter);
 
   // Direct GAO RFID Root Aliases (allowing ${host}/GetHistoryTotalCount, ${host}/GetHistoryRecords/10/30, ${host}/GetTagsInRealtime)
   app.use('/GetHistoryTotalCount', rfidRouter);
@@ -113,11 +110,6 @@ async function startServer() {
     await bootstrapAdminUser();
   }).catch((e) => {
     console.warn('[DB Service] Async DB initialization note:', e?.message);
-  });
-
-  // Initialize GAO216031A Mock Adapter (bootstraps readers; auto-starts if GAO_SIMULATOR_ENABLED=true)
-  initMockGaoAdapter().catch((e: any) => {
-    console.warn('[Server] GAO Mock Adapter init warning (non-fatal):', e?.message);
   });
 
   httpServer.listen(PORT, '0.0.0.0', () => {
