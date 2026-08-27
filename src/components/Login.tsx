@@ -11,10 +11,7 @@ interface LoginProps {
 export default function Login({ onLoginSuccess }: LoginProps) {
   const [isSignUp, setIsSignUp] = useState(false);
   const [fullName, setFullName] = useState('');
-<<<<<<< HEAD
-=======
   const [organizationName, setOrganizationName] = useState('');
->>>>>>> 02af2d7 (chore: ensure hardware/gao-native route is deployed)
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState<'admin' | 'manager' | 'operator'>('admin');
