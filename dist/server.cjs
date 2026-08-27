@@ -4125,19 +4125,35 @@ function validateGaoNativeEvent(raw) {
     return { valid: false, errors: ["Payload must be a JSON object"] };
   }
   const ev = raw;
-  if (!ev.epc || typeof ev.epc !== "string" || ev.epc.trim() === "") {
-    errors.push("Missing or empty required field: epc");
+  const resolvedEpc = ev.epc || ev.EPC || ev.tagId || ev.TagID || ev.id;
+  if (!resolvedEpc || typeof resolvedEpc !== "string" || resolvedEpc.trim() === "") {
+    errors.push("Missing or empty required field: epc (or tagId/TagID)");
+  } else {
+    ev.epc = resolvedEpc.trim();
   }
   if (ev.ant === void 0 || ev.ant === null) {
-    errors.push("Missing required field: ant (antenna number)");
-  } else if (typeof ev.ant !== "number" || !Number.isInteger(ev.ant) || ev.ant < 1) {
+    if (ev.Ant !== void 0) ev.ant = ev.Ant;
+    else if (ev.antenna !== void 0) ev.ant = ev.antenna;
+    else if (ev.antennaId !== void 0) ev.ant = ev.antennaId;
+    else ev.ant = 1;
+  }
+  const antNum = typeof ev.ant === "number" ? ev.ant : parseInt(String(ev.ant), 10);
+  if (isNaN(antNum) || antNum < 1) {
     errors.push("Field ant must be a positive integer (1-based antenna number)");
+  } else {
+    ev.ant = antNum;
   }
-  if (!ev.timestamp || typeof ev.timestamp !== "string" || ev.timestamp.trim() === "") {
-    errors.push("Missing or empty required field: timestamp");
+  const resolvedTs = ev.timestamp || ev.Timestamp || ev.time || ev.DateTime;
+  if (!resolvedTs || typeof resolvedTs !== "string" || resolvedTs.trim() === "") {
+    ev.timestamp = (/* @__PURE__ */ new Date()).toISOString();
+  } else {
+    ev.timestamp = String(resolvedTs).trim();
   }
-  if (ev.rssi !== void 0 && typeof ev.rssi !== "number") {
-    errors.push("Field rssi must be a number if provided");
+  if (ev.rssi !== void 0) {
+    const parsedRssi = typeof ev.rssi === "number" ? ev.rssi : parseFloat(String(ev.rssi));
+    if (!isNaN(parsedRssi)) {
+      ev.rssi = parsedRssi;
+    }
   }
   return { valid: errors.length === 0, errors };
 }

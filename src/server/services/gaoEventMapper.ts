@@ -56,28 +56,45 @@ export function validateGaoNativeEvent(raw: unknown): ValidationResult {
     return { valid: false, errors: ['Payload must be a JSON object'] };
   }
 
-  const ev = raw as Record<string, unknown>;
+  const ev = raw as Record<string, any>;
 
-  // Required: epc (must be a non-empty string)
-  if (!ev.epc || typeof ev.epc !== 'string' || ev.epc.trim() === '') {
-    errors.push('Missing or empty required field: epc');
+  // Flexible tag identifier resolution (epc, EPC, tagId, TagID, id)
+  const resolvedEpc = ev.epc || ev.EPC || ev.tagId || ev.TagID || ev.id;
+  if (!resolvedEpc || typeof resolvedEpc !== 'string' || resolvedEpc.trim() === '') {
+    errors.push('Missing or empty required field: epc (or tagId/TagID)');
+  } else {
+    ev.epc = resolvedEpc.trim();
   }
 
-  // Required: ant (must be a positive integer)
+  // Antenna number resolution (ant, Ant, antenna, antennaId)
   if (ev.ant === undefined || ev.ant === null) {
-    errors.push('Missing required field: ant (antenna number)');
-  } else if (typeof ev.ant !== 'number' || !Number.isInteger(ev.ant) || ev.ant < 1) {
+    if (ev.Ant !== undefined) ev.ant = ev.Ant;
+    else if (ev.antenna !== undefined) ev.ant = ev.antenna;
+    else if (ev.antennaId !== undefined) ev.ant = ev.antennaId;
+    else ev.ant = 1; // Default to antenna 1 if not specified
+  }
+
+  const antNum = typeof ev.ant === 'number' ? ev.ant : parseInt(String(ev.ant), 10);
+  if (isNaN(antNum) || antNum < 1) {
     errors.push('Field ant must be a positive integer (1-based antenna number)');
+  } else {
+    ev.ant = antNum;
   }
 
-  // Required: timestamp (must be a string)
-  if (!ev.timestamp || typeof ev.timestamp !== 'string' || ev.timestamp.trim() === '') {
-    errors.push('Missing or empty required field: timestamp');
+  // Required: timestamp
+  const resolvedTs = ev.timestamp || ev.Timestamp || ev.time || ev.DateTime;
+  if (!resolvedTs || typeof resolvedTs !== 'string' || resolvedTs.trim() === '') {
+    ev.timestamp = new Date().toISOString();
+  } else {
+    ev.timestamp = String(resolvedTs).trim();
   }
 
-  // Recommended (warn but do not reject): rssi
-  if (ev.rssi !== undefined && typeof ev.rssi !== 'number') {
-    errors.push('Field rssi must be a number if provided');
+  // Recommended: rssi
+  if (ev.rssi !== undefined) {
+    const parsedRssi = typeof ev.rssi === 'number' ? ev.rssi : parseFloat(String(ev.rssi));
+    if (!isNaN(parsedRssi)) {
+      ev.rssi = parsedRssi;
+    }
   }
 
   return { valid: errors.length === 0, errors };
