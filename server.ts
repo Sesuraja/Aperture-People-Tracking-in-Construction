@@ -38,16 +38,21 @@ async function startServer() {
     frameguard: false
   }));
 
-  // Middleware
+  // Body Parsers (MUST be before any route or logging middleware that reads req.body)
+  app.use(express.json({ limit: '10mb' }));
+  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+  // Middleware - Inbound Request Logging
   app.use((req, res, next) => {
     if (req.method === 'POST' || req.method === 'PUT') {
       console.log(`[INBOUND REQUEST] ${req.method} ${req.url} from IP: ${req.ip} | User-Agent: ${req.headers['user-agent'] || 'none'}`);
-      console.log(`[INBOUND BODY]`, JSON.stringify(req.body).slice(0, 300));
+      if (req.body && Object.keys(req.body).length > 0) {
+        const bodyStr = JSON.stringify(req.body) || '';
+        console.log(`[INBOUND BODY]`, bodyStr.slice(0, 300));
+      }
     }
     next();
   });
-  app.use(express.json({ limit: '10mb' }));
-  app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
   // CORS restriction
   const configuredOrigins = process.env.CORS_ORIGINS

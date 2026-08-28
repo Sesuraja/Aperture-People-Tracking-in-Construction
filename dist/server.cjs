@@ -4917,15 +4917,18 @@ async function startServer() {
     crossOriginResourcePolicy: { policy: "cross-origin" },
     frameguard: false
   }));
+  app.use(import_express11.default.json({ limit: "10mb" }));
+  app.use(import_express11.default.urlencoded({ extended: true, limit: "10mb" }));
   app.use((req, res, next) => {
     if (req.method === "POST" || req.method === "PUT") {
       console.log(`[INBOUND REQUEST] ${req.method} ${req.url} from IP: ${req.ip} | User-Agent: ${req.headers["user-agent"] || "none"}`);
-      console.log(`[INBOUND BODY]`, JSON.stringify(req.body).slice(0, 300));
+      if (req.body && Object.keys(req.body).length > 0) {
+        const bodyStr = JSON.stringify(req.body) || "";
+        console.log(`[INBOUND BODY]`, bodyStr.slice(0, 300));
+      }
     }
     next();
   });
-  app.use(import_express11.default.json({ limit: "10mb" }));
-  app.use(import_express11.default.urlencoded({ extended: true, limit: "10mb" }));
   const configuredOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").map((s) => s.trim()) : [];
   app.use((0, import_cors.default)({
     origin: (origin, callback) => {
