@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { 
   Map as MapIcon, Plus, Trash2, Edit3, Save, Upload, Sliders, SlidersHorizontal, Radio, 
   Wrench, Truck, Camera, Thermometer, ShieldCheck, AlertTriangle, Box, Compass, RefreshCw, Check,
-  Layers, MapPin, Eye, Settings, HelpCircle, HardHat, Building2, Layers3, History, FileCode,
+  Layers, MapPin, Eye, Settings, HelpCircle, HardHat, User, Building2, Layers3, History, FileCode,
   Sparkles, FileText, ChevronRight, RotateCw, Copy, ShieldAlert, ArrowRight, X, FolderPlus,
   Users, Lock, Unlock, EyeOff, Search, Filter, Flame, Zap, Navigation, Wifi,
   PenTool, Square, Circle, Clock, BellRing, Maximize2, Activity, Info, Database
@@ -14,6 +14,8 @@ import { INITIAL_DEVICES, getBlueprintSvg, InteractiveSiteMap } from './LiveFloo
 import { AssetItem, VehicleItem, CCTVCameraItem, EnvironmentalSensorItem, INITIAL_ASSETS, INITIAL_VEHICLES, INITIAL_INFRASTRUCTURE, INITIAL_CCTVS, INITIAL_ENV_SENSORS } from '../lib/trackingLayers';
 import { doc, setDoc, deleteDoc, collection, onSnapshot, db } from '../lib/db';
 import { useTracking } from '../context/TrackingContext';
+import { safeStorage } from '../lib/safeStorage';
+import { optimizeFloorMapFile } from '../lib/imageOptimizer';
 
 function getAuthHeaders(): Record<string, string> {
   const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
@@ -54,9 +56,9 @@ export interface MapWorkerItem {
 export const INITIAL_MAP_WORKERS: MapWorkerItem[] = [];
 
 export const DEFAULT_LAYER_CONFIGS: Record<string, MapLayerConfig> = {
-  workers: { id: 'workers', name: 'Workers', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'HardHat', color: 'bg-emerald-500 text-white' },
+  workers: { id: 'workers', name: 'Personnel', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'User', color: 'bg-emerald-500 text-white' },
   visitors: { id: 'visitors', name: 'Visitors', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Users', color: 'bg-blue-500 text-white' },
-  contractors: { id: 'contractors', name: 'Contractors', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Building2', color: 'bg-indigo-500 text-white' },
+  contractors: { id: 'contractors', name: 'External Staff', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Building2', color: 'bg-indigo-500 text-white' },
   equipment: { id: 'equipment', name: 'Equipment', category: 'equipment', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Box', color: 'bg-amber-500 text-white' },
   vehicles: { id: 'vehicles', name: 'Vehicles', category: 'equipment', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Truck', color: 'bg-orange-500 text-white' },
   rfidReaders: { id: 'rfidReaders', name: 'RFID Readers', category: 'infrastructure', visible: true, opacity: 0.9, locked: false, count: 0, iconName: 'Radio', color: 'bg-purple-500 text-white' },
@@ -113,17 +115,17 @@ export interface SiteData {
 const DEFAULT_SITES: Record<string, SiteData> = {
   'metro-tower': {
     id: 'metro-tower',
-    name: 'Metro Commercial Tower Construction',
-    contractor: 'BuildCorp General Contractors',
+    name: 'Metro Corporate Commercial Complex',
+    contractor: 'Enterprise Facility Management',
     dimensions: '200m x 150m (30,000 m²)',
     buildings: [
       {
         id: 'bldg-main',
-        name: 'Building A - Commercial Main Tower',
+        name: 'Building A - Main Operations Tower',
         floors: [
           {
             id: 'fl-1',
-            name: 'Level 1 - Ground Access & Gate Portal',
+            name: 'Level 1 - Ground Access & Portal Gate',
             levelNumber: 1,
             activeVersionId: 'ver-1.0',
             versions: [
@@ -132,8 +134,8 @@ const DEFAULT_SITES: Record<string, SiteData> = {
                 versionNumber: 'v1.0',
                 status: 'published',
                 createdAt: '2026-08-01 09:00',
-                author: 'Elena Rostova (EHS Lead)',
-                notes: 'Initial approved site safety clearance map and RFID gate boundaries.',
+                author: 'Facility Operations Lead',
+                notes: 'Initial approved facility security clearance map and RFID portal boundaries.',
                 zones: {},
                 floorplanUrl: null
               }
@@ -141,7 +143,7 @@ const DEFAULT_SITES: Record<string, SiteData> = {
           },
           {
             id: 'fl-2',
-            name: 'Level 2 - Steel Decking & Scaffolding',
+            name: 'Level 2 - Operations & Engineering Wing',
             levelNumber: 2,
             activeVersionId: 'ver-1.0-l2',
             versions: [
@@ -150,8 +152,8 @@ const DEFAULT_SITES: Record<string, SiteData> = {
                 versionNumber: 'v1.0',
                 status: 'published',
                 createdAt: '2026-08-02 11:30',
-                author: 'Marcus Vance',
-                notes: 'Level 2 steel decking and scaffold perimeter layout.',
+                author: 'Operations Director',
+                notes: 'Level 2 facility operations and security perimeter layout.',
                 zones: {},
                 floorplanUrl: null
               }
@@ -165,7 +167,7 @@ const DEFAULT_SITES: Record<string, SiteData> = {
         floors: [
           {
             id: 'fl-b1-1',
-            name: 'Ground Level - Heavy Staging & Parking',
+            name: 'Ground Level - Fleet Staging & Parking',
             levelNumber: 1,
             activeVersionId: 'ver-1.0-b2',
             versions: [
@@ -175,7 +177,7 @@ const DEFAULT_SITES: Record<string, SiteData> = {
                 status: 'published',
                 createdAt: '2026-08-03 14:00',
                 author: 'G. Hopper (Fleet Manager)',
-                notes: 'Heavy machinery parking and material storage laydown.',
+                notes: 'Fleet vehicle parking and equipment storage area.',
                 zones: {},
                 floorplanUrl: null
               }
@@ -276,14 +278,14 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         id: p.id,
         name: p.name,
         role: p.role,
-        company: (p as any).tradeCompany || (p as any).company || 'Site Operations',
+        company: (p as any).tradeCompany || (p as any).company || 'Facility Operations',
         x: p.x,
         y: p.y,
         safetyStatus: (p.ppeStatus === 'NON_COMPLIANT' ? 'NON_COMPLIANT' : 'COMPLIANT') as any,
         ppeStatus: p.ppeStatus || 'COMPLIANT',
-        currentZone: p.currentZone || 'Active Site Area',
+        currentZone: p.currentZone || 'Main Facility Area',
         hardhatTagId: p.hardhatTagId || p.id,
-        certifications: ['Site Safety Pass', 'OSHA Standard'],
+        certifications: ['Facility Access Pass', 'Safety Clearance'],
         floorId: (p as any).floor || (p as any).floorId || 'fl-1'
       }));
     }
@@ -364,7 +366,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
   const [geofenceForm, setGeofenceForm] = useState({
     name: '',
-    category: 'EXCAVATION & SHORING',
+    category: 'RESTRICTED ACCESS ZONE',
     hazardLevel: 'warning' as 'normal' | 'warning' | 'critical',
     capacity: 5,
     proximityAlertEnabled: true,
@@ -512,9 +514,9 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             y: typeof p.y === 'number' ? p.y : 20 + ((idx * 19) % 60),
             safetyStatus: p.safetyStatus || (p.ppeStatus === 'NON_COMPLIANT' ? 'NON_COMPLIANT' : 'COMPLIANT'),
             ppeStatus: p.ppeStatus || 'COMPLIANT',
-            currentZone: p.currentZone || p.location || 'General Site',
-            hardhatTagId: p.hardhatTagId || p.tagId || `HH-${idx + 1000}`,
-            certifications: p.certifications || ['Site Safety Pass', 'OSHA Standard']
+            currentZone: p.currentZone || p.location || 'General Facility',
+            hardhatTagId: p.hardhatTagId || p.tagId || `TAG-${idx + 1000}`,
+            certifications: p.certifications || ['Facility Access Pass', 'Safety Clearance']
           }));
           setMapWorkers(mappedWorkers);
         } else {
@@ -648,7 +650,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         const assetObj: AssetItem = {
           id: item.id,
           name: item.name,
-          category: (item.type as any) || 'Machinery',
+          category: (item.type as any) || 'Equipment',
           location: item.zone,
           status: (item.status as any) || 'In Use',
           battery: item.batteryLevel ?? 95,
@@ -673,7 +675,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         const vehicleObj: VehicleItem = {
           id: item.id,
           name: item.name,
-          type: (item.type as any) || 'Heavy Vehicle',
+          type: (item.type as any) || 'Fleet Vehicle',
           location: item.zone,
           status: (item.status as any) || 'Active',
           fuel: item.fuelLevel ?? 85,
@@ -750,7 +752,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         trackingCtx.saveAsset({
           id: item.id,
           name: item.name,
-          category: (item.type as any) || 'Machinery',
+          category: (item.type as any) || 'Equipment',
           location: item.zone,
           status: (item.status as any) || 'In Use',
           battery: item.batteryLevel ?? 95,
@@ -764,7 +766,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         trackingCtx.saveVehicle({
           id: item.id,
           name: item.name,
-          type: (item.type as any) || 'Heavy Vehicle',
+          type: (item.type as any) || 'Fleet Vehicle',
           location: item.zone,
           status: (item.status as any) || 'Active',
           fuel: item.fuelLevel ?? 85,
@@ -1248,105 +1250,102 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     setTimeout(() => setSuccessMsg(null), 3000);
   };
 
+  const [isUploadingFloorplan, setIsUploadingFloorplan] = useState(false);
+
   const handleFloorMapUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    if (file.type === 'image/svg+xml' || file.name.endsWith('.svg')) {
-      reader.onload = async (event) => {
-        const svgContent = event.target?.result as string;
-        setCustomSvgSource(svgContent);
-        setCustomFloorplan(null);
+    setIsUploadingFloorplan(true);
+    try {
+      const optimized = await optimizeFloorMapFile(file);
+      const isSvg = optimized.isSvg;
 
-        const mapConfigPayload = {
-          id: activeProject,
-          siteId: activeProject,
-          floorplanUrl: null,
-          svgSource: svgContent,
-          zones: customZones,
-          updatedAt: new Date().toISOString()
-        };
+      const newFloorplanUrl = isSvg ? null : optimized.dataUrl;
+      const newSvgSource = isSvg ? optimized.dataUrl : null;
 
-        try {
-          const authHeaders = getAuthHeaders();
-          await fetch('/api/data/map_configurations', {
-            method: 'POST',
-            headers: authHeaders,
-            body: JSON.stringify(mapConfigPayload)
-          });
-          await setDoc(doc(db, 'map_configurations', activeProject), mapConfigPayload, { merge: true });
-        } catch (err) {
-          console.warn('Map upload MongoDB sync note:', err);
-        }
+      // Immediately update local UI state for instant response (0ms perceived latency)
+      setCustomFloorplan(newFloorplanUrl);
+      setCustomSvgSource(newSvgSource);
 
-        try {
-          const savedProps = JSON.parse(localStorage.getItem('gao_project_properties') || '{}');
-          savedProps[activeProject] = {
-            ...(savedProps[activeProject] || {}),
-            floorplanUrl: null,
-            svgSource: svgContent,
-            customZones
-          };
-          localStorage.setItem('gao_project_properties', JSON.stringify(savedProps));
-        } catch {}
-
-        if (trackingCtx?.saveCustomZones) {
-          trackingCtx.saveCustomZones(customZones, null, svgContent).catch(() => {});
-        }
-        window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-        window.dispatchEvent(new CustomEvent('gao_project_updated'));
-        setSuccessMsg(`SVG Floor Map for ${currentFloor?.name || 'Floor'} uploaded and synchronized to MongoDB & Live Tracking!`);
-        setTimeout(() => setSuccessMsg(null), 3500);
+      const mapConfigPayload = {
+        id: activeProject,
+        siteId: activeProject,
+        floorplanUrl: newFloorplanUrl,
+        svgSource: newSvgSource,
+        zones: customZones,
+        updatedAt: new Date().toISOString()
       };
-      reader.readAsText(file);
-    } else {
-      reader.onload = async (event) => {
-        const imgDataUrl = event.target?.result as string;
-        setCustomFloorplan(imgDataUrl);
-        setCustomSvgSource(null);
 
-        const mapConfigPayload = {
-          id: activeProject,
-          siteId: activeProject,
-          floorplanUrl: imgDataUrl,
-          svgSource: null,
-          zones: customZones,
-          updatedAt: new Date().toISOString()
+      const authHeaders = getAuthHeaders();
+
+      // 1. Persist map configurations to backend MongoDB
+      await Promise.allSettled([
+        fetch('/api/data/map_configurations', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify(mapConfigPayload)
+        }),
+        fetch(`/api/data/map_configurations/${activeProject}`, {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify(mapConfigPayload)
+        }),
+        fetch('/api/data/floorplans', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify({
+            id: `fp_${activeProject}`,
+            siteId: activeProject,
+            floorId: selectedFloorId,
+            url: newFloorplanUrl || newSvgSource,
+            name: file.name,
+            updatedAt: new Date().toISOString()
+          })
+        }),
+        setDoc(doc(db, 'map_configurations', activeProject), mapConfigPayload, { merge: true })
+      ]);
+
+      // 2. Safe local caching without quota exceptions
+      try {
+        if (newFloorplanUrl) safeStorage.setItem('gao_custom_floorplan', newFloorplanUrl);
+        else safeStorage.removeItem('gao_custom_floorplan');
+        if (newSvgSource) safeStorage.setItem('gao_custom_svg', newSvgSource);
+        else safeStorage.removeItem('gao_custom_svg');
+
+        const savedProps = JSON.parse(safeStorage.getItem('gao_project_properties') || '{}');
+        savedProps[activeProject] = {
+          ...(savedProps[activeProject] || {}),
+          floorplanUrl: newFloorplanUrl,
+          svgSource: newSvgSource,
+          customZones
         };
+        safeStorage.setItem('gao_project_properties', JSON.stringify(savedProps));
+      } catch {}
 
-        try {
-          const authHeaders = getAuthHeaders();
-          await fetch('/api/data/map_configurations', {
-            method: 'POST',
-            headers: authHeaders,
-            body: JSON.stringify(mapConfigPayload)
-          });
-          await setDoc(doc(db, 'map_configurations', activeProject), mapConfigPayload, { merge: true });
-        } catch (err) {
-          console.warn('Map upload MongoDB sync note:', err);
-        }
+      // 3. Propagate to Live Tracking Context
+      if (trackingCtx?.saveCustomZones) {
+        trackingCtx.saveCustomZones(customZones, newFloorplanUrl, newSvgSource).catch(() => {});
+      }
+      if (trackingCtx?.setCustomFloorplan) {
+        trackingCtx.setCustomFloorplan(newFloorplanUrl);
+      }
 
-        try {
-          const savedProps = JSON.parse(localStorage.getItem('gao_project_properties') || '{}');
-          savedProps[activeProject] = {
-            ...(savedProps[activeProject] || {}),
-            floorplanUrl: imgDataUrl,
-            svgSource: null,
-            customZones
-          };
-          localStorage.setItem('gao_project_properties', JSON.stringify(savedProps));
-        } catch {}
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+      window.dispatchEvent(new CustomEvent('gao_project_updated'));
 
-        if (trackingCtx?.saveCustomZones) {
-          trackingCtx.saveCustomZones(customZones, imgDataUrl, null).catch(() => {});
-        }
-        window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-        window.dispatchEvent(new CustomEvent('gao_project_updated'));
-        setSuccessMsg(`Floor Map Blueprint uploaded and synchronized to MongoDB & Live Tracking!`);
-        setTimeout(() => setSuccessMsg(null), 3500);
-      };
-      reader.readAsDataURL(file);
+      const sizeKb = (optimized.optimizedSize / 1024).toFixed(0);
+      setSuccessMsg(`Floor Map Blueprint optimized (${sizeKb} KB) & synchronized to MongoDB Atlas!`);
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } catch (err: any) {
+      console.error('Failed to optimize and upload floor map:', err);
+      setSuccessMsg(`Upload error: ${err.message || 'Could not process map image'}`);
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } finally {
+      setIsUploadingFloorplan(false);
+      if (floorFileInputRef.current) {
+        floorFileInputRef.current.value = '';
+      }
     }
   };
 
@@ -1508,7 +1507,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-[#38bdf8] text-xs font-black uppercase tracking-wider mb-1">
-              <MapIcon size={16} /> Interactive Construction Site Map Engine
+              <MapIcon size={16} /> Interactive Facility & Spatial Map Engine
             </div>
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
@@ -1610,7 +1609,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Fleet & Assets</div>
             <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{assets.length + vehicles.length}</div>
             <div className="text-[10px] font-semibold text-slate-500 truncate">
-              {vehicles.length} Heavy Vehicles • {assets.length} Equipment
+              {vehicles.length} Fleet Vehicles • {assets.length} Assets
             </div>
           </div>
         </div>
@@ -1941,11 +1940,11 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               </div>
             )}
 
-            {/* TAB 4: Assets & Machinery */}
+            {/* TAB 4: Assets & Equipment */}
             {activeSidebarTab === 'assets' && (
               <div className="space-y-3 max-h-[400px] overflow-y-auto pr-1">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 dark:text-white">Assets & Machinery ({assets.length + vehicles.length})</span>
+                  <span className="text-xs font-bold text-slate-800 dark:text-white">Assets & Equipment ({assets.length + vehicles.length})</span>
                   <button
                     onClick={() => setIsManageAssetsOpen(true)}
                     className="p-1 bg-[#007BC4]/20 text-[#007BC4] dark:text-sky-300 rounded-lg text-[10px] font-bold hover:bg-[#007BC4]/30 flex items-center gap-1"
@@ -1956,7 +1955,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
                 {assets.length === 0 && vehicles.length === 0 ? (
                   <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center">
-                    <p className="text-xs text-slate-400">No assets registered yet. Click Manage to add machinery.</p>
+                    <p className="text-xs text-slate-400">No assets registered yet. Click Manage to add equipment or assets.</p>
                   </div>
                 ) : (
                   <>
@@ -2003,7 +2002,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             {/* TAB 5: Staff */}
             {activeSidebarTab === 'inventory' && (
               <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
-                <span className="text-xs font-bold text-slate-800 dark:text-white">Active Site Personnel ({mapWorkers.length})</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-white">Active Personnel ({mapWorkers.length})</span>
                 {mapWorkers.length === 0 ? (
                   <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center">
                     <p className="text-xs text-slate-400">No personnel tags active on this floor yet.</p>
@@ -2019,7 +2018,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                         className="p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex items-center justify-between cursor-pointer hover:border-[#007BC4] transition"
                       >
                         <div className="flex items-center gap-2 min-w-0">
-                          <HardHat size={14} className="text-slate-400 shrink-0" />
+                          <User size={14} className="text-slate-400 shrink-0" />
                           <div className="truncate">
                             <div className="text-xs font-extrabold text-slate-800 dark:text-white truncate">{w.name}</div>
                             <div className="text-[9px] text-slate-400 truncate">{w.role} • {w.company}</div>
@@ -2063,10 +2062,19 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                 
                 <button
                   onClick={() => floorFileInputRef.current?.click()}
-                  className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
-                  title="Upload custom CAD blueprint or floor map for this level"
+                  disabled={isUploadingFloorplan}
+                  className="px-2.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                  title="Upload custom floor plan or blueprint map for this level"
                 >
-                  <Upload size={13} /> Upload Floor Map
+                  {isUploadingFloorplan ? (
+                    <>
+                      <RefreshCw size={13} className="animate-spin" /> Optimizing & Saving...
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={13} /> Upload Floor Map
+                    </>
+                  )}
                 </button>
 
                 <button
@@ -2369,7 +2377,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                         <div className="flex justify-between text-[10px] font-bold">
                           <span className="text-slate-300">Live Zone Occupancy</span>
                           <span className={metrics.isOverCapacity ? 'text-rose-400 font-black' : 'text-emerald-400'}>
-                            {metrics.count} / {metrics.capacity} Workers
+                            {metrics.count} / {metrics.capacity} Personnel
                           </span>
                         </div>
                         <div className="w-full bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-700">
@@ -2628,7 +2636,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                       className={`absolute z-30 px-2.5 py-1 rounded-full shadow-lg border backdrop-blur-md flex items-center gap-1.5 cursor-pointer hover:scale-110 transition ${badge.pillBg}`}
                       style={{ left: `${w.x}%`, top: `${w.y}%`, transform: 'translate(-50%, -50%)' }}
                     >
-                      {isVisitor ? <Users size={12} className="text-purple-300" /> : <HardHat size={12} style={{ color: badge.color }} />}
+                      {isVisitor ? <Users size={12} className="text-purple-300" /> : <User size={12} style={{ color: badge.color }} />}
                       <span className="text-[10px] font-extrabold">{w.name}</span>
                       <span className={`px-1 py-0.2 rounded text-[8px] font-black uppercase flex items-center gap-0.5 ${badge.badgeClass}`}>
                         <BadgeIcon size={8} />
@@ -2767,7 +2775,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                       </div>
                       <div className="flex items-center justify-between bg-slate-800/60 p-1 rounded border-l-2 border-amber-500 text-amber-200">
                         <span className="font-bold flex items-center gap-1">
-                          <AlertTriangle size={10} className="text-amber-400" /> Excavation / Caution
+                          <AlertTriangle size={10} className="text-amber-400" /> Caution / Controlled Area
                         </span>
                         <span className="font-mono text-[8px] opacity-80">Amber Dashed</span>
                       </div>
@@ -2806,7 +2814,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                 <input
                   type="text"
                   required
-                  placeholder="e.g. South Scaffold Exclusion Perimeter"
+                  placeholder="e.g. South Wing Restricted Perimeter"
                   value={geofenceForm.name}
                   onChange={e => setGeofenceForm({ ...geofenceForm, name: e.target.value })}
                   className="w-full mt-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"
@@ -2821,12 +2829,12 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
                     onChange={e => setGeofenceForm({ ...geofenceForm, category: e.target.value })}
                     className="w-full mt-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white"
                   >
-                    <option value="EXCAVATION & SHORING">Excavation & Shoring</option>
-                    <option value="CRANE SWING RADIUS">Crane Swing Radius</option>
-                    <option value="SUBSTATION PERIMETER">Substation Perimeter</option>
-                    <option value="RESTRICTED ZONE">Restricted Zone</option>
-                    <option value="MUSTER POINT">Muster Point</option>
-                    <option value="MATERIAL LAYDOWN">Material Laydown</option>
+                    <option value="RESTRICTED ACCESS ZONE">Restricted Access Zone</option>
+                    <option value="SECURITY PERIMETER">Security Perimeter</option>
+                    <option value="CONTROLLED OPERATIONS">Controlled Operations</option>
+                    <option value="ELECTRICAL & UTILITIES">Electrical & Utilities</option>
+                    <option value="EMERGENCY ASSEMBLY POINT">Emergency Assembly Point</option>
+                    <option value="LOGISTICS & STORAGE">Logistics & Storage</option>
                   </select>
                 </div>
 
@@ -2949,7 +2957,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
           <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-md w-full p-6 shadow-2xl text-white space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
-                <HardHat size={20} className="text-emerald-400" />
+                <User size={20} className="text-emerald-400" />
                 <div>
                   <h3 className="text-base font-bold">{selectedWorker.name}</h3>
                   <p className="text-xs text-slate-400">{selectedWorker.role} • {selectedWorker.company}</p>
@@ -2976,7 +2984,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               </div>
 
               <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 space-y-1">
-                <div className="text-xs font-bold text-slate-300">Hardhat RFID Tag ID</div>
+                <div className="text-xs font-bold text-slate-300">Personnel RFID Tag ID</div>
                 <div className="text-sm font-mono text-emerald-400 font-bold">{selectedWorker.hardhatTagId || selectedWorker.id}</div>
               </div>
 
@@ -3034,7 +3042,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
         />
       )}
 
-      {/* Manage Assets & Machinery Modal */}
+      {/* Manage Assets & Equipment Modal */}
       {isManageAssetsOpen && (
         <ManageAssetsModal
           isOpen={isManageAssetsOpen}

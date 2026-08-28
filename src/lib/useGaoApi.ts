@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { collection, onSnapshot, query, limit, orderBy, db } from './db';
 import { gaoApi, RealtimeTag, HistoryRecord } from './gaoApi';
 
-export function useGaoRealtime(pollingIntervalMs = 2000) {
+export function useGaoRealtime(pollingIntervalMs = 15000) {
   const [tags, setTags] = useState<RealtimeTag[]>([]);
   const [error, setError] = useState<Error | null>(null);
   const [isLoading, setIsLoading] = useState(true);

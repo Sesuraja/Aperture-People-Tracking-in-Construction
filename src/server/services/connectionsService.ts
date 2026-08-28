@@ -77,7 +77,22 @@ export function buildUrl(config: ApiConnectionConfig): string {
 
 export async function getAllConnections(): Promise<ApiConnectionConfig[]> {
   const list = (await getCollectionDocs('third_party_apis')) as ApiConnectionConfig[];
-  return list.filter(c => c && c.id !== 'postman_mock_rfid_api');
+  return list.filter(c => {
+    if (!c || !c.id) return false;
+    const lowerId = c.id.toLowerCase();
+    const lowerName = (c.name || '').toLowerCase();
+    const lowerUrl = (c.endpointUrl || '').toLowerCase();
+    return (
+      !lowerId.includes('mock') &&
+      !lowerId.includes('demo') &&
+      !lowerId.includes('simulat') &&
+      !lowerName.includes('mock') &&
+      !lowerName.includes('demo') &&
+      !lowerName.includes('simulat') &&
+      !lowerUrl.includes('mock') &&
+      !lowerUrl.includes('example.com')
+    );
+  });
 }
 
 export async function getConnectionById(id: string): Promise<ApiConnectionConfig | null> {

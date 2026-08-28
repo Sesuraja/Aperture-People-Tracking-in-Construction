@@ -89,7 +89,7 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
 
   useEffect(() => {
     checkHealth();
-    const interval = setInterval(checkHealth, 5000);
+    const interval = setInterval(checkHealth, 30000);
     return () => clearInterval(interval);
   }, []);
 

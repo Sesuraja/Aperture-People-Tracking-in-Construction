@@ -373,7 +373,8 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
         };
 
         syncRealtime();
-        interval = setInterval(syncRealtime, 3000);
+        // Calm fallback interval (every 30s instead of aggressive 3s duplicate loop)
+        interval = setInterval(syncRealtime, 30000);
     }
 
      return () => {

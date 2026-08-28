@@ -7,23 +7,18 @@
 const memoryFallback = new Map<string, string>();
 
 const LARGE_DISPOSABLE_KEYS = [
-  'gao_custom_floorplan',
-  'gao_custom_svg_source',
-  'gao_custom_svg',
   'aperture_ws_logs',
   'gao_telemetry_history',
-  'gao_db_cache',
-  'gao_custom_map_sites',
-  'gao_project_properties'
+  'gao_db_cache'
 ];
 
-// Proactive sweep on startup to prevent quota exhaustion
+// Proactive sweep on startup to prevent quota exhaustion from non-critical logs
 function proactiveStorageSweep() {
   if (typeof window === 'undefined' || !window.localStorage) return;
   try {
     for (const key of LARGE_DISPOSABLE_KEYS) {
       const val = window.localStorage.getItem(key);
-      if (val && val.length > 50000) {
+      if (val && val.length > 500000) {
         memoryFallback.set(key, val);
         window.localStorage.removeItem(key);
       }

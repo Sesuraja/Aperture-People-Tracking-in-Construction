@@ -8,6 +8,8 @@ import {
 } from 'lucide-react';
 import { SelectedEntity } from './LiveTrackingContextDrawer';
 import { Person, Asset, Vehicle, CameraDevice, EnvSensor } from '../types';
+import { optimizeFloorMapFile } from '../lib/imageOptimizer';
+import { safeStorage } from '../lib/safeStorage';
 
 export interface ReaderDevice { id: string; name: string; x: number; y: number; range: number; health: number; status: 'online' | 'offline'; }
 export interface AccessGate { id: string; name: string; x: number; y: number; status: 'locked' | 'unlocked'; }
@@ -80,7 +82,7 @@ export function getBlueprintSvg(projectId: string, title: string, contractor: st
       <!-- Site Plan Name Stamp & North Azimuth Compass -->
       <g transform="translate(870, 725)">
         <rect x="0" y="0" width="280" height="40" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
-        <text x="14" y="24" font-family="system-ui, sans-serif" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="0.5">${(title || 'CONSTRUCTION SITE').toUpperCase()}</text>
+        <text x="14" y="24" font-family="system-ui, sans-serif" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="0.5">${(title || 'FACILITY OPERATIONS').toUpperCase()}</text>
       </g>
 
       <!-- North Azimuth Compass -->
@@ -263,8 +265,8 @@ export default function LiveFloorMap({
   onSelectEntity,
   customZones,
   projectId = 'metro-tower',
-  projectName = 'Metro Tower Site',
-  contractor = 'Apex Construction',
+  projectName = 'Metro Facility Complex',
+  contractor = 'Enterprise Operations',
   dimensions = '250m x 180m',
   mode = 'standard',
   activeFloor = 'Floor 1',
@@ -489,57 +491,97 @@ export default function LiveFloorMap({
   );
   const currentBlueprintUrl = isCustomFloorplan ? (activeFloorplanUrl as string) : '';
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     setIsUploadingImage(true);
 
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      const dataUrl = event.target?.result as string;
+    try {
+      const optimized = await optimizeFloorMapFile(file);
+      const dataUrl = optimized.dataUrl;
+
       if (dataUrl) {
         setLocalFloorplan(dataUrl);
-        try {
-          localStorage.setItem('gao_custom_floorplan', dataUrl);
-          const token = localStorage.getItem('gao_jwt_token') || 'demo';
-          await fetch(`/api/data/map_configurations/${projectId}`, {
+        safeStorage.setItem('gao_custom_floorplan', dataUrl);
+
+        const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        };
+
+        const payload = {
+          id: projectId,
+          siteId: projectId,
+          floorplanUrl: dataUrl,
+          updatedAt: new Date().toISOString()
+        };
+
+        await Promise.allSettled([
+          fetch(`/api/data/map_configurations/${projectId}`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'Authorization': `Bearer ${token}`
-            },
+            headers,
+            body: JSON.stringify(payload)
+          }),
+          fetch('/api/data/map_configurations', {
+            method: 'POST',
+            headers,
+            body: JSON.stringify(payload)
+          }),
+          fetch('/api/data/floorplans', {
+            method: 'POST',
+            headers,
             body: JSON.stringify({
-              id: projectId,
-              floorplanUrl: dataUrl,
+              id: `fp_${projectId}`,
+              siteId: projectId,
+              url: dataUrl,
               updatedAt: new Date().toISOString()
             })
-          });
-        } catch (err) {
-          console.warn('Failed to save map configuration to backend:', err);
-        }
+          })
+        ]);
+
+        window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+        window.dispatchEvent(new CustomEvent('gao_project_updated'));
       }
+    } catch (err) {
+      console.warn('Failed to save map configuration to backend:', err);
+    } finally {
       setIsUploadingImage(false);
-    };
-    reader.readAsDataURL(file);
+      if (e.target) e.target.value = '';
+    }
   };
 
   const handleRemoveCustomImage = async () => {
     setLocalFloorplan(null);
-    localStorage.removeItem('gao_custom_floorplan');
+    safeStorage.removeItem('gao_custom_floorplan');
     try {
-      const token = localStorage.getItem('gao_jwt_token') || 'demo';
-      await fetch(`/api/data/map_configurations/${projectId}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({
-          id: projectId,
-          floorplanUrl: null,
-          updatedAt: new Date().toISOString()
+      const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      };
+      const payload = {
+        id: projectId,
+        siteId: projectId,
+        floorplanUrl: null,
+        updatedAt: new Date().toISOString()
+      };
+
+      await Promise.allSettled([
+        fetch(`/api/data/map_configurations/${projectId}`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
+        }),
+        fetch('/api/data/map_configurations', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
         })
-      });
+      ]);
+
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+      window.dispatchEvent(new CustomEvent('gao_project_updated'));
     } catch (err) {
       console.warn('Failed to clear map config:', err);
     }
@@ -913,7 +955,7 @@ export default function LiveFloorMap({
                       id: a.id,
                       name: a.name,
                       category: 'Power Tool',
-                      location: 'Active Construction Sector',
+                      location: 'Active Operations Sector',
                       assignedWorker: 'Unassigned',
                       status: 'Operating',
                       utilization: 88,

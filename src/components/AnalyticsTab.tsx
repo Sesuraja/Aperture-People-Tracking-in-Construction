@@ -112,8 +112,6 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       } catch {}
     };
     checkMongo();
-    const intv = setInterval(checkMongo, 5000);
-    return () => clearInterval(intv);
   }, []);
 
   const [portalReaders, setPortalReaders] = useState<any[]>([]);

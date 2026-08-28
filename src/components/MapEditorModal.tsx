@@ -69,14 +69,14 @@ interface MapEditorModalProps {
 }
 
 export const CATEGORY_CONFIG: Record<ElementCategory, { label: string; icon: React.ReactNode; color: string; border: string; bg: string }> = {
-  building: { label: 'Building Footprint', icon: <Building2 className="w-4 h-4" />, color: '#007BC4', border: 'border-blue-500', bg: 'bg-blue-500/20' },
-  road: { label: 'Site Road / Access Track', icon: <Truck className="w-4 h-4" />, color: '#64748B', border: 'border-slate-500', bg: 'bg-slate-500/20' },
-  scaffolding: { label: 'Scaffolding & Decking', icon: <Layers3 className="w-4 h-4" />, color: '#0284C7', border: 'border-sky-500', bg: 'bg-sky-500/20' },
-  crane_zone: { label: 'Crane Swing / Lift Radius', icon: <RotateCw className="w-4 h-4" />, color: '#D97706', border: 'border-amber-500', bg: 'bg-amber-500/20' },
-  excavation_zone: { label: 'Excavation / Trench Pit', icon: <Box className="w-4 h-4" />, color: '#B45309', border: 'border-amber-700', bg: 'bg-amber-700/20' },
-  parking: { label: 'Vehicle Parking & Staging', icon: <ParkingSquare className="w-4 h-4" />, color: '#4F46E5', border: 'border-indigo-500', bg: 'bg-indigo-500/20' },
-  storage: { label: 'Material & Rebar Laydown', icon: <Package className="w-4 h-4" />, color: '#7C3AED', border: 'border-purple-500', bg: 'bg-purple-500/20' },
-  office: { label: 'Site Office / Container', icon: <Home className="w-4 h-4" />, color: '#9333EA', border: 'border-violet-500', bg: 'bg-violet-500/20' },
+  building: { label: 'Facility / Building Wing', icon: <Building2 className="w-4 h-4" />, color: '#007BC4', border: 'border-blue-500', bg: 'bg-blue-500/20' },
+  road: { label: 'Access Corridor / Driveway', icon: <Truck className="w-4 h-4" />, color: '#64748B', border: 'border-slate-500', bg: 'bg-slate-500/20' },
+  scaffolding: { label: 'Elevated Platform / Mezzanine', icon: <Layers3 className="w-4 h-4" />, color: '#0284C7', border: 'border-sky-500', bg: 'bg-sky-500/20' },
+  crane_zone: { label: 'Loading Dock / Lift Bay', icon: <RotateCw className="w-4 h-4" />, color: '#D97706', border: 'border-amber-500', bg: 'bg-amber-500/20' },
+  excavation_zone: { label: 'Restricted Pit / Trench', icon: <Box className="w-4 h-4" />, color: '#B45309', border: 'border-amber-700', bg: 'bg-amber-700/20' },
+  parking: { label: 'Vehicle Parking & Fleet Bay', icon: <ParkingSquare className="w-4 h-4" />, color: '#4F46E5', border: 'border-indigo-500', bg: 'bg-indigo-500/20' },
+  storage: { label: 'Material & Inventory Storage', icon: <Package className="w-4 h-4" />, color: '#7C3AED', border: 'border-purple-500', bg: 'bg-purple-500/20' },
+  office: { label: 'Operations Office / Hub', icon: <Home className="w-4 h-4" />, color: '#9333EA', border: 'border-violet-500', bg: 'bg-violet-500/20' },
   emergency_exit: { label: 'Emergency Exit Route', icon: <CornerDownRight className="w-4 h-4" />, color: '#059669', border: 'border-emerald-500', bg: 'bg-emerald-500/20' },
   assembly_point: { label: 'Emergency Assembly Point', icon: <Users className="w-4 h-4" />, color: '#10B981', border: 'border-emerald-600', bg: 'bg-emerald-600/20' },
   hazard_zone: { label: 'Hazard Caution Zone', icon: <AlertTriangle className="w-4 h-4" />, color: '#EAB308', border: 'border-yellow-500', bg: 'bg-yellow-500/20' },
@@ -145,7 +145,7 @@ export default function MapEditorModal({
   floorplanUrl,
   svgSource,
   onSaveZones,
-  siteName = 'Metro Tower Site',
+  siteName = 'Metro Facility Complex',
   buildingName = 'Main Building A',
   floorName = 'Level 1'
 }: MapEditorModalProps) {
@@ -162,7 +162,7 @@ export default function MapEditorModal({
   const [gridSize, setGridSize] = useState<number>(5); // 5% snap
   const [showGrid, setShowGrid] = useState(true);
   const [newElementName, setNewElementName] = useState('');
-  const [newElementCategory, setNewElementCategory] = useState<ElementCategory>('scaffolding');
+  const [newElementCategory, setNewElementCategory] = useState<ElementCategory>('building');
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Undo / Redo History Stack

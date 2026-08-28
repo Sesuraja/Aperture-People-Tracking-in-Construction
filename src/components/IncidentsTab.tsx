@@ -62,6 +62,7 @@ const DEFAULT_INCIDENTS: EnterpriseIncident[] = [
     locationZone: 'Crane Operating Zone',
     reportedBy: 'Elena Rostova (Field Safety Lead)',
     assignedOfficer: 'Marcus Vance (EHS Director)',
+    assignedRole: 'EHS Director',
     reportedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
     description: 'Subcontractor steel rigger entered active slewing perimeter during pre-cast beam pick. Automatic UHF RFID barrier siren triggered within 1.2 seconds, stopping crane hoist rotation.',
     correctiveActions: [
@@ -70,14 +71,14 @@ const DEFAULT_INCIDENTS: EnterpriseIncident[] = [
         actionItem: 'Install secondary physical barrier netting along quadrant 3',
         assignedTo: 'Rigging Crew Lead',
         dueDate: new Date(Date.now() + 2 * 86400 * 1000).toISOString().split('T')[0],
-        status: 'In Progress'
+        isCompleted: false
       },
       {
         id: 'CAPA-02',
         actionItem: 'Conduct mandatory 15-minute crane exclusion zone toolbox briefing',
         assignedTo: 'Marcus Vance (EHS Director)',
         dueDate: new Date(Date.now() + 86400 * 1000).toISOString().split('T')[0],
-        status: 'Completed'
+        isCompleted: true
       }
     ],
     witnessStatements: [
@@ -87,6 +88,7 @@ const DEFAULT_INCIDENTS: EnterpriseIncident[] = [
         witnessRole: 'Crane Operator',
         company: 'Apex Rigging Ltd',
         interviewedBy: 'Elena Rostova',
+        timestamp: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
         statement: 'The UHF hardhat warning sounded on my cab console right before the ground horn blew. Stopped load swing immediately.'
       }
     ],
@@ -128,6 +130,7 @@ const DEFAULT_INCIDENTS: EnterpriseIncident[] = [
     locationZone: 'Excavation Area',
     reportedBy: 'Frank Reynolds (Equipment Manager)',
     assignedOfficer: 'Marcus Vance (EHS Director)',
+    assignedRole: 'EHS Director',
     reportedAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
     description: 'Minor earth displacement noticed along north shoring berm following heavy rainfall. No worker was inside trench at time of alert.',
     correctiveActions: [
@@ -136,7 +139,7 @@ const DEFAULT_INCIDENTS: EnterpriseIncident[] = [
         actionItem: 'Hydro-vacuum trench drainage and install additional hydraulic shoring jacks',
         assignedTo: 'Civil Works Contractor',
         dueDate: new Date(Date.now() + 3 * 86400 * 1000).toISOString().split('T')[0],
-        status: 'In Progress'
+        isCompleted: false
       }
     ],
     witnessStatements: [],

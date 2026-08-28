@@ -250,8 +250,6 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       } catch {}
     };
     checkMongo();
-    const intv = setInterval(checkMongo, 5000);
-    return () => clearInterval(intv);
   }, []);
 
   // Database Workers state (from MongoDB)

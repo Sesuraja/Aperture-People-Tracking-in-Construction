@@ -230,8 +230,6 @@ export default function DevicesTab() {
       } catch {}
     };
     checkMongo();
-    const intv = setInterval(checkMongo, 5000);
-    return () => clearInterval(intv);
   }, []);
 
   useEffect(() => {

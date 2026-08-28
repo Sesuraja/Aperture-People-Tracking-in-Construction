@@ -1141,14 +1141,17 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     };
   }, [loadDatabaseConfig, handleNormalizedTagUpdate]);
 
-  // Periodic fallback polling in real mode
+  // Periodic fallback polling in real mode (only when WebSocket is NOT connected)
   useEffect(() => {
+    // When WebSocket is streaming, avoid redundant GET requests
+    if (wsConnected) return;
+
     const pollInterval = setInterval(() => {
       refreshLiveState();
-    }, 5000);
+    }, 15000);
 
     return () => clearInterval(pollInterval);
-  }, [refreshLiveState]);
+  }, [refreshLiveState, wsConnected]);
 
   // No automatic movement simulation: positions & events are exclusively driven by real MongoDB records / real RFID & GPS hardware feeds.
 

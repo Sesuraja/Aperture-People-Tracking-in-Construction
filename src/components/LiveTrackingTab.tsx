@@ -163,8 +163,6 @@ export default function LiveTrackingTab({
       }
     };
     checkMongoStatus();
-    const interval = setInterval(checkMongoStatus, 15000);
-    return () => clearInterval(interval);
   }, []);
 
   // Unified workforce list directly from MongoDB (people + registered_people + live tracking context)
@@ -218,8 +216,8 @@ export default function LiveTrackingTab({
             currentZone: p.currentZone || existing.currentZone,
             dwellTime: p.dwellTime !== undefined ? p.dwellTime : existing.dwellTime,
             battery: p.battery !== undefined ? p.battery : existing.battery,
-            floorLevel: p.floorLevel !== undefined ? p.floorLevel : (existing as any).floorLevel
-          });
+            floor: (p as any).floor || (p as any).floorLevel || (existing as any).floor || (existing as any).floorLevel
+          } as any);
         }
       });
     };

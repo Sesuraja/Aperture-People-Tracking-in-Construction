@@ -92,7 +92,8 @@ const DEFAULT_ALERT_RULES: AlertRule[] = [
     autoEscalateTier: 'Tier 3 (Site Operations VP)',
     triggerSiren: true,
     notifySmsEmail: true,
-    status: 'Active'
+    enabled: true,
+    triggerCount: 12
   },
   {
     id: 'RULE-HV-02',
@@ -105,7 +106,8 @@ const DEFAULT_ALERT_RULES: AlertRule[] = [
     autoEscalateTier: 'Tier 2 (EHS Director)',
     triggerSiren: true,
     notifySmsEmail: true,
-    status: 'Active'
+    enabled: true,
+    triggerCount: 4
   },
   {
     id: 'RULE-PPE-03',
@@ -118,7 +120,8 @@ const DEFAULT_ALERT_RULES: AlertRule[] = [
     autoEscalateTier: 'Tier 1 (Gatehouse)',
     triggerSiren: false,
     notifySmsEmail: true,
-    status: 'Active'
+    enabled: true,
+    triggerCount: 28
   },
   {
     id: 'RULE-LOITER-04',
@@ -131,7 +134,8 @@ const DEFAULT_ALERT_RULES: AlertRule[] = [
     autoEscalateTier: 'Tier 1 (Gatehouse)',
     triggerSiren: false,
     notifySmsEmail: false,
-    status: 'Active'
+    enabled: true,
+    triggerCount: 7
   }
 ];
 
@@ -139,13 +143,13 @@ const DEFAULT_BROADCASTS: EmergencyBroadcast[] = [
   {
     id: 'BC-01',
     timestamp: new Date().toISOString(),
-    sender: 'Marcus Vance (EHS Director)',
-    type: 'Weather',
+    activatedBy: 'Marcus Vance (EHS Director)',
+    type: 'Weather Lockout',
+    zone: 'Crane Operating Zone',
     title: 'Severe High Wind Alert — Crane Operations Suspended',
-    message: 'Gusts exceeding 45 km/h detected by mast anemometers. All tower cranes must immediately enter weather-vane mode and workers clear lifting bays.',
-    targetZones: ['Crane Operating Zone', 'Structure Work Area'],
-    recipientsCount: 42,
-    status: 'Delivered'
+    musterTarget: 42,
+    musterAccounted: 42,
+    status: 'CLEARED'
   }
 ];
 
@@ -241,8 +245,6 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       } catch {}
     };
     checkMongo();
-    const intv = setInterval(checkMongo, 5000);
-    return () => clearInterval(intv);
   }, []);
 
   // Selection & Modals

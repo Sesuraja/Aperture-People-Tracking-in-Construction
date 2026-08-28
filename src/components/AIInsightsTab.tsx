@@ -228,8 +228,8 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
 
   const [mongoReaders, setMongoReaders] = useState<any[]>([]);
 
-  // 1. Ingestion Data Feeds & WebSocket Subscriptions
-  const { tags: rawLiveTags, isLoading: isLiveTagsLoading } = useGaoRealtime(2500);
+  // 1. Ingestion Data Feeds & WebSocket Subscriptions (20s calm fallback interval)
+  const { tags: rawLiveTags, isLoading: isLiveTagsLoading } = useGaoRealtime(20000);
   const { records: historyRecords } = useGaoHistory(0, 50);
   const { isConnected: isWsConnected, lastMessage } = useWebSocket();
 
@@ -342,8 +342,6 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
       } catch {}
     };
     checkMongo();
-    const intv = setInterval(checkMongo, 5000);
-    return () => clearInterval(intv);
   }, []);
 
   // Auto-clear action toast

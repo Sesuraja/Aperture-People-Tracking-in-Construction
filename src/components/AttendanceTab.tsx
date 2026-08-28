@@ -174,8 +174,6 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
       } catch {}
     };
     checkMongo();
-    const interval = setInterval(checkMongo, 8000);
-    return () => clearInterval(interval);
   }, []);
 
   // Real-time synchronization of attendance logs and leave records from MongoDB

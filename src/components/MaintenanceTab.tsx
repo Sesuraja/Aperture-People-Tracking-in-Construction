@@ -124,8 +124,6 @@ export default function MaintenanceTab() {
       } catch {}
     };
     checkMongo();
-    const intv = setInterval(checkMongo, 5000);
-    return () => clearInterval(intv);
   }, []);
 
   // Load and Sync with MongoDB via db.ts client

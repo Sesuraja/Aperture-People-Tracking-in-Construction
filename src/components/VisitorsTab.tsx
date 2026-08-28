@@ -81,8 +81,6 @@ export default function VisitorsTab() {
       } catch {}
     };
     checkMongo();
-    const intv = setInterval(checkMongo, 5000);
-    return () => clearInterval(intv);
   }, []);
   
   // Modals

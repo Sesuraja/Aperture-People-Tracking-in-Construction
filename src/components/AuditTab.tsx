@@ -282,8 +282,6 @@ export default function AuditTab() {
       } catch {}
     };
     checkMongo();
-    const intv = setInterval(checkMongo, 5000);
-    return () => clearInterval(intv);
   }, []);
 
   // Helper: Flash success badge

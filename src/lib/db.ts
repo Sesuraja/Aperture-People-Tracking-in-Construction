@@ -17,7 +17,8 @@ if (typeof window !== 'undefined') {
     } catch {}
   };
   checkMongoStatus();
-  setInterval(checkMongoStatus, 10000);
+  // Relaxed background check (every 60s instead of aggressive 10s)
+  setInterval(checkMongoStatus, 60000);
 }
 
 export function isMongoActive(): boolean {
@@ -42,24 +43,24 @@ function getRefInfo(ref: any): { colName: string; docId?: string } {
   return { colName: ref.id || 'unknown' };
 }
 
-export function collection(dbInstance: any, colName?: string): any {
-  const actualColName = colName || (typeof dbInstance === 'string' ? dbInstance : dbInstance?.path) || 'unknown';
-  return { type: 'collection', path: actualColName };
+export function collection(_dbInstance: any, pathName: string) {
+  return { type: 'collection', path: pathName, col: pathName };
 }
 
-export function doc(dbInstanceOrColRef: any, colNameOrId: string, maybeId?: string): any {
-  if (maybeId) return { type: 'doc', col: colNameOrId, id: maybeId };
-  if (typeof dbInstanceOrColRef === 'string') return { type: 'doc', col: dbInstanceOrColRef, id: colNameOrId };
-  if (dbInstanceOrColRef?.path) return { type: 'doc', col: dbInstanceOrColRef.path, id: colNameOrId };
-  return { type: 'doc', col: colNameOrId || 'unknown', id: maybeId };
+export function doc(_dbInstance: any, colName: string, docId?: string) {
+  return { type: 'doc', col: colName, id: docId, path: docId ? `${colName}/${docId}` : colName };
 }
 
-export function query(colRef: any, ..._constraints: any[]): any {
+export function query(colRef: any, ..._queryConstraints: any[]) {
   return colRef;
 }
 
-export function orderBy(field: string, direction?: 'asc' | 'desc') {
-  return { type: 'orderBy', field, direction: direction || 'asc' };
+export function where(_field: string, _op: string, _val: any) {
+  return { type: 'where' };
+}
+
+export function orderBy(_field: string, _dir?: 'asc' | 'desc') {
+  return { type: 'orderBy' };
 }
 
 export function limit(value: number) {
@@ -104,25 +105,51 @@ function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
+// In-flight GET request deduplication cache to prevent identical parallel backend queries
+const inFlightGetRequests = new Map<string, Promise<any>>();
+
 async function safeJsonFetch(url: string, options?: RequestInit): Promise<any> {
+  const method = (options?.method || 'GET').toUpperCase();
+  if (method === 'GET') {
+    const existing = inFlightGetRequests.get(url);
+    if (existing) return existing;
+  }
+
   const customOptions = options || {};
   customOptions.headers = {
     ...getAuthHeaders(),
     ...(customOptions.headers || {})
   };
-  try {
-    const response = await fetch(url, customOptions);
-    if (!response.ok) {
-      return null;
-    }
-    const text = await response.text();
+
+  const fetchPromise = (async () => {
     try {
-      return JSON.parse(text);
+      const response = await fetch(url, customOptions);
+      if (!response.ok) return null;
+      const text = await response.text();
+      try {
+        return JSON.parse(text);
+      } catch {
+        return null;
+      }
     } catch {
       return null;
+    } finally {
+      if (method === 'GET') {
+        setTimeout(() => inFlightGetRequests.delete(url), 1500);
+      }
     }
-  } catch {
-    return null;
+  })();
+
+  if (method === 'GET') {
+    inFlightGetRequests.set(url, fetchPromise);
+  }
+
+  return fetchPromise;
+}
+
+function notifyDataUpdated(colName: string) {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName } }));
   }
 }
 
@@ -136,6 +163,7 @@ export async function setDoc(docRef: any, data: any, _options?: any): Promise<vo
       body: JSON.stringify(data)
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    notifyDataUpdated(colName);
   } catch (err) {
     console.warn(`setDoc MongoDB API error for ${colName}/${docId}:`, err);
   }
@@ -152,6 +180,7 @@ export async function addDoc(colRef: any, data: any): Promise<any> {
       headers: getAuthHeaders(),
       body: JSON.stringify(itemToSave)
     });
+    notifyDataUpdated(colName);
     const savedDoc = result?.doc || result || itemToSave;
     return { id: docId, ...createDocSnapshot({ ...savedDoc, id: docId }) };
   } catch {
@@ -192,6 +221,7 @@ export async function deleteDoc(docRef: any): Promise<void> {
   if (!colName || !docId) return;
   try {
     await fetch(`/api/data/${colName}/${docId}`, { method: 'DELETE', headers: getAuthHeaders() });
+    notifyDataUpdated(colName);
   } catch {}
 }
 
@@ -233,10 +263,26 @@ export function onSnapshot(ref: any, callback: (snapshot: any) => void, _errorCa
   };
 
   poll();
-  const interval = setInterval(poll, 4000);
+  // Relaxed polling interval (15s instead of aggressive 4s)
+  const interval = setInterval(poll, 15000);
+
+  // Listen to mutations for immediate event-driven update with 0 delay
+  const handleDataUpdate = (e: any) => {
+    if (!active) return;
+    if (!e.detail || !e.detail.colName || e.detail.colName === colName) {
+      poll();
+    }
+  };
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('gao_data_updated', handleDataUpdate);
+  }
 
   return () => {
     active = false;
     clearInterval(interval);
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('gao_data_updated', handleDataUpdate);
+    }
   };
 }

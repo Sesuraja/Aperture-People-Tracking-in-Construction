@@ -61,8 +61,8 @@ export default function ManageAssetsModal({
     id: `AST-${Math.floor(1000 + Math.random() * 9000)}`,
     name: '',
     category: 'asset',
-    type: 'Heavy Tool / Machinery',
-    zone: availableZones[0] || 'Material Laydown & Loading',
+    type: 'Equipment & Hardware',
+    zone: availableZones[0] || 'Operations & Storage',
     status: 'In Use',
     batteryLevel: 95,
     fuelLevel: 80,
@@ -87,15 +87,15 @@ export default function ManageAssetsModal({
       id: `AST-${Math.floor(1000 + Math.random() * 9000)}`,
       name: '',
       category: 'asset',
-      type: 'Power Generator 50kW',
-      zone: availableZones[0] || 'Material Laydown & Loading',
+      type: 'Backup Power Unit 50kW',
+      zone: availableZones[0] || 'Operations & Storage',
       status: 'In Use',
       batteryLevel: 100,
       fuelLevel: 90,
-      operator: 'Site Foreman',
+      operator: 'Operations Lead',
       temperature: 22,
       dustPM25: 12,
-      aiStatus: 'Active Safety Eye',
+      aiStatus: 'Active Vision',
       x: 35 + Math.floor(Math.random() * 30),
       y: 35 + Math.floor(Math.random() * 30)
     });
@@ -111,7 +111,7 @@ export default function ManageAssetsModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-xs">
       <div className="bg-white border border-slate-200 rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden animate-in zoom-in-95 duration-200 flex flex-col my-6 max-h-[90vh]">
         
         {/* Header */}
@@ -122,7 +122,7 @@ export default function ManageAssetsModal({
             </div>
             <div>
               <h3 className="font-extrabold text-lg text-white">Equipment, Vehicles & Sensor Layer Manager</h3>
-              <p className="text-xs text-slate-400">Add & position heavy machinery, cranes, AI CCTV cameras & environmental sensors on site floorplan</p>
+              <p className="text-xs text-slate-400">Add & position facility equipment, fleet vehicles, AI CCTV cameras & environmental sensors on floorplan</p>
             </div>
           </div>
           <button 
@@ -139,7 +139,7 @@ export default function ManageAssetsModal({
           {/* Left Column: List */}
           <div className="w-full md:w-80 bg-slate-50 p-4 flex flex-col gap-3 shrink-0 overflow-y-auto max-h-[280px] md:max-h-none">
             <div className="flex items-center justify-between">
-              <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">Site Assets ({combinedList.length})</span>
+              <span className="text-xs font-extrabold text-slate-500 uppercase tracking-wider">Facility Assets ({combinedList.length})</span>
               <button
                 type="button"
                 onClick={handleStartAdding}
@@ -217,10 +217,10 @@ export default function ManageAssetsModal({
                     onChange={e => setFormData(prev => ({ ...prev, category: e.target.value as AssetCategoryType }))}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-800"
                   >
-                    <option value="asset">Heavy Tool / Machinery Asset</option>
-                    <option value="vehicle">Heavy Machinery / Transport Vehicle</option>
+                    <option value="asset">Equipment & Hardware Asset</option>
+                    <option value="vehicle">Fleet & Transport Vehicle</option>
                     <option value="camera">AI CCTV Security Camera</option>
-                    <option value="sensor">Environmental Dust & Temp Sensor</option>
+                    <option value="sensor">Environmental Sensor</option>
                   </select>
                 </div>
                 <div>
@@ -230,7 +230,7 @@ export default function ManageAssetsModal({
                     required
                     value={formData.name}
                     onChange={e => setFormData(prev => ({ ...prev, name: e.target.value }))}
-                    placeholder="e.g. Caterpillar 320 Excavator"
+                    placeholder="e.g. Transport Forklift Unit #2"
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm font-bold text-slate-900 focus:ring-2 focus:ring-[#007BC4] outline-none"
                   />
                 </div>

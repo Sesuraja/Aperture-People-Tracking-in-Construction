@@ -96,21 +96,34 @@ export async function syncPollingSchedules(): Promise<void> {
     const activeIds = new Set<string>();
 
     for (const conn of connections) {
-      const isEnabled = conn.enabled !== false && conn.pollingEnabled === true && Boolean(conn.endpointUrl && conn.endpointUrl.trim());
+      const lowerId = (conn.id || '').toLowerCase();
+      const lowerName = (conn.name || '').toLowerCase();
+      const lowerUrl = (conn.endpointUrl || '').toLowerCase();
+      
+      const isMockOrDemo =
+        lowerId.includes('mock') ||
+        lowerId.includes('demo') ||
+        lowerId.includes('simulat') ||
+        lowerName.includes('mock') ||
+        lowerName.includes('demo') ||
+        lowerName.includes('simulat') ||
+        lowerUrl.includes('mock') ||
+        lowerUrl.includes('example.com') ||
+        !conn.endpointUrl ||
+        !conn.endpointUrl.startsWith('http');
+
+      const isEnabled = conn.enabled !== false && conn.pollingEnabled === true && !isMockOrDemo;
       if (isEnabled) {
         activeIds.add(conn.id);
-        const currentIntervalMs = Math.max((conn.pollingIntervalSeconds || 15) * 1000, 5000);
+        const currentIntervalMs = Math.max((conn.pollingIntervalSeconds || 30) * 1000, 10000);
 
         // Schedule if not already active
         if (!activePollers.has(conn.id)) {
-          console.log(`[Connection Poller] Scheduling background poll for "${conn.name}" every ${currentIntervalMs / 1000}s`);
+          console.log(`[Connection Poller] Scheduling real hardware/API background poll for "${conn.name}" every ${currentIntervalMs / 1000}s`);
           const timer = setInterval(() => {
             pollSingleConnection(conn).catch(() => {});
           }, currentIntervalMs);
           activePollers.set(conn.id, timer);
-          
-          // Fire an immediate initial poll in the background
-          pollSingleConnection(conn).catch(() => {});
         }
       }
     }
