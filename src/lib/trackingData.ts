@@ -200,12 +200,59 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
     const registeredQuery = query(collection(db, 'registered_people'));
     const unsubscribeRegistered = onSnapshot(registeredQuery, (snapshot) => {
        const mapped: Record<string, {name: string, role: string}> = {};
+       const registeredList: Person[] = [];
        snapshot.forEach(doc => {
           const data = doc.data();
           mapped[doc.id] = { name: data.name, role: data.role || data.department || 'Employee' };
+          const zName = data.currentZone || 'Site Office';
+          const rect = getZoneRect(zName, activeProjectId, dynamicZones);
+          registeredList.push({
+            id: doc.id,
+            name: data.name || `Tag ${doc.id.substring(0, 8).toUpperCase()}`,
+            role: data.role || data.tradeCompany || 'Field Personnel',
+            currentZone: zName,
+            presenceState: data.presenceState || 'IDLE',
+            dwellTime: data.dwellTime || 0,
+            x: data.x !== undefined ? data.x : (rect.x + rect.width / 2),
+            y: data.y !== undefined ? data.y : (rect.y + rect.height / 2),
+            lastSeen: data.lastSeen ? new Date(data.lastSeen) : new Date(),
+            battery: data.battery !== undefined ? data.battery : 92,
+            trail: []
+          });
        });
        registeredPeopleRef.current = mapped;
+       setPeople(prev => {
+         if (prev.length === 0 && registeredList.length > 0) {
+           return registeredList;
+         }
+         return prev;
+       });
     }, (err) => handleDbError(err, OperationType.LIST, 'registered_people'));
+
+    const peopleColQuery = query(collection(db, 'people'));
+    const unsubscribePeople = onSnapshot(peopleColQuery, (snapshot) => {
+      if (!snapshot.empty) {
+        const pList: Person[] = snapshot.docs.map(doc => {
+          const d = doc.data();
+          const zName = d.currentZone || 'Site Office';
+          const rect = getZoneRect(zName, activeProjectId, dynamicZones);
+          return {
+            id: doc.id,
+            name: d.name || `Tag ${doc.id.substring(0, 8).toUpperCase()}`,
+            role: d.role || 'Field Personnel',
+            currentZone: zName,
+            presenceState: d.presenceState || 'IDLE',
+            dwellTime: d.dwellTime || 0,
+            x: d.x !== undefined ? d.x : (rect.x + rect.width / 2),
+            y: d.y !== undefined ? d.y : (rect.y + rect.height / 2),
+            lastSeen: d.lastSeen ? new Date(d.lastSeen) : new Date(),
+            battery: d.battery !== undefined ? d.battery : 90,
+            trail: []
+          };
+        });
+        setPeople(prev => prev.length === 0 ? pList : prev);
+      }
+    }, (err) => handleDbError(err, OperationType.LIST, 'people'));
     
     // Listen to Assets from database
     const assetsQuery = collection(db, 'assets');
@@ -226,6 +273,7 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
        unsubscribeAlerts();
        unsubscribeFloorplans();
        unsubscribeRegistered();
+       unsubscribePeople();
        unsubscribeAssets();
        unsubscribeVehicles();
     };

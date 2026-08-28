@@ -39,6 +39,13 @@ async function startServer() {
   }));
 
   // Middleware
+  app.use((req, res, next) => {
+    if (req.method === 'POST' || req.method === 'PUT') {
+      console.log(`[INBOUND REQUEST] ${req.method} ${req.url} from IP: ${req.ip} | User-Agent: ${req.headers['user-agent'] || 'none'}`);
+      console.log(`[INBOUND BODY]`, JSON.stringify(req.body).slice(0, 300));
+    }
+    next();
+  });
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 

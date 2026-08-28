@@ -87,11 +87,11 @@ export class MqttStreamService {
   private client: MqttClient | null = null;
   private status: MqttStreamStatus = 'Disconnected';
   private options: MqttConnectionOptions = {
-    brokerUrl: 'wss://broker.emqx.io:8084/mqtt',
-    clientId: `aperture_web_${Math.random().toString(16).substring(2, 8)}`,
+    brokerUrl: '',
+    clientId: '',
     username: '',
     password: '',
-    topics: ['gao/rfid/scans', 'aperture/tags/#', 'rfid_realtime_events']
+    topics: []
   };
   private topics: Set<string> = new Set(this.options.topics);
   
@@ -100,13 +100,13 @@ export class MqttStreamService {
   private metricsListeners: Set<MetricsCallback> = new Set();
 
   private metrics: MqttMetrics = {
-    latencyMs: 14,
+    latencyMs: 0,
     packetsReceived: 0,
     packetsSent: 0,
     errorCount: 0,
     lastHeartbeat: null,
-    activeTopicCount: 3,
-    protocol: 'MQTT over WebSockets'
+    activeTopicCount: 0,
+    protocol: 'MQTT'
   };
 
   private pingTimer: any = null;
@@ -165,6 +165,11 @@ export class MqttStreamService {
     if (opts) this.configure(opts);
 
     const currentOpts = this.getOptions();
+
+    if (!currentOpts.brokerUrl || !currentOpts.brokerUrl.trim()) {
+      this.setStatus('Disconnected');
+      return;
+    }
 
     if (this.client && this.client.connected) {
       return;

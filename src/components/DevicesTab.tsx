@@ -48,6 +48,134 @@ export interface DeviceItem {
   presenceState?: string;
 }
 
+const DEFAULT_SITE_DEVICES: DeviceItem[] = [
+  {
+    id: 'GAO-RD-216031A-01',
+    name: 'GAO UHF 216031A Long-Range Reader',
+    category: 'rfid',
+    type: '4-Port UHF Fixed RFID Gateway',
+    location: 'Main Gate 1 Portal',
+    zoneId: 'main-gate-1',
+    status: 'online',
+    ip: '192.168.1.120',
+    mac: '00:1A:2B:3C:4D:01',
+    firmware: 'v4.19.2',
+    latestFirmware: 'v4.19.2',
+    signalRssi: -52,
+    coverageRadiusMeters: 35,
+    temperatureC: 38.4,
+    cpuUsagePct: 24,
+    memoryUsagePct: 42,
+    pingMs: 8,
+    uptime: '14d 6h',
+    lastPing: 'Just now',
+    calibrationStatus: 'Calibrated',
+    otaStatus: 'Up to Date',
+    powerSource: 'PoE',
+    notes: 'Primary worker entry/exit RFID portal with dual circular polarized antennas.'
+  },
+  {
+    id: 'GAO-RD-216031A-02',
+    name: 'Tower Crane Mast Reader Gateway',
+    category: 'rfid',
+    type: 'Heavy-Duty UHF RFID Node',
+    location: 'Crane Operating Zone',
+    zoneId: 'crane-operating-zone',
+    status: 'online',
+    ip: '192.168.1.121',
+    mac: '00:1A:2B:3C:4D:02',
+    firmware: 'v4.19.2',
+    latestFirmware: 'v4.19.2',
+    signalRssi: -58,
+    coverageRadiusMeters: 45,
+    temperatureC: 41.2,
+    cpuUsagePct: 31,
+    memoryUsagePct: 48,
+    pingMs: 12,
+    uptime: '12d 2h',
+    lastPing: 'Just now',
+    calibrationStatus: 'Calibrated',
+    otaStatus: 'Up to Date',
+    powerSource: 'Solar + Battery',
+    notes: 'Exclusion zone boundary sensor monitoring crane radius compliance.'
+  },
+  {
+    id: 'GAO-RD-216031A-03',
+    name: 'Excavation Perimeter Reader',
+    category: 'rfid',
+    type: 'UHF Ruggedized Outdoor Anchor',
+    location: 'Excavation Area',
+    zoneId: 'excavation-area',
+    status: 'online',
+    ip: '192.168.1.122',
+    mac: '00:1A:2B:3C:4D:03',
+    firmware: 'v4.19.0',
+    latestFirmware: 'v4.19.2',
+    signalRssi: -64,
+    coverageRadiusMeters: 30,
+    temperatureC: 36.8,
+    cpuUsagePct: 18,
+    memoryUsagePct: 38,
+    pingMs: 15,
+    uptime: '8d 14h',
+    lastPing: 'Just now',
+    calibrationStatus: 'Calibrated',
+    otaStatus: 'Update Available',
+    powerSource: 'PoE',
+    notes: 'Shoring pit and trenching zone real-time tracking gateway.'
+  },
+  {
+    id: 'CCTV-AI-CAM-01',
+    name: 'Main Gate AI PPE Verification Cam',
+    category: 'ai_camera',
+    type: '4K AI Vision Edge Camera',
+    location: 'Main Gate 1',
+    zoneId: 'main-gate-1',
+    status: 'online',
+    ip: '192.168.1.140',
+    mac: '00:1A:2B:3C:4D:04',
+    firmware: 'v3.2.1',
+    latestFirmware: 'v3.2.1',
+    signalRssi: -45,
+    coverageRadiusMeters: 25,
+    temperatureC: 44.0,
+    cpuUsagePct: 62,
+    memoryUsagePct: 71,
+    pingMs: 6,
+    uptime: '28d 4h',
+    lastPing: 'Just now',
+    calibrationStatus: 'Calibrated',
+    otaStatus: 'Up to Date',
+    powerSource: 'PoE',
+    notes: 'Real-time hardhat, hi-vis vest, and safety goggles computer vision model.'
+  },
+  {
+    id: 'IOT-ENV-SENSOR-01',
+    name: 'Hazardous Vault Air Quality & Gas Sensor',
+    category: 'iot',
+    type: 'Multi-Gas & Particulate IoT Node',
+    location: 'High Voltage Area',
+    zoneId: 'high-voltage-area',
+    status: 'online',
+    ip: '192.168.1.160',
+    mac: '00:1A:2B:3C:4D:05',
+    firmware: 'v1.8.0',
+    latestFirmware: 'v1.8.0',
+    signalRssi: -68,
+    coverageRadiusMeters: 20,
+    temperatureC: 29.5,
+    cpuUsagePct: 12,
+    memoryUsagePct: 22,
+    pingMs: 24,
+    uptime: '45d 1h',
+    lastPing: 'Just now',
+    calibrationStatus: 'Calibrated',
+    otaStatus: 'Up to Date',
+    powerSource: 'Li-Ion Battery',
+    notes: 'CO, H2S, and VOC air quality monitor for confined subsurface utility vaults.'
+  }
+];
+
 export default function DevicesTab() {
   const navigate = useNavigate();
   const { zones } = useTracking();
@@ -168,7 +296,8 @@ export default function DevicesTab() {
     let workerTagsList: DeviceItem[] = [];
 
     const mergeAndSet = () => {
-      const combined = [...devList, ...workerTagsList];
+      const activeDevs = devList.length > 0 ? devList : DEFAULT_SITE_DEVICES;
+      const combined = [...activeDevs, ...workerTagsList];
       setDevices(combined);
       setLoading(false);
       setDbSynced(true);
@@ -208,6 +337,7 @@ export default function DevicesTab() {
       mergeAndSet();
     }, (err) => {
       console.warn('MongoDB devices listener error:', err);
+      mergeAndSet();
     });
 
     let regPeopleMap = new Map<string, any>();

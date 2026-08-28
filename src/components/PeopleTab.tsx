@@ -198,8 +198,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   const [customCompanyInput, setCustomCompanyInput] = useState('');
 
   // Navigation & View Mode State
-  const [viewMode, setViewMode] = useState<'map' | 'roster' | 'contractors' | 'certifications'>('map');
-  const [mapMode, setMapMode] = useState<'standard' | 'bim' | 'heatmap' | 'evacuation' | 'security'>('standard');
+  const [viewMode, setViewMode] = useState<'roster'>('roster');
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('All');
   const [companyFilter, setCompanyFilter] = useState('All');
@@ -1505,274 +1504,134 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         </div>
       </div>
 
-      {/* Main Content Area with Mode Selector */}
+      {/* Main Content Area: Personnel Directory & Roster */}
       <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 shadow-sm flex-1 overflow-hidden flex flex-col">
         <CardHeader className="border-b border-slate-100 dark:border-slate-700 pb-4 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
           
-          {/* Sub-View Mode Selector */}
-          <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
-            <button
-              onClick={() => setViewMode('map')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                viewMode === 'map' 
-                  ? 'bg-[#007BC4] text-white shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <MapPin size={14} /> Interactive Construction Map
-            </button>
-            <button
-              onClick={() => setViewMode('roster')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                viewMode === 'roster' 
-                  ? 'bg-white dark:bg-slate-800 text-slate-900 dark:text-white shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <Users size={14} /> Personnel Roster ({filteredPeople.length})
-            </button>
-            <button
-              onClick={() => setViewMode('contractors')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                viewMode === 'contractors' 
-                  ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <Building2 size={14} /> Trade Contractors ({contractorSummary.length})
-            </button>
-            <button
-              onClick={() => setViewMode('certifications')}
-              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer ${
-                viewMode === 'certifications' 
-                  ? 'bg-white dark:bg-slate-800 text-emerald-600 shadow-sm' 
-                  : 'text-slate-500 hover:text-slate-900'
-              }`}
-            >
-              <BadgeCheck size={14} /> Safety Certifications
-            </button>
+          <div className="flex items-center gap-2">
+            <Users className="w-5 h-5 text-[#007BC4]" />
+            <span className="font-extrabold text-sm text-slate-900 dark:text-white">
+              {personnelPlural} Directory & Roster ({filteredPeople.length})
+            </span>
           </div>
 
-          {/* Search & Multi-Filters (Visible in Roster view) */}
-          {viewMode === 'roster' && (
-            <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-              {/* Search Bar */}
-              <div className="relative flex-1 min-w-[220px] lg:w-72">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-4" />
-                <Input 
-                  placeholder="Search worker name, tag ID, role..." 
-                  className="pl-9 pr-9 bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus-visible:ring-[#007BC4]"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-                <button
-                  type="button"
-                  onClick={() => setIsQrScannerOpen(true)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-[#007BC4] hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition"
-                  title="Scan QR Code with Camera"
-                >
-                  <Camera size={14} />
-                </button>
-              </div>
-
-              {/* Role Filter */}
-              <select
-                value={roleFilter}
-                onChange={e => setRoleFilter(e.target.value)}
-                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
+          {/* Search & Multi-Filters */}
+          <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
+            {/* Search Bar */}
+            <div className="relative flex-1 min-w-[220px] lg:w-72">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-4" />
+              <Input 
+                placeholder="Search worker name, tag ID, role..." 
+                className="pl-9 pr-9 bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus-visible:ring-[#007BC4]"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+              <button
+                type="button"
+                onClick={() => setIsQrScannerOpen(true)}
+                className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-slate-400 hover:text-[#007BC4] hover:bg-slate-200 dark:hover:bg-slate-800 rounded-lg transition"
+                title="Scan QR Code with Camera"
               >
-                <option value="All">All {roleLabel}s</option>
-                {availableRoles.map((r) => (
-                  <option key={r} value={r}>{r}</option>
-                ))}
-              </select>
-
-              {/* Organization / Subcontractor Filter */}
-              <select
-                value={companyFilter}
-                onChange={e => setCompanyFilter(e.target.value)}
-                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
-              >
-                <option value="All">All {organizationType}s</option>
-                {availableCompanies.map((c) => (
-                  <option key={c} value={c}>{c}</option>
-                ))}
-              </select>
-
-              {/* PPE Filter */}
-              <select
-                value={ppeFilter}
-                onChange={e => setPpeFilter(e.target.value)}
-                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
-              >
-                <option value="All">All Compliance Status</option>
-                <option value="COMPLIANT">✓ Compliant</option>
-                <option value="WARNING">⚠️ PPE Check</option>
-                <option value="NON_COMPLIANT">❌ Non-Compliant</option>
-              </select>
-
-              {/* Shift Filter */}
-              <select
-                value={shiftFilter}
-                onChange={e => setShiftFilter(e.target.value)}
-                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
-              >
-                <option value="All">All Shifts</option>
-                <option value="ON_SITE">Active {siteLabel}</option>
-                <option value="OFF_SITE">Off-Site</option>
-                <option value="ON_LEAVE">On Leave</option>
-                <option value="SUSPENDED">Suspended</option>
-              </select>
-
-              {/* Safety Training Compliance Filter */}
-              <select
-                value={trainingFilter}
-                onChange={e => setTrainingFilter(e.target.value)}
-                className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
-              >
-                <option value="All">All {safetyComplianceLabel}</option>
-                <option value="COMPLIANT">✓ Compliant</option>
-                <option value="DUE_SOON">⚠️ Refresher Due</option>
-                <option value="OVERDUE">⛔ Overdue / Expired</option>
-                <option value="PENDING">🔄 Pending Approval</option>
-              </select>
-
-              {/* View Layout Toggle: List vs Condensed Cards */}
-              <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-inner">
-                <button
-                  type="button"
-                  onClick={() => setLayoutType('table')}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                    layoutType === 'table'
-                      ? 'bg-white dark:bg-slate-700 text-[#007BC4] dark:text-white shadow-sm'
-                      : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
-                  }`}
-                  title="Standard List View"
-                >
-                  <LayoutList className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">List</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setLayoutType('cards')}
-                  className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
-                    layoutType === 'cards'
-                      ? 'bg-white dark:bg-slate-700 text-[#007BC4] dark:text-white shadow-sm'
-                      : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
-                  }`}
-                  title="Condensed Cards View"
-                >
-                  <LayoutGrid className="w-3.5 h-3.5" />
-                  <span className="hidden sm:inline">Cards</span>
-                </button>
-              </div>
+                <Camera size={14} />
+              </button>
             </div>
-          )}
+
+            {/* Role Filter */}
+            <select
+              value={roleFilter}
+              onChange={e => setRoleFilter(e.target.value)}
+              className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
+            >
+              <option value="All">All {roleLabel}s</option>
+              {availableRoles.map((r) => (
+                <option key={r} value={r}>{r}</option>
+              ))}
+            </select>
+
+            {/* Organization / Subcontractor Filter */}
+            <select
+              value={companyFilter}
+              onChange={e => setCompanyFilter(e.target.value)}
+              className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
+            >
+              <option value="All">All {organizationType}s</option>
+              {availableCompanies.map((c) => (
+                <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+
+            {/* PPE Filter */}
+            <select
+              value={ppeFilter}
+              onChange={e => setPpeFilter(e.target.value)}
+              className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
+            >
+              <option value="All">All Compliance Status</option>
+              <option value="COMPLIANT">✓ Compliant</option>
+              <option value="WARNING">⚠️ PPE Check</option>
+              <option value="NON_COMPLIANT">❌ Non-Compliant</option>
+            </select>
+
+            {/* Shift Filter */}
+            <select
+              value={shiftFilter}
+              onChange={e => setShiftFilter(e.target.value)}
+              className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
+            >
+              <option value="All">All Shifts</option>
+              <option value="ON_SITE">Active {siteLabel}</option>
+              <option value="OFF_SITE">Off-Site</option>
+              <option value="ON_LEAVE">On Leave</option>
+              <option value="SUSPENDED">Suspended</option>
+            </select>
+
+            {/* Safety Training Compliance Filter */}
+            <select
+              value={trainingFilter}
+              onChange={e => setTrainingFilter(e.target.value)}
+              className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-xs font-bold text-slate-700 dark:text-slate-300 rounded-xl px-3 py-2 outline-none"
+            >
+              <option value="All">All {safetyComplianceLabel}</option>
+              <option value="COMPLIANT">✓ Compliant</option>
+              <option value="DUE_SOON">⚠️ Refresher Due</option>
+              <option value="OVERDUE">⛔ Overdue / Expired</option>
+              <option value="PENDING">🔄 Pending Approval</option>
+            </select>
+
+            {/* View Layout Toggle: List vs Condensed Cards */}
+            <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl border border-slate-200 dark:border-slate-700 shadow-inner">
+              <button
+                type="button"
+                onClick={() => setLayoutType('table')}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  layoutType === 'table'
+                    ? 'bg-white dark:bg-slate-700 text-[#007BC4] dark:text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+                }`}
+                title="Standard List View"
+              >
+                <LayoutList className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">List</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setLayoutType('cards')}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                  layoutType === 'cards'
+                    ? 'bg-white dark:bg-slate-700 text-[#007BC4] dark:text-white shadow-sm'
+                    : 'text-slate-500 hover:text-slate-900 dark:text-slate-400'
+                }`}
+                title="Condensed Cards View"
+              >
+                <LayoutGrid className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">Cards</span>
+              </button>
+            </div>
+          </div>
         </CardHeader>
         
-        {/* VIEW 0: INTERACTIVE MAP-BASED PEOPLE TRACKING */}
-        {viewMode === 'map' && (
-          <CardContent className="p-0 flex-1 flex flex-col min-h-[620px] bg-[#090d16] relative overflow-hidden">
-            {/* Map Top Control Strip */}
-            <div className="p-3.5 bg-slate-900/90 border-b border-slate-800 backdrop-blur-md flex flex-wrap items-center justify-between gap-3 z-20">
-              <div className="flex items-center gap-2 flex-wrap">
-                <span className="text-xs font-black uppercase text-sky-400 tracking-wider flex items-center gap-1.5 bg-sky-950/80 px-2.5 py-1 rounded-lg border border-sky-800/60">
-                  <MapPin className="w-3.5 h-3.5 text-sky-400" /> Site RTLS Map
-                </span>
-                
-                {/* Map CAD Mode Switcher */}
-                <select
-                  value={mapMode}
-                  onChange={(e) => setMapMode(e.target.value as any)}
-                  className="bg-slate-800 border border-slate-700 text-xs font-bold text-slate-200 rounded-lg px-2.5 py-1 outline-none cursor-pointer hover:border-sky-500 transition"
-                >
-                  <option value="standard">Standard CAD Blueprint</option>
-                  <option value="bim">3D BIM Wireframe</option>
-                  <option value="heatmap">Thermal Dwell Heatmap</option>
-                  <option value="evacuation">Emergency Evacuation Routes</option>
-                  <option value="security">High Risk Hazard Overlay</option>
-                </select>
-
-                <div className="h-4 w-[1px] bg-slate-700 hidden sm:block" />
-
-                {/* Live Zone Counters for the 9-Zone Grid */}
-                <div className="hidden xl:flex items-center gap-1 text-[10px] font-bold overflow-x-auto max-w-[620px] py-0.5">
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                    📦 Storage: <strong className="text-yellow-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('material') || (p.currentZone || '').toLowerCase().includes('storage')).length}</strong>
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                    🏗️ Structure: <strong className="text-purple-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('structure')).length}</strong>
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                    🏗️ Crane: <strong className="text-rose-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('crane')).length}</strong>
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                    🏢 Office: <strong className="text-sky-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('office')).length}</strong>
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                    👷 Open: <strong className="text-slate-200">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('open')).length}</strong>
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                    🚜 Parking: <strong className="text-orange-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('parking')).length}</strong>
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                    ⛏️ Excavation: <strong className="text-rose-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('excavation')).length}</strong>
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                    👥 Assembly: <strong className="text-emerald-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('assembly') || (p.currentZone || '').toLowerCase().includes('muster')).length}</strong>
-                  </span>
-                  <span className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 whitespace-nowrap">
-                    ⚡ Voltage: <strong className="text-rose-400">{mappedPeopleForMap.filter(p => (p.currentZone || '').toLowerCase().includes('voltage')).length}</strong>
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-center gap-2">
-                <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-950/60 border border-emerald-800/80 px-2.5 py-1 rounded-lg flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                  {mappedPeopleForMap.length} Workers Tracked
-                </span>
-              </div>
-            </div>
-
-            {/* Interactive Blueprint Canvas Component */}
-            <div className="flex-1 relative w-full h-[540px]">
-              <LiveFloorMap
-                mode={mapMode}
-                zones={zonesDict}
-                people={mappedPeopleForMap}
-                vehicles={[]}
-                onSelectEntity={(entity) => {
-                  if (entity.data) {
-                    setSelectedPerson(entity.data);
-                    setProfileTab('profile');
-                    setAiSummary(null);
-                  }
-                }}
-              />
-            </div>
-
-            {/* Map Bottom Zone & Subcontractor Roster Overlay */}
-            <div className="p-3 bg-slate-900/95 border-t border-slate-800 flex flex-wrap items-center justify-between gap-3 z-20 text-xs">
-              <div className="flex items-center gap-2 text-slate-400">
-                <Info className="w-4 h-4 text-sky-400" />
-                <span>Click any worker pin on the map to open full profile, movement history, and AI EHS analysis.</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setViewMode('roster')}
-                  className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sky-300 rounded-lg text-xs font-bold transition flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Users className="w-3.5 h-3.5" /> View Detailed Roster
-                </button>
-              </div>
-            </div>
-          </CardContent>
-        )}
-
-        {/* VIEW 1: PERSONNEL ROSTER TABLE */}
-        {viewMode === 'roster' && (
-          <CardContent className="p-0 flex-1 overflow-auto">
+        {/* PERSONNEL ROSTER TABLE */}
+        <CardContent className="p-0 flex-1 overflow-auto">
             {/* Bulk Action Toolbar */}
             {selectedIds.length > 0 && (
               <div className="m-4 bg-[#007BC4] text-white p-3.5 px-6 rounded-2xl shadow-xl flex flex-wrap items-center justify-between gap-3 animate-in fade-in slide-in-from-top-2 duration-200 border border-blue-400/30">
@@ -2216,105 +2075,6 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               </Table>
             )}
           </CardContent>
-        )}
-
-        {/* VIEW 2: TRADE CONTRACTOR SUMMARY */}
-        {viewMode === 'contractors' && (
-          <CardContent className="p-6">
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-              {contractorSummary.map((c, i) => (
-                <div key={i} className="p-5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl flex flex-col justify-between gap-4 shadow-sm hover:shadow-md transition">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-extrabold text-sm text-slate-900 dark:text-white flex items-center gap-2">
-                        <Building2 size={16} className="text-[#007BC4]" />
-                        {c.company}
-                      </span>
-                      <Badge className={`text-[10px] font-black ${
-                        c.complianceRate >= 90 ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-800'
-                      }`}>
-                        {c.complianceRate}% PPE
-                      </Badge>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs text-slate-600 dark:text-slate-400 mt-3">
-                      <div className="p-2 bg-white dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
-                        <span className="text-[10px] text-slate-400 block font-bold">TOTAL STAFF</span>
-                        <span className="font-black text-slate-900 dark:text-white text-base">{c.total} Workers</span>
-                      </div>
-                      <div className="p-2 bg-white dark:bg-slate-800 rounded-xl border border-slate-100 dark:border-slate-700">
-                        <span className="text-[10px] text-slate-400 block font-bold">ACTIVE ON-SITE</span>
-                        <span className="font-black text-emerald-600 text-base">{c.active} Active</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="pt-3 border-t border-slate-200 dark:border-slate-700 flex justify-between items-center text-xs gap-2">
-                    <button
-                      onClick={() => {
-                        setSelectedContractorCompany(c.company);
-                        setIsContractorQrModalOpen(true);
-                        setMobileCheckInTab('qr');
-                      }}
-                      className="px-2.5 py-1.5 bg-[#007BC4]/10 hover:bg-[#007BC4]/20 text-[#007BC4] rounded-xl text-[11px] font-extrabold flex items-center gap-1 transition cursor-pointer border border-[#007BC4]/20"
-                      title="Generate Mobile Check-In QR Pass for Contractor Staff"
-                    >
-                      <Smartphone size={13} /> Mobile QR Pass
-                    </button>
-                    <button
-                      onClick={() => { setCompanyFilter(c.company); setViewMode('roster'); }}
-                      className="text-[11px] font-bold text-[#007BC4] hover:underline"
-                    >
-                      Filter Roster →
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        )}
-
-        {/* VIEW 3: SAFETY CERTIFICATIONS MATRIX */}
-        {viewMode === 'certifications' && (
-          <CardContent className="p-6">
-            <div className="space-y-4">
-              <div className="p-4 bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-100 dark:border-indigo-900/40 rounded-2xl text-xs text-indigo-900 dark:text-indigo-200 font-medium flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <BadgeCheck size={20} className="text-indigo-600 shrink-0" />
-                  <div>
-                    <div className="font-bold text-sm">Site Safety Certification Verification Matrix</div>
-                    <div>All workers must maintain valid OSHA 30 and trade clearances prior to entering active construction sectors.</div>
-                  </div>
-                </div>
-                <Badge className="bg-indigo-600 text-white font-bold text-[10px]">100% Verified</Badge>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {combinedPeople.map((p, i) => (
-                  <div key={i} className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-2xl flex items-center justify-between">
-                    <div>
-                      <div className="font-bold text-sm text-slate-900 dark:text-white">{p.name}</div>
-                      <div className="text-xs text-slate-500 font-mono">{p.hardhatTagId || p.id} • {p.tradeCompany}</div>
-                      <div className="mt-2 flex flex-wrap gap-1">
-                        {parseCertifications(p.certifications).map((cert: string, idx: number) => (
-                          <span key={idx} className="px-2 py-0.5 bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold text-[10px] rounded border border-emerald-200/50">
-                            ✓ {cert.trim()}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => openEditWorkerModal(p)}
-                      className="px-3 py-1.5 bg-white dark:bg-slate-800 border border-slate-200 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl hover:bg-slate-100"
-                    >
-                      Update Certs
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        )}
       </Card>
 
       {/* COMPREHENSIVE PERSON PROFILE DRAWER / MODAL */}

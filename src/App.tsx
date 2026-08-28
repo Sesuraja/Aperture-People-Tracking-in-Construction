@@ -15,7 +15,6 @@ import VisitorsTab from './components/VisitorsTab';
 import AuditTab from './components/AuditTab';
 import IncidentsTab from './components/IncidentsTab';
 import AIInsightsTab from './components/AIInsightsTab';
-import MaintenanceTab from './components/MaintenanceTab';
 import TopBar from './components/TopBar';
 import PeopleTab from './components/PeopleTab';
 import AlertsTab from './components/AlertsTab';
@@ -379,7 +378,6 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
             {isPageAllowed('visitors') && <NavItem to="/visitors" icon={<ClipboardCheck size={18}/>} label="Visitors" isCollapsed={isSidebarCollapsed} />}
             {isPageAllowed('attendance') && <NavItem to="/attendance" icon={<Clock size={18}/>} label="Attendance" isCollapsed={isSidebarCollapsed} />}
             {isPageAllowed('devices') && <NavItem to="/devices" icon={<Radio size={18}/>} label="Hardware Devices" isCollapsed={isSidebarCollapsed} />}
-            {isPageAllowed('maintenance') && <NavItem to="/maintenance" icon={<Wrench size={18}/>} label="Maintenance" isCollapsed={isSidebarCollapsed} />}
           </div>
 
           {/* SAFETY & INTELLIGENCE DOMAIN */}
@@ -607,17 +605,6 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
                    permissions={permissions}
                    userPagePermissions={userPagePermissions}
                    featureName="Stream Diagnostics Monitoring"
-                 />
-              } />
-              <Route path="/maintenance" element={
-                 <ProtectedRoute 
-                   element={<MaintenanceTab />}
-                   userRole={userRole}
-                   userUid="default"
-                   permissionKey="maintenance"
-                   permissions={permissions}
-                   userPagePermissions={userPagePermissions}
-                   featureName="Hardware Maintenance Schedule"
                  />
               } />
               <Route path="/settings" element={

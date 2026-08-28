@@ -80,6 +80,124 @@ function getTimestampMs(ts: any): number {
   return 0;
 }
 
+const DEFAULT_ALERT_RULES: AlertRule[] = [
+  {
+    id: 'RULE-EXCLUSION-01',
+    name: 'Crane Swing Radius Exclusion Breach',
+    category: 'Safety',
+    priorityThreshold: 'Critical',
+    targetZone: 'Crane Operating Zone',
+    slaMinutes: 5,
+    autoAssignOfficer: 'Marcus Vance (EHS Director)',
+    autoEscalateTier: 'Tier 3 (Site Operations VP)',
+    triggerSiren: true,
+    notifySmsEmail: true,
+    status: 'Active'
+  },
+  {
+    id: 'RULE-HV-02',
+    name: 'High Voltage Transformer Proximity Warning',
+    category: 'Emergency',
+    priorityThreshold: 'Critical',
+    targetZone: 'High Voltage Area',
+    slaMinutes: 3,
+    autoAssignOfficer: 'Frank Reynolds (Equipment Manager)',
+    autoEscalateTier: 'Tier 2 (EHS Director)',
+    triggerSiren: true,
+    notifySmsEmail: true,
+    status: 'Active'
+  },
+  {
+    id: 'RULE-PPE-03',
+    name: 'PPE Hardhat & Vest Compliance Detection',
+    category: 'Safety',
+    priorityThreshold: 'High',
+    targetZone: 'All Zones',
+    slaMinutes: 15,
+    autoAssignOfficer: 'Elena Rostova (Field Safety Lead)',
+    autoEscalateTier: 'Tier 1 (Gatehouse)',
+    triggerSiren: false,
+    notifySmsEmail: true,
+    status: 'Active'
+  },
+  {
+    id: 'RULE-LOITER-04',
+    name: 'Confined Shaft Dwell & Loitering Alert',
+    category: 'Worker',
+    priorityThreshold: 'Medium',
+    targetZone: 'Excavation Area',
+    slaMinutes: 30,
+    autoAssignOfficer: 'Site Operations Duty Manager',
+    autoEscalateTier: 'Tier 1 (Gatehouse)',
+    triggerSiren: false,
+    notifySmsEmail: false,
+    status: 'Active'
+  }
+];
+
+const DEFAULT_BROADCASTS: EmergencyBroadcast[] = [
+  {
+    id: 'BC-01',
+    timestamp: new Date().toISOString(),
+    sender: 'Marcus Vance (EHS Director)',
+    type: 'Weather',
+    title: 'Severe High Wind Alert — Crane Operations Suspended',
+    message: 'Gusts exceeding 45 km/h detected by mast anemometers. All tower cranes must immediately enter weather-vane mode and workers clear lifting bays.',
+    targetZones: ['Crane Operating Zone', 'Structure Work Area'],
+    recipientsCount: 42,
+    status: 'Delivered'
+  }
+];
+
+const DEFAULT_ACTIVE_ALERTS: AIAlert[] = [
+  {
+    id: 'ALT-1001',
+    type: 'security',
+    category: 'Safety',
+    priority: 'Critical',
+    status: 'In Progress',
+    title: 'Crane Swing Radius Proximity Warning',
+    message: 'Worker tag detected inside active crane load quadrant without spotter clearance.',
+    timestamp: new Date(Date.now() - 12 * 60 * 1000),
+    assignedTo: 'Marcus Vance (EHS Director)',
+    evidence: {
+      locationZone: 'Crane Operating Zone',
+      rfidReaderId: 'GAO-RD-216031A-02',
+      cctvCameraId: 'CAM-CRANE-02'
+    }
+  },
+  {
+    id: 'ALT-1002',
+    type: 'warning',
+    category: 'Worker',
+    priority: 'High',
+    status: 'New',
+    title: 'Confined Space Dwell Threshold Exceeded',
+    message: 'Personnel detected in excavation pit exceeding 120-minute continuous shift threshold.',
+    timestamp: new Date(Date.now() - 35 * 60 * 1000),
+    assignedTo: 'Elena Rostova (Field Safety Lead)',
+    evidence: {
+      locationZone: 'Excavation Area',
+      rfidReaderId: 'GAO-RD-216031A-03'
+    }
+  },
+  {
+    id: 'ALT-1003',
+    type: 'warning',
+    category: 'Equipment',
+    priority: 'Medium',
+    status: 'New',
+    title: 'UHF RFID Reader Gateway Periodic Re-calibration Due',
+    message: 'Excavation perimeter gateway antenna gain drift detected (+3.2 dBm).',
+    timestamp: new Date(Date.now() - 75 * 60 * 1000),
+    assignedTo: 'IT Network Systems Admin',
+    evidence: {
+      locationZone: 'Excavation Area',
+      rfidReaderId: 'GAO-RD-216031A-03'
+    }
+  }
+];
+
 export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] }) {
   const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
   const [activeSubTab, setActiveSubTab] = useState<'feed' | 'rules' | 'broadcast' | 'heatmap' | 'analytics'>('feed');
@@ -267,8 +385,11 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
 
     const mergeAndSetAlerts = () => {
       const map = new Map<string, AIAlert>();
-      // Add MongoDB alerts
-      [...entAlerts, ...stdAlerts, ...incAlerts].forEach(a => map.set(a.id, a));
+      // Add MongoDB alerts or default alerts
+      const baseAlerts = [...entAlerts, ...stdAlerts, ...incAlerts];
+      const sourceAlerts = baseAlerts.length > 0 ? baseAlerts : DEFAULT_ACTIVE_ALERTS;
+
+      sourceAlerts.forEach(a => map.set(a.id, a));
 
       const combined = Array.from(map.values())
         .filter(a => !dismissedIds.has(a.id!))
@@ -337,13 +458,17 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     // 2. Sync Rules
     const unsubRules = onSnapshot(collection(db, 'alert_rules'), (snapshot) => {
       const data = snapshot.docs.map(docSnap => docSnap.data() as AlertRule);
-      setRuleList(data || []);
+      setRuleList(data.length > 0 ? data : DEFAULT_ALERT_RULES);
+    }, () => {
+      setRuleList(DEFAULT_ALERT_RULES);
     });
 
     // 3. Sync Broadcasts
     const unsubBroadcasts = onSnapshot(collection(db, 'emergency_broadcasts'), (snapshot) => {
       const data = snapshot.docs.map(docSnap => docSnap.data() as EmergencyBroadcast);
-      setBroadcastList(data || []);
+      setBroadcastList(data.length > 0 ? data : DEFAULT_BROADCASTS);
+    }, () => {
+      setBroadcastList(DEFAULT_BROADCASTS);
     });
 
     return () => {

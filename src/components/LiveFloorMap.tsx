@@ -3,7 +3,8 @@ import React, { useMemo, useState, useEffect, useRef } from 'react';
 import { 
   Radio, User, Users, AlertTriangle, ShieldCheck, Truck, HardHat, Camera, Thermometer,
   Layers, Navigation, Maximize2, ZoomIn, ZoomOut, RotateCcw, Ruler, Box, BarChart3, Flame,
-  PenTool, Check, X, ShieldAlert, BellRing, Eye, EyeOff, Filter, Sliders, ChevronUp, ChevronDown, Info
+  PenTool, Check, X, ShieldAlert, BellRing, Eye, EyeOff, Filter, Sliders, ChevronUp, ChevronDown, Info,
+  Upload, SlidersHorizontal, Image as ImageIcon, Sun, Moon, Sparkles, CheckCircle2
 } from 'lucide-react';
 import { SelectedEntity } from './LiveTrackingContextDrawer';
 import { Person, Asset, Vehicle, CameraDevice, EnvSensor } from '../types';
@@ -15,272 +16,79 @@ export interface MaterialAsset { id: string; name: string; type: string; x: numb
 export type MapMode = 'standard' | 'bim' | 'satellite' | 'heatmap' | 'coverage' | 'evacuation' | 'asset' | 'hardware' | 'productivity' | 'security' | 'inventory' | 'environment';
 
 export function getBlueprintSvg(projectId: string, title: string, contractor: string, dimensions: string, mode: MapMode = 'standard'): string {
+  const bgColor = '#ffffff';
+  const gridColor = 'rgba(100,116,139,0.12)';
+  const wallColor = '#334155';
+  const textColor = '#475569';
+
   const svg = `
     <svg width="1200" height="800" viewBox="0 0 1200 800" xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <!-- Precision Dot Grid for Open Areas -->
-        <pattern id="dotGrid" width="20" height="20" patternUnits="userSpaceOnUse">
-          <circle cx="2" cy="2" r="1" fill="#cbd5e1" opacity="0.6"/>
+        <pattern id="cadGridMajor" width="100" height="100" patternUnits="userSpaceOnUse">
+          <path d="M 100 0 L 0 0 0 100" fill="none" stroke="${gridColor}" stroke-width="1.2"/>
         </pattern>
-        <!-- Diagonal Hatches for Hazard Zones -->
-        <pattern id="hatchYellow" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="16" y2="0" stroke="#fef08a" stroke-width="3" opacity="0.7"/>
+        <pattern id="cadGridMinor" width="20" height="20" patternUnits="userSpaceOnUse">
+          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="${gridColor}" stroke-width="0.5" opacity="0.6"/>
         </pattern>
-        <pattern id="hatchRed" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="16" y2="0" stroke="#fecdd3" stroke-width="3" opacity="0.7"/>
+        <pattern id="hatchHazard" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(244,63,94,0.35)" stroke-width="3"/>
         </pattern>
-        <pattern id="hatchOrange" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="16" y2="0" stroke="#fed7aa" stroke-width="3" opacity="0.7"/>
+        <pattern id="hatchWarning" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(245,158,11,0.35)" stroke-width="3"/>
+        </pattern>
+        <pattern id="rebarPattern" width="10" height="10" patternUnits="userSpaceOnUse">
+          <circle cx="5" cy="5" r="1.2" fill="rgba(71,85,105,0.2)"/>
         </pattern>
       </defs>
 
-      <!-- Clean Map Background -->
-      <rect width="100%" height="100%" fill="#f1f5f9"/>
+      <!-- Background & Blueprint Grids -->
+      <rect width="100%" height="100%" fill="${bgColor}"/>
+      <rect width="100%" height="100%" fill="url(#cadGridMinor)"/>
+      <rect width="100%" height="100%" fill="url(#cadGridMajor)"/>
 
-      <!-- Roadways Network (Corridors between 3x3 zones) -->
-      <!-- Perimeter Road -->
-      <rect x="25" y="20" width="1150" height="740" rx="30" fill="#e2e8f0" stroke="#cbd5e1" stroke-width="1.5"/>
-      <!-- Inner Island clearing -->
-      <rect x="65" y="55" width="1070" height="670" rx="16" fill="#f8fafc"/>
+      <!-- Site Perimeter Foundation Walls -->
+      <rect x="30" y="25" width="1140" height="750" rx="10" fill="none" stroke="${wallColor}" stroke-width="3.5"/>
+      <rect x="42" y="37" width="1116" height="726" rx="6" fill="none" stroke="${wallColor}" stroke-width="1.5" stroke-dasharray="8,6" opacity="0.7"/>
 
-      <!-- Horizontal Road Corridors -->
-      <rect x="25" y="245" width="1150" height="48" fill="#e2e8f0"/>
-      <rect x="25" y="485" width="1150" height="48" fill="#e2e8f0"/>
-
-      <!-- Vertical Road Corridors -->
-      <rect x="375" y="20" width="50" height="740" fill="#e2e8f0"/>
-      <rect x="765" y="20" width="50" height="740" fill="#e2e8f0"/>
-
-      <!-- Road Dashed Centerlines -->
-      <g stroke="#ffffff" stroke-width="2.5" stroke-dasharray="10,8" opacity="0.9">
-        <!-- Horizontal Centerlines -->
-        <line x1="35" y1="269" x2="1165" y2="269"/>
-        <line x1="35" y1="509" x2="1165" y2="509"/>
-        <!-- Vertical Centerlines -->
-        <line x1="400" y1="30" x2="400" y2="750"/>
-        <line x1="790" y1="30" x2="790" y2="750"/>
-        <!-- Outer Perimeter Centerlines -->
-        <rect x="42" y="36" width="1116" height="708" rx="22" fill="none" stroke="#64748b" stroke-width="1.8" stroke-dasharray="8,6" opacity="0.6"/>
+      <!-- Logistics Transport Roads & Corridors -->
+      <g fill="rgba(241,245,249,0.9)" stroke="${wallColor}" stroke-width="1">
+        <rect x="30" y="250" width="1140" height="55" rx="4"/>
+        <rect x="30" y="495" width="1140" height="55" rx="4"/>
+        <rect x="380" y="25" width="55" height="750" rx="4"/>
+        <rect x="765" y="25" width="55" height="750" rx="4"/>
       </g>
 
-      <!-- ================= 3x3 ZONE CARDS ================= -->
+      <!-- Road Centerlines -->
+      <g stroke="#94a3b8" stroke-width="2" stroke-dasharray="12,10" opacity="0.8">
+        <line x1="45" y1="277" x2="1155" y2="277"/>
+        <line x1="45" y1="522" x2="1155" y2="522"/>
+        <line x1="407" y1="35" x2="407" y2="765"/>
+        <line x1="792" y1="35" x2="792" y2="765"/>
+      </g>
 
-      <!-- ZONE 1 (Row 1, Col 1): MATERIAL STORAGE -->
-      <g id="zone-svg-material-storage">
-        <rect x="80" y="65" width="280" height="170" rx="18" fill="#fefce8" stroke="#eab308" stroke-width="2.5" stroke-dasharray="7,5"/>
-        <rect x="80" y="65" width="280" height="170" rx="18" fill="url(#hatchYellow)"/>
-        <!-- Card Icon & Hazard -->
-        <g transform="translate(220, 105)" fill="none" stroke="#ca8a04" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M 0 0 L -12 -8 L -12 -20 L 0 -12 L 12 -20 L 12 -8 Z"/>
-          <path d="M 0 -12 L 0 0"/>
+      <!-- Structural Columns -->
+      ${[
+        { x: 100, y: 70 }, { x: 360, y: 70 }, { x: 745, y: 70 }, { x: 1100, y: 70 },
+        { x: 100, y: 315 }, { x: 360, y: 315 }, { x: 745, y: 315 }, { x: 1100, y: 315 },
+        { x: 100, y: 560 }, { x: 360, y: 560 }, { x: 745, y: 560 }, { x: 1100, y: 560 },
+      ].map(c => `
+        <g transform="translate(${c.x}, ${c.y})">
+          <rect x="-7" y="-7" width="14" height="14" rx="2" fill="#e2e8f0" stroke="#94a3b8" stroke-width="1.2"/>
         </g>
-        <text x="220" y="150" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#a16207" letter-spacing="1">MATERIAL STORAGE</text>
-        <text x="220" y="185" text-anchor="middle" font-family="system-ui, sans-serif" font-size="9" font-weight="bold" fill="#ca8a04">Risk: Falling Objects</text>
+      `).join('')}
+
+      <!-- Site Plan Name Stamp & North Azimuth Compass -->
+      <g transform="translate(870, 725)">
+        <rect x="0" y="0" width="280" height="40" rx="8" fill="#ffffff" stroke="#94a3b8" stroke-width="1.2"/>
+        <text x="14" y="24" font-family="system-ui, sans-serif" font-size="11" font-weight="900" fill="#0f172a" letter-spacing="0.5">${(title || 'CONSTRUCTION SITE').toUpperCase()}</text>
       </g>
 
-      <!-- ZONE 2 (Row 1, Col 2): STRUCTURE WORK AREA -->
-      <g id="zone-svg-structure-work">
-        <rect x="440" y="65" width="310" height="170" rx="18" fill="#faf5ff" stroke="#a855f7" stroke-width="2.5" stroke-dasharray="7,5"/>
-        <!-- Scaffolding Icon -->
-        <g transform="translate(595, 110)" stroke="#9333ea" stroke-width="2.2" stroke-linecap="round">
-          <line x1="-16" y1="-20" x2="-16" y2="10"/>
-          <line x1="16" y1="-20" x2="16" y2="10"/>
-          <line x1="-16" y1="-20" x2="16" y2="-20"/>
-          <line x1="-16" y1="-5" x2="16" y2="-5"/>
-          <line x1="-16" y1="10" x2="16" y2="10"/>
-          <line x1="-16" y1="-20" x2="16" y2="-5"/>
-          <line x1="-16" y1="-5" x2="16" y2="10"/>
-        </g>
-        <text x="595" y="150" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#7e22ce" letter-spacing="1">STRUCTURE WORK AREA</text>
-        <!-- Safe Zone Badge -->
-        <rect x="555" y="172" width="80" height="18" rx="4" fill="#f3e8ff"/>
-        <text x="595" y="185" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#9333ea">Safe Zone</text>
-      </g>
-
-      <!-- ZONE 3 (Row 1, Col 3): CRANE OPERATING ZONE -->
-      <g id="zone-svg-crane-operating">
-        <rect x="830" y="65" width="290" height="170" rx="18" fill="#fff1f2" stroke="#f43f5e" stroke-width="2.5" stroke-dasharray="7,5"/>
-        <rect x="830" y="65" width="290" height="170" rx="18" fill="url(#hatchRed)"/>
-        <!-- Tower Crane Icon -->
-        <g transform="translate(975, 110)" stroke="#e11d48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
-          <line x1="-25" y1="-18" x2="25" y2="-18"/>
-          <line x1="-5" y1="-18" x2="-5" y2="10"/>
-          <line x1="5" y1="-18" x2="5" y2="10"/>
-          <line x1="-25" y1="-18" x2="0" y2="-30"/>
-          <line x1="0" y1="-30" x2="18" y2="-18"/>
-          <circle cx="15" cy="-8" r="4" fill="#e11d48"/>
-          <!-- Warning Triangle -->
-          <polygon points="26,2 34,16 18,16" stroke="#e11d48" stroke-width="1.5" fill="#fff1f2"/>
-        </g>
-        <text x="975" y="150" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#be123c" letter-spacing="1">CRANE OPERATING ZONE</text>
-        <text x="975" y="185" text-anchor="middle" font-family="system-ui, sans-serif" font-size="9" font-weight="bold" fill="#e11d48">Risk: Overhead Load</text>
-      </g>
-
-      <!-- ZONE 4 (Row 2, Col 1): SITE OFFICE -->
-      <g id="zone-svg-site-office">
-        <rect x="80" y="305" width="280" height="170" rx="18" fill="#f0f9ff" stroke="#0284c7" stroke-width="2.5" stroke-dasharray="7,5"/>
-        <!-- Office Window Icon -->
-        <g transform="translate(220, 345)" fill="#0284c7" stroke="#0284c7">
-          <rect x="-12" y="-12" width="10" height="10" rx="1"/>
-          <rect x="2" y="-12" width="10" height="10" rx="1"/>
-          <rect x="-12" y="2" width="10" height="10" rx="1"/>
-          <rect x="2" y="2" width="10" height="10" rx="1"/>
-        </g>
-        <text x="220" y="388" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#0369a1" letter-spacing="1">SITE OFFICE</text>
-        <!-- Safe Zone Badge -->
-        <rect x="180" y="412" width="80" height="18" rx="4" fill="#e0f2fe"/>
-        <text x="220" y="425" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#0284c7">Safe Zone</text>
-      </g>
-
-      <!-- ZONE 5 (Row 2, Col 2): OPEN WORK AREA -->
-      <g id="zone-svg-open-work">
-        <rect x="440" y="305" width="310" height="170" rx="18" fill="#ffffff" stroke="#94a3b8" stroke-width="2.5" stroke-dasharray="7,5"/>
-        <rect x="440" y="305" width="310" height="170" rx="18" fill="url(#dotGrid)"/>
-        <!-- Worker Hardhat Silhouette Icon -->
-        <g transform="translate(595, 350)" fill="#475569">
-          <circle cx="0" cy="-6" r="8"/>
-          <path d="M -12 -6 C -12 -12, 12 -12, 12 -6 Z" fill="#64748b"/>
-          <path d="M -14 12 C -14 4, 14 4, 14 12 Z"/>
-        </g>
-        <text x="595" y="388" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#334155" letter-spacing="1">OPEN WORK AREA</text>
-        <!-- Safe Zone Badge -->
-        <rect x="555" y="412" width="80" height="18" rx="4" fill="#f1f5f9"/>
-        <text x="595" y="425" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#64748b">Safe Zone</text>
-      </g>
-
-      <!-- ZONE 6 (Row 2, Col 3): EQUIPMENT PARKING -->
-      <g id="zone-svg-equipment-parking">
-        <rect x="830" y="305" width="290" height="170" rx="18" fill="#fff7ed" stroke="#f97316" stroke-width="2.5" stroke-dasharray="7,5"/>
-        <!-- Excavator Icon -->
-        <g transform="translate(975, 348)" stroke="#ea580c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
-          <rect x="-14" y="0" width="28" height="10" rx="4" fill="#fed7aa"/>
-          <rect x="-10" y="-10" width="14" height="10" rx="2" fill="#fff7ed"/>
-          <path d="M 4 -5 L 18 -16 L 24 -6 L 20 0"/>
-        </g>
-        <text x="975" y="388" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#c2410c" letter-spacing="1">EQUIPMENT PARKING</text>
-        <rect x="925" y="412" width="100" height="18" rx="4" fill="#ffedd5"/>
-        <text x="975" y="425" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8" font-weight="bold" fill="#ea580c">Heavy Equipment Zone</text>
-      </g>
-
-      <!-- ZONE 7 (Row 3, Col 1): EXCAVATION AREA -->
-      <g id="zone-svg-excavation-area">
-        <rect x="80" y="545" width="280" height="170" rx="18" fill="#fff1f2" stroke="#f43f5e" stroke-width="2.5" stroke-dasharray="7,5"/>
-        <rect x="80" y="545" width="280" height="170" rx="18" fill="url(#hatchRed)"/>
-        <!-- Shovel & Warning Icon -->
-        <g transform="translate(220, 585)" stroke="#e11d48" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
-          <path d="M -16 6 L -6 -6 L -2 -2 L -12 10 Z"/>
-          <polygon points="10,-6 18,8 2,8" stroke="#e11d48" stroke-width="1.5" fill="#fff1f2"/>
-        </g>
-        <text x="220" y="628" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#be123c" letter-spacing="1">EXCAVATION AREA</text>
-        <text x="220" y="663" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#e11d48">Risk: Cave-in / Falling Debris</text>
-      </g>
-
-      <!-- ZONE 8 (Row 3, Col 2): ASSEMBLY POINT -->
-      <g id="zone-svg-assembly-point">
-        <rect x="440" y="545" width="310" height="170" rx="18" fill="#f0fdf4" stroke="#10b981" stroke-width="2.5" stroke-dasharray="7,5"/>
-        <!-- 3 Gathering People Icon -->
-        <g transform="translate(595, 585)" fill="#059669">
-          <circle cx="0" cy="-6" r="6"/>
-          <path d="M -9 8 C -9 2, 9 2, 9 8 Z"/>
-          <circle cx="-14" cy="-4" r="4.5" opacity="0.8"/>
-          <path d="M -20 8 C -20 3, -8 3, -8 8 Z" opacity="0.8"/>
-          <circle cx="14" cy="-4" r="4.5" opacity="0.8"/>
-          <path d="M 8 8 C 8 3, 20 3, 20 8 Z" opacity="0.8"/>
-        </g>
-        <text x="595" y="628" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#047857" letter-spacing="1">ASSEMBLY POINT</text>
-        <!-- Safe Zone Badge -->
-        <rect x="555" y="652" width="80" height="18" rx="4" fill="#dcfce7"/>
-        <text x="595" y="665" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#059669">Safe Zone</text>
-      </g>
-
-      <!-- ZONE 9 (Row 3, Col 3): HIGH VOLTAGE AREA -->
-      <g id="zone-svg-high-voltage">
-        <rect x="830" y="545" width="290" height="170" rx="18" fill="#fff1f2" stroke="#f43f5e" stroke-width="2.5" stroke-dasharray="7,5"/>
-        <rect x="830" y="545" width="290" height="170" rx="18" fill="url(#hatchRed)"/>
-        <!-- Lightning Bolt Icon -->
-        <g transform="translate(975, 585)">
-          <path d="M 0 -14 L -8 0 L -1 0 L -4 14 L 6 -2 L -1 -2 Z" fill="#e11d48"/>
-          <polygon points="14,-6 22,8 6,8" stroke="#e11d48" stroke-width="1.5" fill="#fff1f2"/>
-        </g>
-        <text x="975" y="628" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="900" fill="#be123c" letter-spacing="1">HIGH VOLTAGE AREA</text>
-        <text x="975" y="663" text-anchor="middle" font-family="system-ui, sans-serif" font-size="8.5" font-weight="bold" fill="#e11d48">Risk: Electrical Hazard</text>
-      </g>
-
-      <!-- ================= ACCESS POINTS (AP1 - AP4) ================= -->
-      <!-- AP1 (Top Center) -->
-      <g transform="translate(575, 14)">
-        <rect x="0" y="0" width="48" height="24" rx="12" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
-        <text x="24" y="16" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#16a34a">AP1</text>
-      </g>
-      <!-- AP2 (Right Center) -->
-      <g transform="translate(1145, 375)">
-        <rect x="0" y="0" width="48" height="24" rx="12" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
-        <text x="24" y="16" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#16a34a">AP2</text>
-      </g>
-      <!-- AP3 (Bottom Center) -->
-      <g transform="translate(525, 742)">
-        <rect x="0" y="0" width="48" height="24" rx="12" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
-        <text x="24" y="16" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#16a34a">AP3</text>
-      </g>
-      <!-- AP4 (Left Center) -->
-      <g transform="translate(15, 375)">
-        <rect x="0" y="0" width="48" height="24" rx="12" fill="#ffffff" stroke="#16a34a" stroke-width="2"/>
-        <text x="24" y="16" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#16a34a">AP4</text>
-      </g>
-
-      <!-- ================= READERS (R1 - R6) ================= -->
-      <!-- R1 (Top Road) -->
-      <g transform="translate(290, 16)">
-        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
-        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R1</text>
-      </g>
-      <!-- R2 (Right Top Road) -->
-      <g transform="translate(1155, 260)">
-        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
-        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R2</text>
-      </g>
-      <!-- R3 (Right Bottom Road) -->
-      <g transform="translate(1155, 630)">
-        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
-        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R3</text>
-      </g>
-      <!-- R4 (Bottom Road Center) -->
-      <g transform="translate(425, 744)">
-        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
-        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R4</text>
-      </g>
-      <!-- R5 (Bottom Road Left) -->
-      <g transform="translate(95, 744)">
-        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
-        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R5</text>
-      </g>
-      <!-- R6 (Left Top Road) -->
-      <g transform="translate(15, 260)">
-        <rect x="0" y="0" width="28" height="20" rx="5" fill="#0284c7"/>
-        <text x="14" y="14" text-anchor="middle" font-family="system-ui, sans-serif" font-size="10" font-weight="900" fill="#ffffff">R6</text>
-      </g>
-
-      <!-- ================= SCALE BAR & NORTH COMPASS ================= -->
-      <g transform="translate(480, 755)" font-family="system-ui, sans-serif" font-size="8" fill="#64748b">
-        <!-- Scale Ruler -->
-        <line x1="120" y1="5" x2="280" y2="5" stroke="#94a3b8" stroke-width="1.5"/>
-        <line x1="120" y1="0" x2="120" y2="10" stroke="#94a3b8" stroke-width="1.5"/>
-        <line x1="160" y1="2" x2="160" y2="8" stroke="#94a3b8" stroke-width="1"/>
-        <line x1="200" y1="0" x2="200" y2="10" stroke="#94a3b8" stroke-width="1.5"/>
-        <line x1="240" y1="2" x2="240" y2="8" stroke="#94a3b8" stroke-width="1"/>
-        <line x1="280" y1="0" x2="280" y2="10" stroke="#94a3b8" stroke-width="1.5"/>
-        <text x="120" y="20" text-anchor="middle">0m</text>
-        <text x="160" y="20" text-anchor="middle">25m</text>
-        <text x="200" y="20" text-anchor="middle">50m</text>
-        <text x="240" y="20" text-anchor="middle">75m</text>
-        <text x="280" y="20" text-anchor="middle">100m</text>
-
-        <!-- North Compass Arrow -->
-        <g transform="translate(100, 6)">
-          <line x1="0" y1="12" x2="0" y2="-10" stroke="#0284c7" stroke-width="1.5"/>
-          <polygon points="0,-12 3,-4 -3,-4" fill="#0284c7"/>
-          <text x="0" y="-15" text-anchor="middle" font-weight="900" fill="#0284c7" font-size="8">N</text>
-        </g>
+      <!-- North Azimuth Compass -->
+      <g transform="translate(70, 735)">
+        <circle cx="0" cy="0" r="14" fill="${bgColor}" stroke="#0284c7" stroke-width="1.5"/>
+        <polygon points="0,-11 3.5,0 -3.5,0" fill="#0284c7"/>
+        <polygon points="0,11 3.5,0 -3.5,0" fill="#cbd5e1"/>
+        <text x="0" y="-14" text-anchor="middle" font-weight="900" fill="#0284c7" font-size="9">N</text>
       </g>
     </svg>
   `;
@@ -307,34 +115,50 @@ export function InteractiveSiteMap({
   const zoneEntries = Object.entries(activeZones || {});
 
   return (
-    <svg viewBox="0 0 1200 800" className="absolute inset-0 w-full h-full bg-slate-50 select-none">
+    <svg viewBox="0 0 1200 800" className="absolute inset-0 w-full h-full select-none" style={{ backgroundColor: '#ffffff' }}>
       <defs>
-        <pattern id="cadGridMajor" width="80" height="80" patternUnits="userSpaceOnUse">
-          <path d="M 80 0 L 0 0 0 80" fill="none" stroke="rgba(100,116,139,0.18)" strokeWidth="1"/>
+        <pattern id="cadGridMajor" width="100" height="100" patternUnits="userSpaceOnUse">
+          <path d="M 100 0 L 0 0 0 100" fill="none" stroke="rgba(100,116,139,0.15)" strokeWidth="1"/>
         </pattern>
         <pattern id="cadGridMinor" width="20" height="20" patternUnits="userSpaceOnUse">
-          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(100,116,139,0.07)" strokeWidth="0.5"/>
+          <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(100,116,139,0.06)" strokeWidth="0.5"/>
         </pattern>
         <pattern id="hatchYellow" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(234,179,8,0.3)" strokeWidth="2"/>
+          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(234,179,8,0.3)" strokeWidth="2.5"/>
         </pattern>
         <pattern id="hatchRed" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(244,63,94,0.3)" strokeWidth="2"/>
+          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(244,63,94,0.3)" strokeWidth="2.5"/>
         </pattern>
         <pattern id="hatchOrange" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(249,115,22,0.3)" strokeWidth="2"/>
+          <line x1="0" y1="0" x2="16" y2="0" stroke="rgba(249,115,22,0.3)" strokeWidth="2.5"/>
         </pattern>
       </defs>
 
-      <rect width="100%" height="100%" fill="#f8fafc"/>
+      <rect width="100%" height="100%" fill="#ffffff"/>
       <rect width="100%" height="100%" fill="url(#cadGridMinor)"/>
       <rect width="100%" height="100%" fill="url(#cadGridMajor)"/>
 
-      {/* Outer Engineering CAD Dashed Perimeter */}
-      <rect x="35" y="25" width="1130" height="750" rx="8" fill="none" stroke="#94a3b8" strokeWidth="2" strokeDasharray="14,8"/>
-      <rect x="42" y="32" width="1116" height="736" rx="6" fill="none" stroke="#e2e8f0" strokeWidth="1"/>
+      {/* Structural Boundary Outer Wall */}
+      <rect x="30" y="25" width="1140" height="750" rx="8" fill="none" stroke="#475569" strokeWidth="3" strokeDasharray="14,8"/>
+      <rect x="38" y="33" width="1124" height="734" rx="6" fill="none" stroke="#e2e8f0" strokeWidth="1"/>
 
-      {/* Dynamic Zone SVG Cards */}
+      {/* Primary Road Corridors between Zone Blocks */}
+      <g fill="rgba(241,245,249,0.9)" stroke="#cbd5e1" strokeWidth="1">
+        <rect x="30" y="250" width="1140" height="50" rx="4"/>
+        <rect x="30" y="495" width="1140" height="50" rx="4"/>
+        <rect x="380" y="25" width="50" height="750" rx="4"/>
+        <rect x="765" y="25" width="50" height="750" rx="4"/>
+      </g>
+
+      {/* Center Road Dashed Striping */}
+      <g stroke="#94a3b8" strokeWidth="2" strokeDasharray="10,8" opacity="0.8">
+        <line x1="45" y1="275" x2="1155" y2="275"/>
+        <line x1="45" y1="520" x2="1155" y2="520"/>
+        <line x1="405" y1="35" x2="405" y2="765"/>
+        <line x1="790" y1="35" x2="790" y2="765"/>
+      </g>
+
+      {/* Dynamic Zone SVG Cards with Architectural Hatching & Real-time Live Counters */}
       {zoneEntries.map(([zName, bounds]: [string, any], idx: number) => {
         const bx = (bounds.x ?? (5 + (idx % 3) * 32)) * 12;
         const by = (bounds.y ?? (5 + Math.floor(idx / 3) * 30)) * 8;
@@ -344,9 +168,10 @@ export function InteractiveSiteMap({
         const isWarning = bounds.hazardLevel === 'warning';
         const isMuster = bounds.category === 'MUSTER POINT' || zName.toLowerCase().includes('muster') || zName.toLowerCase().includes('assembly');
 
-        const bgFill = isHazard ? '#fff1f2' : isWarning ? '#fff7ed' : isMuster ? '#f0fdf4' : '#f0f9ff';
-        const strokeColor = isHazard ? '#f43f5e' : isWarning ? '#f97316' : isMuster ? '#10b981' : '#0284c7';
+        const bgFill = isHazard ? '#fff1f2' : isWarning ? '#fff7ed' : isMuster ? '#f0fdf4' : '#f8fafc';
+        const strokeColor = isHazard ? '#f43f5e' : isWarning ? '#f59e0b' : isMuster ? '#10b981' : '#0284c7';
         const textColor = isHazard ? '#be123c' : isWarning ? '#c2410c' : isMuster ? '#047857' : '#0369a1';
+
         const hatchUrl = isHazard ? 'url(#hatchRed)' : isWarning ? 'url(#hatchOrange)' : 'none';
 
         const workersInThisZone = (people || []).filter(p => {
@@ -359,7 +184,7 @@ export function InteractiveSiteMap({
         return (
           <g 
             key={`dyn-zone-${zName}-${idx}`} 
-            className="cursor-pointer transition-all hover:opacity-95 group"
+            className="cursor-pointer transition-all hover:opacity-90 group"
             onClick={(e) => {
               e.stopPropagation();
               onSelectEntity?.({
@@ -377,43 +202,32 @@ export function InteractiveSiteMap({
               });
             }}
           >
-            <rect x={bx} y={by} width={bw} height={bh} rx="16" fill={bgFill} stroke={strokeColor} strokeWidth="2.5" strokeDasharray={isHazard || isWarning ? "7,5" : "none"} />
-            {hatchUrl !== 'none' && <rect x={bx} y={by} width={bw} height={bh} rx="16" fill={hatchUrl} />}
+            <rect x={bx} y={by} width={bw} height={bh} rx="12" fill={bgFill} stroke={strokeColor} strokeWidth={isHazard ? "3" : "2"} strokeDasharray={isHazard || isWarning ? "8,5" : "none"} />
+            {hatchUrl !== 'none' && <rect x={bx} y={by} width={bw} height={bh} rx="12" fill={hatchUrl} />}
 
-            {/* Zone Label */}
-            <text x={bx + bw / 2} y={by + 28} textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="13" fontWeight="900" fill={textColor} letterSpacing="0.5">
+            {/* Zone Header Banner */}
+            <rect x={bx} y={by} width={bw} height="28" rx="12" fill="rgba(255,255,255,0.95)" stroke={strokeColor} strokeWidth="1" />
+            <text x={bx + bw / 2} y={by + 18} textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="11.5" fontWeight="900" fill={textColor} letterSpacing="0.5">
               {zName.toUpperCase()}
             </text>
 
-            {/* Badge Indicator */}
-            <rect x={bx + bw / 2 - 50} y={by + bh - 32} width="100" height="20" rx="6" fill="#ffffff" stroke={strokeColor} strokeWidth="1" />
-            <text x={bx + bw / 2} y={by + bh - 18} textAnchor="middle" fontFamily="system-ui, sans-serif" fontSize="9" fontWeight="bold" fill={textColor}>
-              {isHazard ? '⚠️ HIGH HAZARD' : isMuster ? '🛡️ MUSTER POINT' : `Capacity: ${bounds.capacity || 10}`}
-            </text>
+            {/* Live Real-Time Occupancy Badge */}
+            <g transform={`translate(${bx + bw / 2 - 42}, ${by + bh - 24})`}>
+              <rect x="0" y="0" width="84" height="18" rx="6" fill="#ffffff" stroke={strokeColor} strokeWidth="1" />
+              <text x="42" y="12.5" textAnchor="middle" fontFamily="'JetBrains Mono', monospace" fontSize="8.5" fontWeight="bold" fill={textColor}>
+                {workersInThisZone.length > 0 ? `${workersInThisZone.length} Active` : 'Clear'}
+              </text>
+            </g>
           </g>
         );
       })}
 
-      {/* Axis Coordinate Bubble Markers */}
-      <g fontFamily="'JetBrains Mono', monospace" fontSize="9" fontWeight="bold" fill="#0284c7">
-        {[
-          { x: 130, label: '01' }, { x: 250, label: '02' }, { x: 380, label: '03' }, { x: 510, label: '04' },
-          { x: 640, label: '05' }, { x: 770, label: '06' }, { x: 900, label: '07' }, { x: 1010, label: '08' }, { x: 1100, label: '09' }
-        ].map(a => (
-          <g key={`axis-x-${a.label}`}>
-            <line x1={a.x} y1={32} x2={a.x} y2={768} stroke="rgba(56,189,248,0.2)" strokeDasharray="4,6" strokeWidth={0.8}/>
-            <circle cx={a.x} cy={25} r={9} fill="#ffffff" stroke="#38bdf8" strokeWidth={1.5}/>
-            <text x={a.x} y={28.5} textAnchor="middle">{a.label}</text>
-          </g>
-        ))}
-      </g>
-
-      {/* Azimuth North Arrow */}
-      <g transform="translate(1055, 645) scale(0.8)">
-        <circle cx="0" cy="0" r="18" fill="#ffffff" stroke="#007BC4" strokeWidth="1.5"/>
-        <path d="M 0 -14 L 5 0 L 0 2 L -5 0 Z" fill="#007BC4"/>
-        <path d="M 0 14 L 5 0 L 0 -2 L -5 0 Z" fill="#cbd5e1"/>
-        <text x="0" y="-19" textAnchor="middle" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#007BC4">N</text>
+      {/* Compass Rose & Azimuth Pointer */}
+      <g transform="translate(1120, 680) scale(0.85)">
+        <circle cx="0" cy="0" r="16" fill="#ffffff" stroke="#007BC4" strokeWidth="1.5"/>
+        <path d="M 0 -13 L 4 0 L 0 2 L -4 0 Z" fill="#007BC4"/>
+        <path d="M 0 13 L 4 0 L 0 -2 L -4 0 Z" fill="#cbd5e1"/>
+        <text x="0" y="-17" textAnchor="middle" fontFamily="sans-serif" fontSize="9" fontWeight="900" fill="#007BC4">N</text>
       </g>
     </svg>
   );
@@ -647,14 +461,89 @@ export default function LiveFloorMap({
     setHiddenZones(hidden);
   };
 
-  const effectiveSvgSource = svgSource || (floorplanUrl && (floorplanUrl.trim().startsWith('<svg') || floorplanUrl.startsWith('data:image/svg')) ? (floorplanUrl.startsWith('data:') ? decodeURIComponent(floorplanUrl.split(',')[1] || '') : floorplanUrl) : null);
+  // Custom Map Image Calibration State
+  const [localFloorplan, setLocalFloorplan] = useState<string | null>(null);
+  const [imageOpacity, setImageOpacity] = useState<number>(() => {
+    const saved = typeof window !== 'undefined' ? localStorage.getItem('gao_map_img_opacity') : null;
+    return saved ? Number(saved) : 1;
+  });
+  const [imageFit, setImageFit] = useState<'cover' | 'contain' | 'fill'>(() => {
+    const saved = typeof window !== 'undefined' ? (localStorage.getItem('gao_map_img_fit') as any) : null;
+    return saved || 'cover';
+  });
+  const [imageInvert, setImageInvert] = useState<boolean>(() => {
+    return typeof window !== 'undefined' ? localStorage.getItem('gao_map_img_invert') === 'true' : false;
+  });
+  const [isImageSettingsOpen, setIsImageSettingsOpen] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const activeFloorplanUrl = localFloorplan || floorplanUrl;
+
+  const effectiveSvgSource = svgSource || (activeFloorplanUrl && (activeFloorplanUrl.trim().startsWith('<svg') || activeFloorplanUrl.startsWith('data:image/svg')) ? (activeFloorplanUrl.startsWith('data:') ? decodeURIComponent(activeFloorplanUrl.split(',')[1] || '') : activeFloorplanUrl) : null);
   const isCustomFloorplan = Boolean(
-    floorplanUrl && 
-    typeof floorplanUrl === 'string' && 
-    floorplanUrl.trim().length > 5 && 
+    activeFloorplanUrl && 
+    typeof activeFloorplanUrl === 'string' && 
+    activeFloorplanUrl.trim().length > 5 && 
     !effectiveSvgSource
   );
-  const currentBlueprintUrl = isCustomFloorplan ? (floorplanUrl as string) : '';
+  const currentBlueprintUrl = isCustomFloorplan ? (activeFloorplanUrl as string) : '';
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingImage(true);
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const dataUrl = event.target?.result as string;
+      if (dataUrl) {
+        setLocalFloorplan(dataUrl);
+        try {
+          localStorage.setItem('gao_custom_floorplan', dataUrl);
+          const token = localStorage.getItem('gao_jwt_token') || 'demo';
+          await fetch(`/api/data/map_configurations/${projectId}`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${token}`
+            },
+            body: JSON.stringify({
+              id: projectId,
+              floorplanUrl: dataUrl,
+              updatedAt: new Date().toISOString()
+            })
+          });
+        } catch (err) {
+          console.warn('Failed to save map configuration to backend:', err);
+        }
+      }
+      setIsUploadingImage(false);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemoveCustomImage = async () => {
+    setLocalFloorplan(null);
+    localStorage.removeItem('gao_custom_floorplan');
+    try {
+      const token = localStorage.getItem('gao_jwt_token') || 'demo';
+      await fetch(`/api/data/map_configurations/${projectId}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          id: projectId,
+          floorplanUrl: null,
+          updatedAt: new Date().toISOString()
+        })
+      });
+    } catch (err) {
+      console.warn('Failed to clear map config:', err);
+    }
+  };
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (isDrawingGeofence) return;
@@ -731,24 +620,35 @@ export default function LiveFloorMap({
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
       onMouseLeave={handleMouseUp}
-      onWheel={handleWheel}
     >
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileUpload}
+        accept="image/png,image/jpeg,image/svg+xml,image/webp"
+        className="hidden"
+      />
+
       <div 
         ref={containerRef}
         onClick={handleBlueprintClick}
-        className="relative w-full h-full rounded-xl shadow-2xl transition-transform duration-75 ease-out border-4 border-slate-300 overflow-hidden bg-white"
+        className="relative w-full h-full rounded-xl shadow-inner transition-transform duration-75 ease-out border-2 border-slate-200 overflow-hidden bg-white"
         style={{ transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)` }}
       >
         {effectiveSvgSource ? (
           <div 
-            className="absolute inset-0 w-full h-full pointer-events-none" 
+            className="absolute inset-0 w-full h-full pointer-events-none transition-opacity duration-300" 
+            style={{ opacity: imageOpacity }}
             dangerouslySetInnerHTML={{ __html: effectiveSvgSource }}
           />
         ) : isCustomFloorplan ? (
           <img 
             src={currentBlueprintUrl} 
             alt="Site Blueprint" 
-            className="absolute inset-0 w-full h-full object-cover transition-opacity duration-500 opacity-100"
+            className={`absolute inset-0 w-full h-full transition-opacity duration-300 ${
+              imageFit === 'contain' ? 'object-contain' : imageFit === 'fill' ? 'object-fill' : 'object-cover'
+            } ${imageInvert ? 'invert hue-rotate-180 brightness-90 contrast-125' : ''}`}
+            style={{ opacity: imageOpacity }}
             loading="eager"
           />
         ) : (
@@ -898,10 +798,10 @@ export default function LiveFloorMap({
                   'bg-sky-700 text-white'
                 }`}>
                   <span className="truncate max-w-[120px]">{name}</span>
-                  <span className={`px-1 rounded font-mono text-[9px] ${
+                  <span className={`px-1.5 py-0.5 rounded font-mono text-[9px] ${
                     isHazardActive || isOverCapacity ? 'bg-black text-amber-300 font-extrabold' : 'bg-black/30 text-white'
                   }`}>
-                    {zoneWorkerCount}/{maxCapacity} {isHazardActive ? '🚨 BREACH' : isOverCapacity ? '⚠️ OVER' : ''}
+                    {zoneWorkerCount > 0 ? `${zoneWorkerCount} Active` : 'Clear'} {isHazardActive ? '🚨 BREACH' : isOverCapacity ? '⚠️ OVER' : ''}
                   </span>
                 </div>
              </div>
@@ -1394,26 +1294,26 @@ export default function LiveFloorMap({
                             'bg-emerald-500'
                           }`} />
                         </div>
-                        <span className="text-[9px] font-black text-slate-100 bg-slate-950/90 px-1.5 py-0.5 rounded-md border border-slate-800 shadow-md truncate max-w-[65px] leading-tight text-center">
+                        <span className="text-[9px] font-black text-slate-800 bg-white/95 px-1.5 py-0.5 rounded-md border border-slate-300 shadow-md truncate max-w-[65px] leading-tight text-center">
                           {(person.name || "").split(' ')[0]}
                         </span>
                       </div>
                     ) : (
                       /* Premium Horizontal Worker Card Container */
-                      <div className={`flex items-center gap-2 p-1.5 pl-2 pr-3 rounded-xl bg-slate-950/90 backdrop-blur-md border shadow-2xl transition-all duration-200 group-hover:scale-105 ${
+                      <div className={`flex items-center gap-2 p-1.5 pl-2 pr-3 rounded-xl bg-white/95 backdrop-blur-md border shadow-lg transition-all duration-200 group-hover:scale-105 ${
                         isHighlighted 
-                          ? 'ring-2 ring-sky-400 border-sky-400 bg-slate-900 shadow-sky-500/30' 
+                          ? 'ring-2 ring-sky-400 border-sky-400 bg-sky-50 shadow-sky-500/30' 
                           : isSos 
-                            ? 'ring-2 ring-rose-500 border-rose-500 bg-rose-950/90 shadow-rose-500/40 animate-pulse' 
+                            ? 'ring-2 ring-rose-500 border-rose-500 bg-rose-50 shadow-rose-500/40 animate-pulse' 
                             : isAlert 
-                              ? 'ring-2 ring-amber-500 border-amber-500 bg-slate-950/90 shadow-amber-500/30 animate-pulse' 
+                              ? 'ring-2 ring-amber-500 border-amber-500 bg-amber-50 shadow-amber-500/30 animate-pulse' 
                               : `${roleBorderColor} ${roleGlowShadow}`
                       }`}>
                         <div className="relative shrink-0">
                           <div className={`w-8 h-8 rounded-full border-2 flex items-center justify-center text-sm shadow-md transition-all ${statusRingColor}`}>
                             <span className="leading-none">{avatarEmoji}</span>
                           </div>
-                          <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-slate-950 shadow-sm ${
+                          <span className={`absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-white shadow-sm ${
                             isSos ? 'bg-rose-500 animate-pulse' :
                             isAlert ? 'bg-rose-500' :
                             isOffline ? 'bg-slate-500' :
@@ -1424,11 +1324,11 @@ export default function LiveFloorMap({
                         </div>
 
                         <div className="flex flex-col text-left min-w-[70px]">
-                          <div className="text-[10px] font-black text-white leading-tight tracking-wide truncate max-w-[90px]">
+                          <div className="text-[10px] font-black text-slate-900 leading-tight tracking-wide truncate max-w-[90px]">
                             {person.name}
                           </div>
                           <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[8px] font-bold text-slate-400 leading-none truncate max-w-[55px]">
+                            <span className="text-[8px] font-bold text-slate-500 leading-none truncate max-w-[55px]">
                               {person.role}
                             </span>
                             <span className={`text-[7px] font-extrabold px-1 py-0.5 rounded-sm uppercase tracking-wider leading-none border ${badgeBgColor}`}>
@@ -1442,15 +1342,15 @@ export default function LiveFloorMap({
                     {/* Heading pointer */}
                     {person.heading !== undefined && speedMps > 0.1 && (
                       <div 
-                        className="absolute w-3 h-3 text-sky-400 -top-2" 
+                        className="absolute w-3 h-3 text-sky-500 -top-2" 
                         style={{ transform: `rotate(${person.heading}deg) translateY(-6px)` }}
                       >
-                        <Navigation className="w-2.5 h-2.5 fill-sky-400 text-sky-400" />
+                        <Navigation className="w-2.5 h-2.5 fill-sky-500 text-sky-500" />
                       </div>
                     )}
 
                     {/* Detailed Tooltip on Hover */}
-                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-950 text-white text-[10px] font-bold p-2.5 rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap pointer-events-none z-50 border border-slate-700/80 min-w-[150px]">
+                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-[10px] font-bold p-2.5 rounded-xl shadow-2xl opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap pointer-events-none z-50 border border-slate-700/80 min-w-[150px]">
                       <div className="flex items-center justify-between gap-2 mb-1 border-b border-slate-800 pb-1">
                         <span className="text-sky-400 font-mono tracking-tight font-black">{person.id}</span>
                         <span className={`text-[8px] font-extrabold px-1.5 py-0.5 rounded uppercase border ${badgeBgColor}`}>{statusText}</span>
@@ -1471,18 +1371,14 @@ export default function LiveFloorMap({
         )}
       </div>
 
-
-
-
-
-      {/* Floating Map Zoom & Pan Action Controls Dock */}
-      <div className="absolute bottom-6 left-6 z-40 flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md p-1.5 rounded-2xl border border-slate-700/80 shadow-2xl pointer-events-auto">
+      {/* Floating Map Zoom, Pan & Custom Image Controls Dock */}
+      <div className="absolute bottom-6 left-6 z-40 flex flex-wrap items-center gap-1.5 bg-white/95 backdrop-blur-md p-1.5 rounded-2xl border border-slate-200 shadow-xl pointer-events-auto">
         <button
           onClick={(e) => {
             e.stopPropagation();
             setZoom(prev => Math.min(3, prev + 0.25));
           }}
-          className="h-8 w-8 inline-flex items-center justify-center rounded-xl bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 text-slate-200 hover:text-white transition shadow-xs"
+          className="h-8 w-8 inline-flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 hover:text-slate-900 border border-slate-200 transition shadow-2xs"
           title="Zoom In (+)"
         >
           <ZoomIn className="w-4 h-4" />
@@ -1492,7 +1388,7 @@ export default function LiveFloorMap({
             e.stopPropagation();
             setZoom(prev => Math.max(0.4, prev - 0.25));
           }}
-          className="h-8 w-8 inline-flex items-center justify-center rounded-xl bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 text-slate-200 hover:text-white transition shadow-xs"
+          className="h-8 w-8 inline-flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 hover:text-slate-900 border border-slate-200 transition shadow-2xs"
           title="Zoom Out (-)"
         >
           <ZoomOut className="w-4 h-4" />
@@ -1503,27 +1399,153 @@ export default function LiveFloorMap({
             setZoom(1);
             setOffset({ x: 0, y: 0 });
           }}
-          className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 text-slate-200 hover:text-white text-[10px] font-black font-mono transition shadow-xs"
+          className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 hover:text-slate-900 border border-slate-200 text-[10px] font-black font-mono transition shadow-2xs"
           title="Reset Zoom to 100%"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           <span>{Math.round(zoom * 100)}%</span>
         </button>
 
-        <div className="h-4 w-px bg-slate-700 mx-0.5" />
+        <div className="h-4 w-px bg-slate-200 mx-0.5" />
+
+        {/* Custom Image / Map Calibration Button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsImageSettingsOpen(!isImageSettingsOpen);
+          }}
+          className={`h-8 px-2.5 inline-flex items-center justify-center gap-1.5 rounded-xl transition shadow-2xs text-[10px] font-black uppercase tracking-wider ${
+            isImageSettingsOpen || isCustomFloorplan
+              ? 'bg-sky-600 text-white ring-2 ring-sky-300'
+              : 'bg-slate-100 hover:bg-slate-200 text-slate-700 hover:text-slate-900 border border-slate-200'
+          }`}
+          title="Configure Custom Floorplan Image, Opacity & Scaling"
+        >
+          <ImageIcon className="w-3.5 h-3.5" />
+          <span>{isCustomFloorplan ? 'Custom Map: On' : 'Map Image'}</span>
+        </button>
 
         <button
           onClick={(e) => {
             e.stopPropagation();
             setMarkerDensityMode(prev => prev === 'auto' ? 'compact' : prev === 'compact' ? 'full' : 'auto');
           }}
-          className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 active:bg-slate-600 text-slate-200 hover:text-white text-[10px] font-black uppercase tracking-wider transition shadow-xs"
+          className="h-8 px-2.5 inline-flex items-center justify-center gap-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 active:bg-slate-300 text-slate-700 hover:text-slate-900 border border-slate-200 text-[10px] font-black uppercase tracking-wider transition shadow-2xs"
           title="Toggle Marker Density (Auto / Compact Pins / Full Cards)"
         >
-          <Users className="w-3.5 h-3.5 text-sky-400" />
+          <Users className="w-3.5 h-3.5 text-sky-600" />
           <span>Density: {markerDensityMode}</span>
         </button>
       </div>
+
+      {/* Custom Floorplan Image Calibration Popover */}
+      {isImageSettingsOpen && (
+        <div 
+          className="absolute bottom-20 left-6 z-50 bg-white text-slate-900 backdrop-blur-xl p-4 rounded-3xl border border-slate-200 shadow-2xl w-80 space-y-3 pointer-events-auto animate-in fade-in slide-in-from-bottom-3 duration-200"
+          onClick={e => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between border-b border-slate-100 pb-2.5">
+            <div className="flex items-center gap-2 text-xs font-black uppercase tracking-tight text-sky-600">
+              <ImageIcon className="w-4 h-4" />
+              <span>Custom Map Calibration</span>
+            </div>
+            <button
+              onClick={() => setIsImageSettingsOpen(false)}
+              className="h-6 w-6 inline-flex items-center justify-center rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-700 transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="space-y-3 text-xs">
+            {/* Upload Button */}
+            <div className="space-y-1">
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploadingImage}
+                className="w-full py-2.5 px-3 bg-sky-600 hover:bg-sky-500 active:bg-sky-700 text-white rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition"
+              >
+                <Upload className="w-4 h-4" />
+                <span>{isUploadingImage ? 'Uploading Image...' : isCustomFloorplan ? 'Change Floorplan Image' : 'Upload Blueprint Image'}</span>
+              </button>
+              <div className="text-[10px] text-slate-400 text-center">Supports PNG, JPG, SVG, WebP CAD exports</div>
+            </div>
+
+            {isCustomFloorplan && (
+              <>
+                {/* Opacity Control Slider */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-[11px] font-bold text-slate-300">
+                    <span>Floorplan Opacity</span>
+                    <span className="font-mono text-sky-400">{Math.round(imageOpacity * 100)}%</span>
+                  </div>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="1"
+                    step="0.05"
+                    value={imageOpacity}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      setImageOpacity(val);
+                      localStorage.setItem('gao_map_img_opacity', String(val));
+                    }}
+                    className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-sky-500"
+                  />
+                </div>
+
+                {/* Image Fit Mode Selector */}
+                <div className="space-y-1">
+                  <span className="text-[11px] font-bold text-slate-300 block">Aspect Ratio Fit</span>
+                  <div className="grid grid-cols-3 gap-1">
+                    {(['cover', 'contain', 'fill'] as const).map(fit => (
+                      <button
+                        key={fit}
+                        onClick={() => {
+                          setImageFit(fit);
+                          localStorage.setItem('gao_map_img_fit', fit);
+                        }}
+                        className={`py-1.5 px-2 rounded-lg text-[10px] font-black uppercase tracking-wider transition ${
+                          imageFit === fit ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                        }`}
+                      >
+                        {fit}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Invert Colors (Dark CAD Mode) */}
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[11px] font-bold text-slate-300">Invert to Dark CAD</span>
+                  <button
+                    onClick={() => {
+                      const next = !imageInvert;
+                      setImageInvert(next);
+                      localStorage.setItem('gao_map_img_invert', String(next));
+                    }}
+                    className={`h-6 px-2.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition flex items-center gap-1.5 ${
+                      imageInvert ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'
+                    }`}
+                  >
+                    {imageInvert ? <Moon className="w-3 h-3" /> : <Sun className="w-3 h-3" />}
+                    <span>{imageInvert ? 'Dark Invert' : 'Standard'}</span>
+                  </button>
+                </div>
+
+                {/* Remove Custom Image Button */}
+                <button
+                  onClick={handleRemoveCustomImage}
+                  className="w-full py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30 rounded-xl text-[11px] font-bold transition flex items-center justify-center gap-1.5"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  <span>Revert to Architectural Vector CAD</span>
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Floating Drawing Control Bar */}
       {isDrawingGeofence && (

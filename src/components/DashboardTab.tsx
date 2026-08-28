@@ -485,8 +485,46 @@ export default function DashboardTab({
     let rawPeopleList: any[] = [];
 
     const syncCombinedPeople = () => {
-      const combined = [...rawPeopleList, ...rawRegisteredList];
-      const unique = Array.from(new Map(combined.map(p => [p.id || p.name || p.hardhatTagId, p])).values());
+      const combined = [...rawRegisteredList, ...rawPeopleList];
+      const map = new Map<string, any>();
+      const nameToKeyMap = new Map<string, string>();
+      const tagToKeyMap = new Map<string, string>();
+
+      combined.forEach(p => {
+        if (!p) return;
+        const rawId = String(p.id || p.hardhatTagId || p.tagId || '').trim();
+        const rawTag = String(p.hardhatTagId || p.tagId || p.rfidTag || (p.id?.length > 10 ? p.id : '')).trim().toUpperCase();
+        const rawName = String(p.name || '').trim().toLowerCase();
+
+        let canonicalKey = '';
+        if (rawTag && tagToKeyMap.has(rawTag)) {
+          canonicalKey = tagToKeyMap.get(rawTag)!;
+        } else if (rawName && nameToKeyMap.has(rawName)) {
+          canonicalKey = nameToKeyMap.get(rawName)!;
+        } else if (rawId && map.has(rawId)) {
+          canonicalKey = rawId;
+        } else {
+          canonicalKey = rawTag || rawId || rawName || `worker_${map.size + 1}`;
+        }
+
+        if (rawTag) tagToKeyMap.set(rawTag, canonicalKey);
+        if (rawName) nameToKeyMap.set(rawName, canonicalKey);
+
+        if (!map.has(canonicalKey)) {
+          map.set(canonicalKey, { ...p, id: canonicalKey });
+        } else {
+          const existing = map.get(canonicalKey)!;
+          map.set(canonicalKey, {
+            ...existing,
+            ...p,
+            id: canonicalKey,
+            name: (p.name && !p.name.startsWith('Tag ')) ? p.name : existing.name,
+            role: (p.role && p.role !== 'Field Personnel') ? p.role : existing.role
+          });
+        }
+      });
+
+      const unique = Array.from(map.values());
       
       let contractors = 0;
       unique.forEach(data => {
