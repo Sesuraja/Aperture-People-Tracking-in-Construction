@@ -80,64 +80,27 @@ function getTimestampMs(ts: any): number {
   return 0;
 }
 
-const DEFAULT_ALERT_RULES: AlertRule[] = [
-  {
-    id: 'RULE-EXCLUSION-01',
-    name: 'Crane Swing Radius Exclusion Breach',
-    category: 'Safety',
-    priorityThreshold: 'Critical',
-    targetZone: 'Crane Operating Zone',
-    slaMinutes: 5,
-    autoAssignOfficer: 'Marcus Vance (EHS Director)',
-    autoEscalateTier: 'Tier 3 (Site Operations VP)',
-    triggerSiren: true,
-    notifySmsEmail: true,
-    enabled: true,
-    triggerCount: 12
-  },
-  {
-    id: 'RULE-HV-02',
-    name: 'High Voltage Transformer Proximity Warning',
-    category: 'Emergency',
-    priorityThreshold: 'Critical',
-    targetZone: 'High Voltage Area',
-    slaMinutes: 3,
-    autoAssignOfficer: 'Frank Reynolds (Equipment Manager)',
+import { INDUSTRY_PRESET_PROFILES } from '../types/industryIntelligence';
+
+function getRulesForIndustry(industryId: string = 'construction'): AlertRule[] {
+  const profile = INDUSTRY_PRESET_PROFILES[industryId as keyof typeof INDUSTRY_PRESET_PROFILES] || INDUSTRY_PRESET_PROFILES.construction;
+  return profile.alertRuleTemplates.map((t, idx) => ({
+    id: t.id,
+    name: t.name,
+    category: (t.category as AlertCategory) || 'Safety',
+    priorityThreshold: t.priorityThreshold,
+    targetZone: t.targetZone,
+    slaMinutes: t.slaMinutes,
+    autoAssignOfficer: 'Operations Duty Lead',
     autoEscalateTier: 'Tier 2 (EHS Director)',
-    triggerSiren: true,
-    notifySmsEmail: true,
+    triggerSiren: Boolean(t.triggerSiren),
+    notifySmsEmail: Boolean(t.notifySmsEmail),
     enabled: true,
-    triggerCount: 4
-  },
-  {
-    id: 'RULE-PPE-03',
-    name: 'PPE Hardhat & Vest Compliance Detection',
-    category: 'Safety',
-    priorityThreshold: 'High',
-    targetZone: 'All Zones',
-    slaMinutes: 15,
-    autoAssignOfficer: 'Elena Rostova (Field Safety Lead)',
-    autoEscalateTier: 'Tier 1 (Gatehouse)',
-    triggerSiren: false,
-    notifySmsEmail: true,
-    enabled: true,
-    triggerCount: 28
-  },
-  {
-    id: 'RULE-LOITER-04',
-    name: 'Confined Shaft Dwell & Loitering Alert',
-    category: 'Worker',
-    priorityThreshold: 'Medium',
-    targetZone: 'Excavation Area',
-    slaMinutes: 30,
-    autoAssignOfficer: 'Site Operations Duty Manager',
-    autoEscalateTier: 'Tier 1 (Gatehouse)',
-    triggerSiren: false,
-    notifySmsEmail: false,
-    enabled: true,
-    triggerCount: 7
-  }
-];
+    triggerCount: 4 + idx * 3
+  }));
+}
+
+const DEFAULT_ALERT_RULES: AlertRule[] = getRulesForIndustry('construction');
 
 const DEFAULT_BROADCASTS: EmergencyBroadcast[] = [
   {
@@ -203,7 +166,8 @@ const DEFAULT_ACTIVE_ALERTS: AIAlert[] = [
 ];
 
 export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] }) {
-  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+  const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+  const activeIndustry = config?.industryId || intelligenceProfile?.industry || 'construction';
   const [activeSubTab, setActiveSubTab] = useState<'feed' | 'rules' | 'broadcast' | 'heatmap' | 'analytics'>('feed');
 
 
@@ -216,8 +180,12 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   
   // Data lists synced to DB
   const [alertList, setAlertList] = useState<AIAlert[]>([]);
-  const [ruleList, setRuleList] = useState<AlertRule[]>([]);
+  const [ruleList, setRuleList] = useState<AlertRule[]>(() => getRulesForIndustry(activeIndustry));
   const [broadcastList, setBroadcastList] = useState<EmergencyBroadcast[]>([]);
+
+  useEffect(() => {
+    setRuleList(getRulesForIndustry(config?.industryId || intelligenceProfile?.industry));
+  }, [config?.industryId, intelligenceProfile?.industry]);
   const [mongoStatus, setMongoStatus] = useState<{
     connected: boolean;
     engine?: string;

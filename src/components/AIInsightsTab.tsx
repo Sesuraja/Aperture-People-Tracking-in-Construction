@@ -221,7 +221,7 @@ const FormattedMessageText = ({ text }: { text: string }) => {
 };
 
 export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
-  const { config, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+  const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
   const { zones = [] } = useTracking();
   // MongoDB Real-time Data States
   const [mongoPeople, setMongoPeople] = useState<any[]>([]);
@@ -405,13 +405,14 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     setIsLoading(true);
     setAnalysisError(null);
     try {
-      const zones = [
-        { id: 'zone_crane', name: 'Heavy Crane Swing Radius (Exclusion Zone)' },
-        { id: 'zone_excavation', name: 'Excavation Pit & Shoring (Confined Zone)' },
-        { id: 'zone_scaffolding', name: 'Structure & Scaffolding (L3-L4)' },
-        { id: 'zone_substation', name: 'High Voltage Substation Perimeter' },
-        { id: 'zone_muster', name: 'Emergency Muster Point A' }
-      ];
+      const activeAreas = intelligenceProfile?.functionalAreas && intelligenceProfile.functionalAreas.length > 0
+        ? intelligenceProfile.functionalAreas.map(f => ({ id: f.id, name: f.name }))
+        : (zones && zones.length > 0 ? zones.map(z => ({ id: z.id, name: z.name })) : [
+            { id: 'zone_1', name: 'Primary Operational Zone' },
+            { id: 'zone_2', name: 'Monitored Facility Perimeter' }
+          ]);
+
+      const activeContext = `${intelligenceProfile?.companyName || 'Enterprise Facility'} (${intelligenceProfile?.subIndustry || config?.industryName || 'Operations'}) - Real-Time ${intelligenceProfile?.terminology?.personnelPlural || 'Personnel'} Tracking & Hardware Telemetry`;
 
       const response = await fetch('/api/analyze-rfid-results', {
         method: 'POST',
@@ -419,9 +420,9 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
         body: JSON.stringify({
           liveTags: liveTags.slice(0, 25),
           historyRecords: historyRecords.slice(0, 25),
-          zones,
+          zones: activeAreas,
           apiKeySource: 'GAO_UHF_HARDWARE_FEED',
-          context: 'High-Rise Commercial Tower Construction Site - Real-Time Worker Safety & UHF RFID Hardhat Tracking'
+          context: activeContext
         })
       });
 
@@ -438,7 +439,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [liveTags, historyRecords]);
+  }, [liveTags, historyRecords, intelligenceProfile, config, zones]);
 
   // Initial trigger on mount
   useEffect(() => {

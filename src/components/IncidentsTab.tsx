@@ -52,113 +52,68 @@ function formatIncidentTimestamp(ts: any): string {
   }
 }
 
-const DEFAULT_INCIDENTS: EnterpriseIncident[] = [
-  {
-    id: 'INC-2026-0814',
-    title: 'Exclusion Zone Proximity Breach under Active Crane Load',
-    category: 'Exclusion Zone Breach',
-    severity: 'Critical',
-    workflowStatus: 'Investigation',
-    locationZone: 'Crane Operating Zone',
-    reportedBy: 'Elena Rostova (Field Safety Lead)',
-    assignedOfficer: 'Marcus Vance (EHS Director)',
-    assignedRole: 'EHS Director',
-    reportedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-    description: 'Subcontractor steel rigger entered active slewing perimeter during pre-cast beam pick. Automatic UHF RFID barrier siren triggered within 1.2 seconds, stopping crane hoist rotation.',
-    correctiveActions: [
-      {
-        id: 'CAPA-01',
-        actionItem: 'Install secondary physical barrier netting along quadrant 3',
-        assignedTo: 'Rigging Crew Lead',
-        dueDate: new Date(Date.now() + 2 * 86400 * 1000).toISOString().split('T')[0],
-        isCompleted: false
-      },
-      {
-        id: 'CAPA-02',
-        actionItem: 'Conduct mandatory 15-minute crane exclusion zone toolbox briefing',
-        assignedTo: 'Marcus Vance (EHS Director)',
-        dueDate: new Date(Date.now() + 86400 * 1000).toISOString().split('T')[0],
-        isCompleted: true
-      }
-    ],
-    witnessStatements: [
-      {
-        id: 'WIT-01',
-        witnessName: 'David Chen',
-        witnessRole: 'Crane Operator',
-        company: 'Apex Rigging Ltd',
-        interviewedBy: 'Elena Rostova',
-        timestamp: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-        statement: 'The UHF hardhat warning sounded on my cab console right before the ground horn blew. Stopped load swing immediately.'
-      }
-    ],
-    attachments: [],
-    timeline: [
-      {
-        id: 'TL-01',
-        timestamp: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-        title: 'RFID Perimeter Alarm Triggered',
-        description: 'Hardhat Tag E200001A94 logged at 1.8m from crane counterweight axis.',
-        actor: 'GAO RFID Reader 216031A'
-      },
-      {
-        id: 'TL-02',
-        timestamp: new Date(Date.now() - 90 * 60 * 1000).toISOString(),
-        title: 'Site Safety Lead Dispatched',
-        description: 'Work paused in crane sector; initial witness statements collected.',
-        actor: 'Elena Rostova (Field Safety Lead)'
-      }
-    ],
-    aiAnalysis: {
-      aiSummary: 'High-risk near-miss involving heavy crane swing radius. Automated RFID hardware intervention prevented potential strike.',
-      probableRootCause: 'Inadequate visual perimeter markers on wet asphalt coupled with blind-spot approach.',
-      contributingFactors: ['High ambient wind', 'Blind spot behind secondary material stack'],
-      capaRecommendations: [
-        'Deploy illuminated LED strobe barrier pylons around swing quadrant',
-        'Verify RFID hardhat reader buzzer volume at 95 dB'
+import { INDUSTRY_PRESET_PROFILES } from '../types/industryIntelligence';
+
+function getIncidentsForIndustry(industryId: string = 'construction'): EnterpriseIncident[] {
+  const profile = INDUSTRY_PRESET_PROFILES[industryId as keyof typeof INDUSTRY_PRESET_PROFILES] || INDUSTRY_PRESET_PROFILES.construction;
+  const firstCat = profile.incidentCategories[0] || { category: 'Restricted Incursion', defaultSeverity: 'Critical', description: 'Monitored threshold breach.' };
+  const firstZone = profile.functionalAreas[0]?.name || 'Monitored Operational Zone';
+
+  return [
+    {
+      id: 'INC-2026-0814',
+      title: `${firstCat.category} in ${firstZone}`,
+      category: (firstCat.category as IncidentCategory) || 'Exclusion Zone Breach',
+      severity: firstCat.defaultSeverity,
+      workflowStatus: 'Investigation',
+      locationZone: firstZone,
+      reportedBy: 'Operations Safety Lead',
+      assignedOfficer: 'Marcus Vance (EHS Director)',
+      assignedRole: 'EHS Director',
+      reportedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+      description: `${firstCat.description} Automated RFID sensor gate logged threshold crossing within 1.2 seconds.`,
+      correctiveActions: [
+        {
+          id: 'CAPA-01',
+          actionItem: `Conduct review of perimeter sensor threshold at ${firstZone}`,
+          assignedTo: 'Shift Lead',
+          dueDate: new Date(Date.now() + 2 * 86400 * 1000).toISOString().split('T')[0],
+          isCompleted: false
+        }
       ],
-      severityScore: 88,
-      regulatoryImpact: 'OSHA 1926.1424 Work Area Control Compliance'
-    }
-  },
-  {
-    id: 'INC-2026-0810',
-    title: 'Near-Miss Trench Edge Shoring Slump',
-    category: 'Near Miss',
-    severity: 'High',
-    workflowStatus: 'Corrective Action',
-    locationZone: 'Excavation Area',
-    reportedBy: 'Frank Reynolds (Equipment Manager)',
-    assignedOfficer: 'Marcus Vance (EHS Director)',
-    assignedRole: 'EHS Director',
-    reportedAt: new Date(Date.now() - 24 * 3600 * 1000).toISOString(),
-    description: 'Minor earth displacement noticed along north shoring berm following heavy rainfall. No worker was inside trench at time of alert.',
-    correctiveActions: [
-      {
-        id: 'CAPA-03',
-        actionItem: 'Hydro-vacuum trench drainage and install additional hydraulic shoring jacks',
-        assignedTo: 'Civil Works Contractor',
-        dueDate: new Date(Date.now() + 3 * 86400 * 1000).toISOString().split('T')[0],
-        isCompleted: false
+      witnessStatements: [],
+      attachments: [],
+      timeline: [
+        {
+          id: 'TL-01',
+          timestamp: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
+          title: 'RFID Incursion Triggered',
+          description: `Entity transponder detected inside ${firstZone}.`,
+          actor: 'GAO RFID Gateway'
+        }
+      ],
+      aiAnalysis: {
+        aiSummary: `Operational threshold notification logged for ${firstZone}. Automated hardware intervention engaged.`,
+        probableRootCause: 'Access pathway variance.',
+        contributingFactors: ['High traffic density'],
+        capaRecommendations: ['Verify RFID sensor gateway volume at 95 dB'],
+        severityScore: 85,
+        regulatoryImpact: profile.complianceFramework || 'Enterprise Operations Compliance'
       }
-    ],
-    witnessStatements: [],
-    attachments: [],
-    timeline: [],
-    aiAnalysis: {
-      aiSummary: 'Soil saturation induced minor embankment slope degradation. Shoring inspection required before re-entry.',
-      probableRootCause: 'Overnight rainfall accumulation exceeding drainage pump capacity.',
-      contributingFactors: ['Heavy precipitation', 'Saturated clay layer'],
-      capaRecommendations: ['Inspect shoring hydraulic pressure gauges daily'],
-      severityScore: 68,
-      regulatoryImpact: 'OSHA 1926 Subpart P Excavations'
     }
-  }
-];
+  ];
+}
+
+const DEFAULT_INCIDENTS: EnterpriseIncident[] = getIncidentsForIndustry('construction');
 
 export default function IncidentsTab() {
-  const { config, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
-  const [incidents, setIncidents] = useState<EnterpriseIncident[]>([]);
+  const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+  const activeIndustry = config?.industryId || intelligenceProfile?.industry || 'construction';
+  const [incidents, setIncidents] = useState<EnterpriseIncident[]>(() => getIncidentsForIndustry(activeIndustry));
+
+  useEffect(() => {
+    setIncidents(prev => prev.length <= 1 ? getIncidentsForIndustry(config?.industryId || intelligenceProfile?.industry) : prev);
+  }, [config?.industryId, intelligenceProfile?.industry]);
 
   const [selectedIncident, setSelectedIncident] = useState<EnterpriseIncident | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);

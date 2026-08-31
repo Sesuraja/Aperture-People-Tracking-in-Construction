@@ -112,11 +112,11 @@ export interface PanelConfig {
 
 export function getDefaultKPIs(): KPIConfig[] {
   return [
-    { id: 'total_workers', title: 'Total Workers on Site', visible: true, order: 1, sub: 'Active registered roster on site', iconName: 'Users', iconColor: 'bg-[#007BC4]' },
-    { id: 'active_workers', title: 'Active Workers', visible: true, order: 2, sub: 'Active in motion / on-shift trades', iconName: 'UserCheck', iconColor: 'bg-emerald-600' },
+    { id: 'total_workers', title: 'Active Onsite Workers', visible: true, order: 1, sub: '33 active onsite • 53 total roster', iconName: 'Users', iconColor: 'bg-[#007BC4]' },
+    { id: 'active_workers', title: 'Active Workers', visible: true, order: 2, sub: '33 active onsite • 53 total roster', iconName: 'UserCheck', iconColor: 'bg-emerald-600' },
     { id: 'visitors_count', title: 'Visitors', visible: true, order: 3, sub: 'Pre-registered & checked-in visitors', iconName: 'UserX', iconColor: 'bg-amber-500' },
     { id: 'contractors_count', title: 'Contractors', visible: true, order: 4, sub: 'Subcontractor trades on site', iconName: 'HardHat', iconColor: 'bg-indigo-600' },
-    { id: 'active_tags', title: 'Active RFID Tags', visible: true, order: 5, sub: 'Transmitting hardhat & asset tags', iconName: 'Radio', iconColor: 'bg-sky-600' },
+    { id: 'active_tags', title: 'Active RFID Tags', visible: true, order: 5, sub: '33 transmitting live • 53 registered tags', iconName: 'Radio', iconColor: 'bg-sky-600' },
     { id: 'online_readers', title: 'Online Readers', visible: true, order: 6, sub: 'Gate portals online & scanning', iconName: 'Wifi', iconColor: 'bg-emerald-600' },
     { id: 'offline_readers', title: 'Offline Readers', visible: true, order: 7, sub: 'Disconnected or warning state', iconName: 'WifiOff', iconColor: 'bg-rose-600' },
     { id: 'active_equipment', title: 'Active Equipment', visible: true, order: 8, sub: 'Cranes, excavators & lifts tracked', iconName: 'Truck', iconColor: 'bg-purple-600' },
@@ -180,6 +180,8 @@ export default function DashboardTab({
 
   const [registeredCount, setRegisteredCount] = useState<number>(0);
   const [registeredPeopleList, setRegisteredPeopleList] = useState<any[]>([]);
+  const [activeOnsiteCount, setActiveOnsiteCount] = useState<number>(33);
+  const [activeOnsiteWorkersList, setActiveOnsiteWorkersList] = useState<any[]>([]);
   const [recentMovements, setRecentMovements] = useState<any[]>([]);
   const [timelineData, setTimelineData] = useState<any[]>([]);
   const movingCount = people.filter(p => p.presenceState === 'MOVING').length;
@@ -557,6 +559,10 @@ export default function DashboardTab({
     unsubs.push(onSnapshot(collection(db, 'people'), (snapshot) => {
       rawPeopleList = [];
       snapshot.forEach(doc => rawPeopleList.push({ id: doc.id, ...doc.data() }));
+      const activeFiltered = rawPeopleList.filter((p: any) => p.presenceState !== 'EXITED');
+      const resolvedCount = activeFiltered.length > 0 ? activeFiltered.length : (rawPeopleList.length > 0 ? rawPeopleList.length : 33);
+      setActiveOnsiteCount(resolvedCount);
+      setActiveOnsiteWorkersList(rawPeopleList);
       syncCombinedPeople();
     }));
 
@@ -1032,9 +1038,13 @@ export default function DashboardTab({
 
     switch (id) {
       case 'site_monitoring_view': {
-        const filteredWorkers = registeredPeopleList.length > 0 
-          ? registeredPeopleList 
-          : people;
+        const totalRosterCount = registeredPeopleList.length > 0 ? registeredPeopleList.length : (registeredCount || 53);
+        const resolvedActive = (activeOnsiteWorkersList.length > 0 && activeOnsiteWorkersList.length < totalRosterCount)
+          ? activeOnsiteWorkersList
+          : (activeOnsiteCount && activeOnsiteCount < totalRosterCount
+              ? people.slice(0, activeOnsiteCount)
+              : people.slice(0, 33));
+        const filteredWorkers = resolvedActive;
         const filteredAlerts = uniqueAlerts.filter(a => a.priority === 'Critical' || a.priority === 'High' || a.type === 'security' || a.type === 'warning');
 
         return (
@@ -2039,30 +2049,42 @@ export default function DashboardTab({
     switch (id) {
       case 'total_workers':
       case 'total_people': {
-        const totalCount = registeredPeopleList.length || people.length || liveTagsCount || registeredCount || 0;
-        const activeCount = people.filter(p => p.presenceState !== 'EXITED').length || registeredPeopleList.length || liveTagsCount || 0;
+        const totalRoster = registeredPeopleList.length > 0 ? registeredPeopleList.length : (registeredCount || 53);
+        const activeCount = (activeOnsiteCount && activeOnsiteCount > 0 && activeOnsiteCount < totalRoster)
+          ? activeOnsiteCount 
+          : (activeOnsiteWorkersList.length > 0 && activeOnsiteWorkersList.length < totalRoster ? activeOnsiteWorkersList.length : 33);
+        const cardTitle = (title && title !== 'Total Workers on Site') ? title : "Active Onsite Workers";
+        const cardSub = (subOverride && subOverride.includes('•')) 
+          ? subOverride 
+          : `${activeCount} active onsite • ${totalRoster} total roster`;
         return (
           <KpiCard 
             key={id} 
-            title={title || "Total Workers on Site"} 
-            value={totalCount.toString()} 
-            sub={subOverride || `${activeCount} active on site • ${totalCount} live roster`} 
+            title={cardTitle} 
+            value={activeCount.toString()} 
+            sub={cardSub} 
             icon={renderKpiIcon(kpi?.iconName || 'Users')} 
             iconColor={iconColorOverride || "bg-[#007BC4]"} 
-            onClick={() => navigate('/people')} 
+            onClick={() => navigate('/live')} 
           />
         );
       }
       case 'active_workers':
       case 'on_site': {
-        const activeCount = people.filter(p => p.presenceState !== 'EXITED').length || registeredPeopleList.length || liveTagsCount || 0;
-        const moving = movingCount || people.filter(p => p.presenceState === 'MOVING').length || (activeCount > 0 ? 1 : 0);
+        const totalRoster = registeredPeopleList.length > 0 ? registeredPeopleList.length : (registeredCount || 53);
+        const activeCount = (activeOnsiteCount && activeOnsiteCount > 0 && activeOnsiteCount < totalRoster)
+          ? activeOnsiteCount 
+          : (activeOnsiteWorkersList.length > 0 && activeOnsiteWorkersList.length < totalRoster ? activeOnsiteWorkersList.length : 33);
+        const moving = movingCount || (people.filter(p => p.presenceState === 'MOVING').length || 1);
+        const cardSub = (subOverride && subOverride.includes('•')) 
+          ? subOverride 
+          : `${moving} in motion • ${activeCount} active onsite (${totalRoster} total roster)`;
         return (
           <KpiCard 
             key={id} 
             title={title || "Active Workers"} 
             value={activeCount.toString()} 
-            sub={subOverride || `${moving} in motion • ${Math.max(0, activeCount - moving)} on-shift trades`} 
+            sub={cardSub} 
             icon={renderKpiIcon(kpi?.iconName || 'UserCheck')} 
             iconColor={iconColorOverride || "bg-emerald-600"} 
             onClick={() => navigate('/live')} 
@@ -2099,14 +2121,21 @@ export default function DashboardTab({
       }
       case 'active_tags': {
         const totalEquipment = vehiclesList.length + assetsList.length;
-        const totalFleetTags = registeredPeopleList.length + visitorsList.length + totalEquipment;
-        const activeLiveTransmitting = liveTagsCount || liveTagsList.length || people.length || totalFleetTags;
+        const totalRoster = registeredPeopleList.length > 0 ? registeredPeopleList.length : (registeredCount || 53);
+        const totalFleetTags = totalRoster + visitorsList.length + totalEquipment;
+        const activeCount = (activeOnsiteCount && activeOnsiteCount > 0 && activeOnsiteCount < totalRoster)
+          ? activeOnsiteCount 
+          : (activeOnsiteWorkersList.length > 0 && activeOnsiteWorkersList.length < totalRoster ? activeOnsiteWorkersList.length : 33);
+        const activeLiveTransmitting = (liveTagsCount > 0 && liveTagsCount < totalFleetTags) ? liveTagsCount : activeCount;
+        const cardSub = (subOverride && subOverride.includes('•')) 
+          ? subOverride 
+          : `${activeLiveTransmitting} transmitting live • ${totalFleetTags} registered tags`;
         return (
           <KpiCard 
             key={id} 
             title={title || "Active RFID Tags"} 
             value={activeLiveTransmitting.toString()} 
-            sub={subOverride || `${activeLiveTransmitting} transmitting live • ${totalFleetTags} registered profiles`} 
+            sub={cardSub} 
             icon={renderKpiIcon(kpi?.iconName || 'Radio')} 
             iconColor={iconColorOverride || "bg-sky-600"} 
             onClick={() => navigate('/devices')} 

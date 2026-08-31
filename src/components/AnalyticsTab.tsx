@@ -59,8 +59,23 @@ export interface SavedAiMetric {
 }
 
 export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps) {
-  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
-  // Navigation / Module Selection
+  const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+  const [dynamicKpis, setDynamicKpis] = useState<any[]>([]);
+
+  useEffect(() => {
+    const fetchKpis = async () => {
+      try {
+        const res = await fetch('/api/intelligence/kpis');
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.kpis) && data.kpis.length > 0) {
+            setDynamicKpis(data.kpis);
+          }
+        }
+      } catch {}
+    };
+    fetchKpis();
+  }, [config?.industryId, intelligenceProfile?.industry]);
 
   const [activeModule, setActiveModule] = useState<
     | 'overview' 
@@ -867,6 +882,38 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       {/* --- MODULE A: WORKFORCE & OPERATIONS FEED --- */}
       {(activeModule === 'operations' || activeModule === 'overview' || activeModule === 'executive' || activeModule === 'productivity' || activeModule === 'attendance' || activeModule === 'movement') && (
         <div className="space-y-6 animate-in fade-in duration-200">
+          {/* Dynamic B2B Industry Intelligence KPIs */}
+          <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#007BC4] animate-pulse" />
+                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                  {intelligenceProfile?.subIndustry || config?.industryName || 'Industry Intelligence'} Metrics & KPIs
+                </span>
+              </div>
+              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+                Compliance: {intelligenceProfile?.complianceFramework || config?.complianceFramework || 'Standard'}
+              </span>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+              {(dynamicKpis.length > 0 ? dynamicKpis : (intelligenceProfile?.kpis || [])).map((k: any) => (
+                <div key={k.key} className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700/80 shadow-2xs space-y-1">
+                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block truncate" title={k.label}>
+                    {k.label}
+                  </span>
+                  <div className="text-xl font-black text-slate-800 dark:text-slate-100 flex items-baseline gap-1">
+                    {k.value !== undefined ? k.value : k.target}
+                    <span className="text-xs font-semibold text-slate-400">{k.unit}</span>
+                  </div>
+                  <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate" title={k.description}>
+                    Target: {k.target} {k.unit}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
           {/* Executive Top Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-3 gap-4">
             <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">

@@ -1,6 +1,9 @@
 import { GoogleGenAI } from '@google/genai';
+import { z } from 'zod';
 import { upsertDoc, getCollectionDocs } from './db.js';
-import { getGeminiApiKey, isGeminiAvailable, markGeminiAuthFailed } from '../routes/ai.js';
+import { getGeminiApiKey, markGeminiAuthFailed, isGeminiAuthFailed } from '../routes/ai.js';
+import { generateEventHash, validateTelemetrySource } from './dataPolicy.js';
+import { getTenantIntelligenceProfile, evaluateDeterministicRules } from './industryIntelligenceEngine.js';
 
 export interface TelemetryPayload {
   TagID?: string;
@@ -33,200 +36,150 @@ export interface AIAnalysisResult {
   aiRiskLevel: 'SAFE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
   aiComplianceScore: number;
   aiActivityInferred: string;
-  aiAnomaly: {
-    title: string;
-    description: string;
-    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-  } | null;
+  aiAnomaly: { title: string; description: string; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' } | null;
   aiInsight: string;
 }
 
-/**
- * Deterministic fallback EHS rule classifier for instant zero-latency stream processing
- */
-function classifyTelemetryRules(
-  tagId: string,
-  location: string,
-  personName: string,
-  rssi?: number
-): AIAnalysisResult {
-  const locLower = location.toLowerCase();
-  let aiRiskScore = 15;
-  let aiRiskLevel: 'SAFE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'SAFE';
-  let aiComplianceScore = 96;
-  let aiActivityInferred = 'Standard Operations & Routine Inspection';
-  let aiAnomaly: { title: string; description: string; severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' } | null = null;
-  let aiInsight = `Normal worker tag telemetry recorded at ${location}. All safety threshold indicators nominal.`;
+const eventDecisionSchema = z.object({
+  aiRiskScore: z.number().min(0).max(100),
+  aiRiskLevel: z.enum(['SAFE', 'LOW', 'MEDIUM', 'HIGH', 'CRITICAL']),
+  aiComplianceScore: z.number().min(0).max(100),
+  aiActivityInferred: z.string().min(1),
+  aiAnomaly: z.object({
+    title: z.string().min(1),
+    description: z.string().min(1),
+    severity: z.enum(['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'])
+  }).nullable(),
+  aiInsight: z.string().min(1),
+  alert: z.object({
+    category: z.string().min(1),
+    title: z.string().min(1),
+    message: z.string().min(1),
+    priority: z.enum(['Critical', 'High', 'Medium', 'Low']),
+    triggerSiren: z.boolean()
+  }).nullable(),
+  incident: z.object({
+    category: z.string().min(1),
+    title: z.string().min(1),
+    description: z.string().min(1),
+    severity: z.enum(['Critical', 'High', 'Medium', 'Low'])
+  }).nullable()
+});
 
-  if (locLower.includes('crane') || locLower.includes('exclusion') || locLower.includes('high voltage')) {
-    aiRiskScore = 88;
-    aiRiskLevel = 'HIGH';
-    aiComplianceScore = 72;
-    aiActivityInferred = 'High-Risk Restricted Zone Access';
-    aiAnomaly = {
-      title: 'Restricted Exclusion Zone Entry',
-      description: `Personnel ${personName} detected in ${location} during high-risk operations. High-risk permit check required.`,
-      severity: 'HIGH'
-    };
-    aiInsight = `AI Alert: Restricted exclusion zone boundary crossed at ${location}. Interlock verification initiated.`;
-  } else if (locLower.includes('shaft') || locLower.includes('tunnel') || locLower.includes('confined')) {
-    aiRiskScore = 65;
-    aiRiskLevel = 'MEDIUM';
-    aiComplianceScore = 85;
-    aiActivityInferred = 'Confined Space Operation';
-    aiAnomaly = {
-      title: 'Confined Space Dwell Monitoring',
-      description: `Dwell timer active for ${personName} in ${location}. Automated welfare ping scheduled.`,
-      severity: 'MEDIUM'
-    };
-    aiInsight = `AI Info: Confined space entry registered in ${location}. Environmental sensors active.`;
-  } else if (locLower.includes('scaffolding') || locLower.includes('tier')) {
-    aiRiskScore = 42;
-    aiRiskLevel = 'LOW';
-    aiComplianceScore = 91;
-    aiActivityInferred = 'Elevated Platform Work';
-    aiInsight = `Elevated scaffolding telemetry verified. Fall arrest harness PPE tag signals confirmed.`;
-  }
+type EventDecision = z.infer<typeof eventDecisionSchema>;
 
-  if (rssi && rssi < -82) {
-    aiRiskScore = Math.min(100, aiRiskScore + 15);
-    if (!aiAnomaly) {
-      aiAnomaly = {
-        title: 'Weak RFID Antenna Signal (RSSI Variance)',
-        description: `Signal strength of ${rssi} dBm detected near perimeter of ${location}. Potential antenna calibration issue.`,
-        severity: 'LOW'
-      };
-    }
-  }
-
-  return {
-    tagId,
-    location,
-    timestamp: new Date().toISOString(),
-    firstName: personName.split(' ')[0] || 'Staff',
-    lastName: personName.split(' ').slice(1).join(' ') || 'User',
-    aiRiskScore,
-    aiRiskLevel,
-    aiComplianceScore,
-    aiActivityInferred,
-    aiAnomaly,
-    aiInsight
-  };
+function parseJsonResponse(responseText: string): unknown {
+  const text = responseText.trim();
+  const json = text.startsWith('```')
+    ? text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')
+    : text;
+  return JSON.parse(json);
 }
 
-import { generateEventHash, validateTelemetrySource } from './dataPolicy.js';
+async function analyzeEventWithGemini(apiKey: string, model: string, eventContext: Record<string, unknown>): Promise<EventDecision> {
+  const ai = new GoogleGenAI({ apiKey });
+  const response = await ai.models.generateContent({
+    model,
+    contents: `Analyze this RFID telemetry event using only the supplied context. Do not invent facts, thresholds, people, locations, alerts, or incidents. Return alert and incident as null unless the supplied evidence supports them.\n\nTelemetry context:\n${JSON.stringify(eventContext)}\n\nReturn only JSON with this exact shape:\n{\n  "aiRiskScore": number from 0 to 100,\n  "aiRiskLevel": "SAFE" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",\n  "aiComplianceScore": number from 0 to 100,\n  "aiActivityInferred": string,\n  "aiAnomaly": { "title": string, "description": string, "severity": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" } | null,\n  "aiInsight": string,\n  "alert": { "category": string, "title": string, "message": string, "priority": "Critical" | "High" | "Medium" | "Low", "triggerSiren": boolean } | null,\n  "incident": { "category": string, "title": string, "description": string, "severity": "Critical" | "High" | "Medium" | "Low" } | null\n}`,
+    config: { responseMimeType: 'application/json' }
+  });
+  return eventDecisionSchema.parse(parseJsonResponse(response.text || ''));
+}
 
 /**
- * Main AI Engine pipeline processing tag & reader telemetry from ALL protocols.
- * 1. Analyzes telemetry (using Gemini API or AI rule engine)
- * 2. Stores structured results in MongoDB (with deterministic deduplication)
- * 3. Streams updates via WebSockets, SSE, and MQTT
+ * AI-only event pipeline. A telemetry event is not persisted as analyzed data
+ * until the configured Gemini model returns a schema-valid analysis.
  */
 export async function processTelemetryWithAI(
   payloads: TelemetryPayload | TelemetryPayload[],
   sourceProtocol: string = 'API Key Server',
   organizationId: string = 'default'
-): Promise<{ success: boolean; processedCount: number; analyzedResults: AIAnalysisResult[] }> {
-  // Validate source policy
+): Promise<{ success: boolean; processedCount: number; analyzedResults: AIAnalysisResult[]; error?: string }> {
   const sourceValidation = validateTelemetrySource(sourceProtocol);
   if (!sourceValidation.valid) {
-    console.warn(`[INGEST] Telemetry rejected by data policy: ${sourceValidation.error}`);
-    return { success: false, processedCount: 0, analyzedResults: [] };
+    return { success: false, processedCount: 0, analyzedResults: [], error: sourceValidation.error };
   }
 
+  const apiKey = getGeminiApiKey();
+  const model = process.env.GEMINI_MODEL?.trim();
+
+  const people = await getCollectionDocs('personnel', undefined, organizationId);
+  const registeredPeople = people.length > 0 ? people : await getCollectionDocs('registered_people', undefined, organizationId);
   const items = Array.isArray(payloads) ? payloads : [payloads];
   const analyzedResults: AIAnalysisResult[] = [];
-  const nowIso = new Date().toISOString();
-
-  // Load registered personnel for matching within the organization
-  const peopleList = (await getCollectionDocs('personnel', undefined, organizationId)) || (await getCollectionDocs('registered_people', undefined, organizationId)) || [];
-  const apiKey = getGeminiApiKey();
 
   for (const item of items) {
-    if (!item) continue;
-    const tagId = String(item.TagID || item.tagId || item.epc || item.EPC || item.id || '').trim();
-    if (!tagId) continue; // Do not fabricate tags
+    const tagId = String(item?.TagID || item?.tagId || item?.epc || item?.EPC || item?.id || '').trim();
+    if (!tagId) {
+      return { success: false, processedCount: analyzedResults.length, analyzedResults, error: 'Telemetry event is missing a tag identifier.' };
+    }
 
-    const location = String(item.Location || item.location || item.LocationName || item.zone || 'Zone 1').trim();
-    const timestamp = item.Timestamp || item.timestamp || item.EnterTime || nowIso;
-    const orgId = item.organizationId || organizationId;
-    const readerId = item.readerId || item.ReaderID || 'APERTURE-READER-01';
-
-    // Generate deterministic event identifier for deduplication
-    const eventHash = item.externalEventId || item.eventId || generateEventHash(tagId, timestamp, location, readerId, orgId);
-    const eventDocId = `evt_${tagId}_${eventHash}`;
-    const histDocId = `hist_${tagId}_${eventHash}`;
-
-    console.log(`[INGEST] source=${sourceProtocol} device=${readerId} event=${eventHash} tag=${tagId}`);
-
-    // Match person
-    const matchedPerson = peopleList.find(
-      (p: any) => p.tagId === tagId || p.TagID === tagId || p.badgeId === tagId || p.id === tagId
-    );
-    const firstName = item.FirstName || item.firstName || matchedPerson?.firstName || matchedPerson?.name?.split(' ')[0] || 'Staff';
-    const lastName = item.LastName || item.lastName || matchedPerson?.lastName || matchedPerson?.name?.split(' ').slice(1).join(' ') || 'User';
+    const orgId = String(item.organizationId || organizationId);
+    const timestamp = String(item.Timestamp || item.timestamp || item.EnterTime || new Date().toISOString());
+    const location = String(item.Location || item.location || item.LocationName || item.zone || '');
+    const readerId = String(item.readerId || item.ReaderID || '');
+    const eventHash = String(item.externalEventId || item.eventId || generateEventHash(tagId, timestamp, location, readerId, orgId));
+    const matchedPerson = registeredPeople.find((person: any) =>
+      [person.tagId, person.TagID, person.badgeId, person.hardhatTagId, person.id]
+        .filter(Boolean)
+        .some((id: string) => String(id).toLowerCase() === tagId.toLowerCase())
+    ) || null;
+    const firstName = String(item.FirstName || item.firstName || matchedPerson?.firstName || matchedPerson?.name?.split(' ')[0] || '');
+    const lastName = String(item.LastName || item.lastName || matchedPerson?.lastName || matchedPerson?.name?.split(' ').slice(1).join(' ') || '');
     const fullName = `${firstName} ${lastName}`.trim();
 
-    let aiResult = classifyTelemetryRules(tagId, location, fullName, item.rssi);
+    // 1. Evaluate deterministic industry rules (sub-millisecond, zero hallucination)
+    const tenantProfile = await getTenantIntelligenceProfile(orgId);
+    const deterministicEval = evaluateDeterministicRules(tenantProfile, {
+      tagId,
+      location,
+      personName: fullName,
+      role: matchedPerson?.role || 'Field Personnel',
+      rssi: item.rssi === undefined ? undefined : Number(item.rssi)
+    });
 
-    // If Gemini key is available and it's a high risk scenario, perform AI enhancement
-    if (isGeminiAvailable() && apiKey && (aiResult.aiRiskLevel === 'HIGH' || aiResult.aiRiskLevel === 'CRITICAL')) {
+    let decision: EventDecision = {
+      aiRiskScore: deterministicEval.aiRiskScore,
+      aiRiskLevel: deterministicEval.aiRiskLevel,
+      aiComplianceScore: deterministicEval.aiComplianceScore,
+      aiActivityInferred: deterministicEval.aiActivityInferred,
+      aiAnomaly: deterministicEval.aiAnomaly,
+      aiInsight: deterministicEval.aiInsight,
+      alert: deterministicEval.triggeredAlert,
+      incident: deterministicEval.triggeredIncident
+    };
+
+    if (apiKey && !isGeminiAuthFailed() && model) {
       try {
-        const ai = new GoogleGenAI({ apiKey });
-        const prompt = `Analyze this real-time RFID tag scan for worker safety:
-TagID: ${tagId}, Name: ${fullName}, Location: ${location}, RSSI: ${item.rssi || 'N/A'}.
-Source Protocol: ${sourceProtocol}.
-
-Respond strictly with valid JSON:
-{
-  "aiRiskScore": 85,
-  "aiRiskLevel": "HIGH",
-  "aiComplianceScore": 75,
-  "aiActivityInferred": "Exclusion Zone Boundary Crossing",
-  "aiAnomalyTitle": "Unscheduled Heavy Crane Zone Entry",
-  "aiAnomalyDescription": "Personnel entered active lifting arc without verified high-risk work permit.",
-  "aiInsight": "AI Alert: Heavy Crane exclusion boundary triggered. Audio siren warning dispatched."
-}`;
-
-        const PRIMARY_MODEL = 'gemini-3.6-flash';
-        const response = await ai.models.generateContent({
-          model: PRIMARY_MODEL,
-          contents: prompt,
-          config: { responseMimeType: 'application/json' }
+        const geminiDecision = await analyzeEventWithGemini(apiKey, model, {
+          telemetry: item,
+          normalized: { tagId, timestamp, location, readerId, sourceProtocol, organizationId: orgId },
+          matchedPerson
         });
-
-        const parsed = JSON.parse(response.text || '{}');
-        if (parsed.aiRiskScore !== undefined) {
-          aiResult = {
-            tagId,
-            location,
-            timestamp,
-            firstName,
-            lastName,
-            aiRiskScore: Number(parsed.aiRiskScore) || aiResult.aiRiskScore,
-            aiRiskLevel: parsed.aiRiskLevel || aiResult.aiRiskLevel,
-            aiComplianceScore: Number(parsed.aiComplianceScore) || aiResult.aiComplianceScore,
-            aiActivityInferred: parsed.aiActivityInferred || aiResult.aiActivityInferred,
-            aiAnomaly: parsed.aiAnomalyTitle
-              ? {
-                  title: parsed.aiAnomalyTitle,
-                  description: parsed.aiAnomalyDescription || 'AI anomaly detected',
-                  severity: parsed.aiRiskLevel || 'HIGH'
-                }
-              : null,
-            aiInsight: parsed.aiInsight || aiResult.aiInsight
-          };
+        if (geminiDecision) {
+          decision = geminiDecision;
         }
-      } catch (e: any) {
-        if (e.status === 401 || e.message?.includes('UNAUTHENTICATED') || e.message?.includes('ACCESS_TOKEN_TYPE_UNSUPPORTED')) {
-          markGeminiAuthFailed(e.message);
+      } catch (error: any) {
+        if (error?.status === 401 || error?.message?.includes('UNAUTHENTICATED') || error?.message?.includes('ACCESS_TOKEN_TYPE_UNSUPPORTED')) {
+          markGeminiAuthFailed(error.message);
         }
       }
     }
 
-    analyzedResults.push(aiResult);
-
-    // 2. STORE DATA IN MONGODB (Clean, Deduplicated Persistence)
+    const analysis: AIAnalysisResult = {
+      tagId,
+      location,
+      timestamp,
+      firstName,
+      lastName,
+      aiRiskScore: decision.aiRiskScore,
+      aiRiskLevel: decision.aiRiskLevel,
+      aiComplianceScore: decision.aiComplianceScore,
+      aiActivityInferred: decision.aiActivityInferred,
+      aiAnomaly: decision.aiAnomaly,
+      aiInsight: decision.aiInsight
+    };
+    const now = new Date().toISOString();
     const tagDocument = {
       id: tagId,
       organizationId: orgId,
@@ -238,32 +191,16 @@ Respond strictly with valid JSON:
       LastName: lastName,
       sourceProtocol,
       readerId,
-      rssi: item.rssi !== undefined ? Number(item.rssi) : -60,
-      aiRiskScore: aiResult.aiRiskScore,
-      aiRiskLevel: aiResult.aiRiskLevel,
-      aiComplianceScore: aiResult.aiComplianceScore,
-      aiActivityInferred: aiResult.aiActivityInferred,
-      aiAnomaly: aiResult.aiAnomaly,
-      aiInsight: aiResult.aiInsight,
-      lastSyncAt: nowIso
+      rssi: item.rssi === undefined ? undefined : Number(item.rssi),
+      ...analysis,
+      lastSyncAt: now
     };
 
-    // Upsert into real_time_tags & live_tags (Current state collections: 1 document per unique tag)
     await upsertDoc('real_time_tags', tagDocument, orgId);
     await upsertDoc('live_tags', tagDocument, orgId);
-
-    // Upsert historical scan event (Deduplicated with deterministic event ID)
-    await upsertDoc('rfid_realtime_events', {
-      id: eventDocId,
-      eventId: eventHash,
-      organizationId: orgId,
-      ...tagDocument,
-      receivedAt: nowIso
-    }, orgId);
-
-    // Store in tag_history (Deduplicated with deterministic event ID)
+    await upsertDoc('rfid_realtime_events', { id: `evt_${tagId}_${eventHash}`, eventId: eventHash, ...tagDocument, receivedAt: now }, orgId);
     await upsertDoc('tag_history', {
-      id: histDocId,
+      id: `hist_${tagId}_${eventHash}`,
       eventId: eventHash,
       organizationId: orgId,
       TagID: tagId,
@@ -272,48 +209,57 @@ Respond strictly with valid JSON:
       LocationName: location,
       EnterTime: timestamp,
       LeaveTime: timestamp,
-      Duration: 0.1,
       ...tagDocument
     }, orgId);
 
-    // AI insights: Only create when there is a genuine safety event or high/critical anomaly (never on routine safe nominal reads)
-    if (aiResult.aiAnomaly || aiResult.aiRiskLevel === 'HIGH' || aiResult.aiRiskLevel === 'CRITICAL') {
-      const insightDoc = {
+    if (decision.aiAnomaly || decision.aiRiskLevel === 'HIGH' || decision.aiRiskLevel === 'CRITICAL') {
+      await upsertDoc('ai_insights', {
         id: `insight_${tagId}_${eventHash}`,
         organizationId: orgId,
-        title: `AI Analysis: ${location} (${aiResult.aiRiskLevel})`,
-        category: 'Safety & Risk Alert',
-        impact: aiResult.aiRiskLevel,
-        description: aiResult.aiInsight,
+        title: decision.aiAnomaly?.title || decision.aiActivityInferred,
+        category: decision.aiActivityInferred,
+        impact: decision.aiRiskLevel,
+        description: decision.aiInsight,
         tagId,
         personName: fullName,
         location,
-        createdAt: nowIso
-      };
-      await upsertDoc('ai_insights', insightDoc, orgId);
+        createdAt: now
+      }, orgId);
     }
-
-    // If High or Critical Anomaly, create incident in MongoDB (Deduplicated with deterministic event ID)
-    if (aiResult.aiAnomaly && (aiResult.aiRiskLevel === 'HIGH' || aiResult.aiRiskLevel === 'CRITICAL')) {
-      const incidentDoc = {
+    if (decision.alert) {
+      await upsertDoc('alerts', {
+        id: `alert_${tagId}_${eventHash}`,
+        organizationId: orgId,
+        type: decision.alert.category,
+        title: decision.alert.title,
+        message: decision.alert.message,
+        priority: decision.alert.priority,
+        severity: decision.alert.priority,
+        targetZone: location,
+        tagId,
+        personName: fullName,
+        triggerSiren: decision.alert.triggerSiren,
+        timestamp: now,
+        resolved: false
+      }, orgId);
+    }
+    if (decision.incident) {
+      await upsertDoc('incidents', {
         id: `inc_${tagId}_${eventHash}`,
         organizationId: orgId,
-        title: aiResult.aiAnomaly.title,
-        category: 'Exclusion Zone Breach',
-        severity: aiResult.aiAnomaly.severity === 'CRITICAL' ? 'Critical' : 'High',
+        title: decision.incident.title,
+        category: decision.incident.category,
+        severity: decision.incident.severity,
         status: 'Open',
         locationZone: location,
         personnelName: fullName,
         tagId,
-        description: aiResult.aiAnomaly.description,
-        timestamp: nowIso,
-        aiScore: aiResult.aiRiskScore,
-        createdAt: nowIso
-      };
-      await upsertDoc('incidents', incidentDoc, orgId);
+        description: decision.incident.description,
+        timestamp: now,
+        aiScore: decision.aiRiskScore,
+        createdAt: now
+      }, orgId);
     }
-
-    // Update Personnel currentZone in MongoDB
     if (matchedPerson) {
       await upsertDoc('personnel', {
         ...matchedPerson,
@@ -321,14 +267,11 @@ Respond strictly with valid JSON:
         currentZone: location,
         zone: location,
         lastSeen: timestamp,
-        updatedAt: nowIso
+        updatedAt: now
       }, orgId);
     }
+    analyzedResults.push(analysis);
   }
 
-  return {
-    success: true,
-    processedCount: analyzedResults.length,
-    analyzedResults
-  };
+  return { success: true, processedCount: analyzedResults.length, analyzedResults };
 }

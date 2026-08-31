@@ -7,6 +7,11 @@ import {
 } from '../lib/trackingLayers';
 import { ZoneBounds } from '../components/MapEditorModal';
 import { IndustryConfig, IndustryTerminology, INDUSTRY_PRESETS } from '../constants/industryPresets';
+import { 
+  IndustryIntelligenceProfile, 
+  INDUSTRY_PRESET_PROFILES, 
+  IndustryType 
+} from '../types/industryIntelligence';
 import { safeStorage } from '../lib/safeStorage';
 
 export interface MapZoneDefinition {
@@ -63,6 +68,10 @@ export interface TrackingContextType {
   setIndustryConfig: React.Dispatch<React.SetStateAction<IndustryConfig>>;
   updateIndustryConfig: (cfg: Partial<IndustryConfig>) => Promise<void>;
   applyIndustryPreset: (presetId: string) => Promise<void>;
+  intelligenceProfile: IndustryIntelligenceProfile;
+  setIntelligenceProfile: React.Dispatch<React.SetStateAction<IndustryIntelligenceProfile>>;
+  updateIntelligenceProfile: (profile: Partial<IndustryIntelligenceProfile>) => Promise<void>;
+  applyIntelligencePreset: (industry: IndustryType) => Promise<void>;
   t: (key: keyof IndustryTerminology | string, fallback?: string) => string;
   customRoles: string[];
   saveRoles: (roles: string[]) => Promise<void>;
@@ -127,6 +136,21 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {}
     return INDUSTRY_PRESETS.construction;
+  });
+
+  const [intelligenceProfile, setIntelligenceProfile] = useState<IndustryIntelligenceProfile>(() => {
+    try {
+      const saved = localStorage.getItem('gao_intelligence_profile');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.industry) return parsed;
+      }
+    } catch {}
+    const preset = INDUSTRY_PRESET_PROFILES[industryConfig.industryId as IndustryType] || INDUSTRY_PRESET_PROFILES.construction;
+    return {
+      ...preset,
+      tenantId: 'default'
+    };
   });
 
   const [customRoles, setCustomRoles] = useState<string[]>(() => {
@@ -214,6 +238,67 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       } catch {}
     };
     fetchIndustrySettings();
+  }, []);
+
+  // Fetch B2B Industry Intelligence Profile on Mount
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const res = await fetch('/api/intelligence/profile', { headers: getAuthHeaders() });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.profile) {
+            setIntelligenceProfile(data.profile);
+            safeStorage.setItem('gao_intelligence_profile', JSON.stringify(data.profile));
+          }
+        }
+      } catch {}
+    };
+    fetchProfile();
+  }, []);
+
+  // Dynamic Industry Intelligence Engine Profile Handlers
+  const updateIntelligenceProfile = useCallback(async (profileUpdate: Partial<IndustryIntelligenceProfile>) => {
+    setIntelligenceProfile(prev => {
+      const next: IndustryIntelligenceProfile = {
+        ...prev,
+        ...profileUpdate,
+        updatedAt: new Date().toISOString()
+      };
+      safeStorage.setItem('gao_intelligence_profile', JSON.stringify(next));
+      return next;
+    });
+
+    try {
+      await fetch('/api/intelligence/profile', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(profileUpdate)
+      });
+    } catch (e) {
+      console.warn('[TrackingContext] Failed to persist intelligence profile to backend:', e);
+    }
+  }, []);
+
+  const applyIntelligencePreset = useCallback(async (industry: IndustryType) => {
+    const preset = INDUSTRY_PRESET_PROFILES[industry] || INDUSTRY_PRESET_PROFILES.construction;
+    const fullProfile: IndustryIntelligenceProfile = {
+      ...preset,
+      tenantId: 'default',
+      updatedAt: new Date().toISOString()
+    };
+    setIntelligenceProfile(fullProfile);
+    safeStorage.setItem('gao_intelligence_profile', JSON.stringify(fullProfile));
+
+    try {
+      await fetch('/api/intelligence/profile', {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify(fullProfile)
+      });
+    } catch (e) {
+      console.warn('[TrackingContext] Failed to apply intelligence preset:', e);
+    }
   }, []);
 
   // Terminology helper: t('personnelSingular') -> returns e.g. "Nurse", "Miner", "Worker"
@@ -1216,6 +1301,10 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         setIndustryConfig,
         updateIndustryConfig,
         applyIndustryPreset,
+        intelligenceProfile,
+        setIntelligenceProfile,
+        updateIntelligenceProfile,
+        applyIntelligencePreset,
         t,
         customRoles,
         saveRoles,
@@ -1256,11 +1345,26 @@ export function useTracking() {
 }
 
 export function useTerminology() {
-  const { industryConfig, t, updateIndustryConfig, applyIndustryPreset, customRoles, saveRoles, customSubcontractors, saveSubcontractors } = useTracking();
+  const { 
+    industryConfig, 
+    intelligenceProfile, 
+    updateIntelligenceProfile, 
+    applyIntelligencePreset, 
+    t, 
+    updateIndustryConfig, 
+    applyIndustryPreset, 
+    customRoles, 
+    saveRoles, 
+    customSubcontractors, 
+    saveSubcontractors 
+  } = useTracking();
   return {
     ...industryConfig.terminology,
     t,
     config: industryConfig,
+    intelligenceProfile,
+    updateIntelligenceProfile,
+    applyIntelligencePreset,
     roles: customRoles,
     saveRoles,
     subcontractors: customSubcontractors,

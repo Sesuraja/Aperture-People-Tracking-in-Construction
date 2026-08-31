@@ -9,7 +9,7 @@
     "preview": "vite preview",
     "start": "node dist/server.cjs",
     "clean": "rm -rf dist build server.js",
-    "test": "vitest run",
+    "test": "vitest run --fileParallelism=false",
     "lint": "tsc --noEmit && eslint ."
   },
   "dependencies": {

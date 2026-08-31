@@ -6,6 +6,14 @@ import { getDocById, upsertDoc } from '../services/db.js';
 import { broadcastWebSocketEvent } from '../services/websocket.js';
 import { broadcastSseEvent } from '../services/sse.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
+import { 
+  INDUSTRY_PRESET_PROFILES 
+} from '../../types/industryIntelligence.js';
+import { 
+  getTenantIntelligenceProfile, 
+  saveTenantIntelligenceProfile, 
+  calculateIndustryKpis 
+} from '../services/industryIntelligenceEngine.js';
 
 let activeIndustryPersona = 'You are an intelligent Industrial IoT Safety & Personnel Telemetry AI Director.';
 let activeComplianceStandard = 'Enterprise Safety & Compliance Standards (OSHA / ISO 45001 / JCAHO)';
@@ -13,12 +21,12 @@ let activeIndustryTitle = 'Aperture People Tracking';
 
 export async function resolveIndustryContext(orgId: string = 'default') {
   try {
-    const doc = await getDocById('settings', 'industry_config', orgId) || await getDocById('settings', 'industry_config', 'ALL');
-    if (doc) {
-      if (doc.aiPersonaPrompt) activeIndustryPersona = doc.aiPersonaPrompt;
-      if (doc.complianceFramework) activeComplianceStandard = doc.complianceFramework;
-      if (doc.appTitle) activeIndustryTitle = doc.appTitle;
-      return doc;
+    const profile = await getTenantIntelligenceProfile(orgId);
+    if (profile) {
+      activeIndustryPersona = profile.aiPersonaPrompt;
+      activeComplianceStandard = profile.complianceFramework;
+      activeIndustryTitle = profile.companyName || profile.terminology.siteLabel;
+      return profile;
     }
   } catch {}
   return null;
@@ -59,25 +67,80 @@ async function generateContentWithFallback(ai: any, params: {
 }
 
 // Keyword & Context-Matched intelligent fallback response for Copilot
-function getFallbackCopilotResponse(question: string, context?: any): { answer: string; suggestedActions: string[] } {
+function getFallbackCopilotResponse(question: string, context?: any, profile?: any): { answer: string; suggestedActions: string[] } {
   const workers = context?.workers || context?.people || context?.registeredPeople;
   const totalWorkers = Array.isArray(workers) ? workers.length : 0;
+  const company = profile?.companyName || profile?.facilityName || 'Enterprise Operations';
+  const pLabel = profile?.terminology?.personnelPlural?.toLowerCase() || 'personnel';
 
   const answer = totalWorkers > 0
-    ? `Aperture Construction Safety AI Copilot is active. Tracking ${totalWorkers} verified worker record(s) on-site. Telemetry streams and MongoDB audit logging are live.`
-    : 'Aperture Construction Safety AI Copilot is active. Live personnel tracking and UHF RFID hardware readers are fully operational across all facility zones.';
+    ? `${company} Industry Intelligence AI Copilot is active. Tracking ${totalWorkers} verified ${pLabel} record(s) on-site. Telemetry streams and audit logging are live.`
+    : `${company} Industry Intelligence AI Copilot is active. Real-time telemetry tracking and RFID hardware readers are fully operational across all facility zones.`;
 
   return {
     answer,
     suggestedActions: [
-      "Open Live Site Map",
-      "Audit Active Readers",
+      "Open Spatial Map",
+      "Audit Active Gateways",
       "Review Alert Center"
     ]
   };
 }
 
 export const aiRouter = Router();
+
+// GET /api/intelligence/presets
+aiRouter.get(['/intelligence/presets', '/api/intelligence/presets'], (req: Request, res: Response) => {
+  return res.json({
+    success: true,
+    presets: INDUSTRY_PRESET_PROFILES
+  });
+});
+
+// GET /api/intelligence/profile
+aiRouter.get(['/intelligence/profile', '/api/intelligence/profile'], async (req: Request, res: Response) => {
+  const orgId = (req as any).user?.organizationId || (req.query.organizationId as string) || 'default';
+  try {
+    const profile = await getTenantIntelligenceProfile(orgId);
+    return res.json({
+      success: true,
+      profile
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/intelligence/profile
+aiRouter.post(['/intelligence/profile', '/api/intelligence/profile'], requireAuth, async (req: Request, res: Response) => {
+  const orgId = (req as any).user?.organizationId || req.body?.tenantId || 'default';
+  try {
+    const saved = await saveTenantIntelligenceProfile(req.body, orgId);
+    return res.json({
+      success: true,
+      message: 'Industry intelligence profile updated successfully',
+      profile: saved
+    });
+  } catch (err: any) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/intelligence/kpis
+aiRouter.get(['/intelligence/kpis', '/api/intelligence/kpis'], async (req: Request, res: Response) => {
+  const orgId = (req as any).user?.organizationId || (req.query.organizationId as string) || 'default';
+  try {
+    const profile = await getTenantIntelligenceProfile(orgId);
+    const kpis = await calculateIndustryKpis(profile, orgId);
+    return res.json({
+      success: true,
+      industry: profile.industry,
+      kpis
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 let runtimeGeminiKey: string | null = null;
 let geminiAuthDisabled = false;
@@ -206,11 +269,11 @@ function getDynamicIndustryAnalysis(cfg: any, combinedScans: any[], zones: any[]
     ] : [],
     optimizations: [
       {
-        category: 'Worker Safety',
-        title: 'Exclusion Zone Proximity Monitoring',
+        category: `${safeLabel}`,
+        title: `${zLabel} Proximity & Flow Optimization`,
         impact: 'HIGH',
-        description: 'Automated audible beacon alerts when personnel enter heavy machinery radius.',
-        actionableSteps: '1. Calibrate UHF reader gateways\n2. Verify worker hardhat tag assignments'
+        description: `Automated audible alert notifications when ${pPlural.toLowerCase()} enter monitored perimeters.`,
+        actionableSteps: `1. Calibrate hardware reader gateways\n2. Verify ${idLabel} badge assignments`
       }
     ],
     personnelEfficiency: combinedScans.slice(0, 4).map((s: any) => ({
@@ -222,10 +285,10 @@ function getDynamicIndustryAnalysis(cfg: any, combinedScans: any[], zones: any[]
     })),
     riskForecasts: [
       {
-        zone: 'Structure Work Area',
+        zone: zones?.[0]?.name || `${zLabel} 1`,
         riskScore: 35,
         trend: 'Stable',
-        mainFactor: 'Standard structural framing and active personnel flow'
+        mainFactor: `Standard operations and active ${pPlural.toLowerCase()} movement`
       }
     ],
     recommendations: [
@@ -259,7 +322,7 @@ aiRouter.post(['/analyze-rfid-results', '/ai/analyze-telemetry', '/ai/generate-i
   const industryDoc = await resolveIndustryContext(orgId);
   const personaPrompt = industryDoc?.aiPersonaPrompt || activeIndustryPersona;
   const std = industryDoc?.complianceFramework || activeComplianceStandard;
-  const indName = industryDoc?.industryName || 'Multi-Facility';
+  const indName = (industryDoc as any)?.subIndustry || (industryDoc as any)?.industryName || (industryDoc as any)?.industry || 'Multi-Facility';
   const pPlural = industryDoc?.terminology?.personnelPlural || 'Personnel';
 
   if (!apiKey || isGeminiAuthFailed()) {
@@ -273,7 +336,7 @@ aiRouter.post(['/analyze-rfid-results', '/ai/analyze-telemetry', '/ai/generate-i
 
 Industry Context: ${indName}
 Compliance Regulatory Standard: ${std}
-Facility / Site Context: ${context || industryDoc?.primarySiteName || 'Main Operating Site'}
+Facility / Site Context: ${context || (industryDoc as any)?.facilityName || (industryDoc as any)?.primarySiteName || 'Main Operating Site'}
 Total Active Ingested Tags: ${combinedScans.length}
 Monitored Zones: ${safeZones.map((z: any) => z?.name || z?.id || 'Zone').join(', ')}
 
@@ -390,10 +453,12 @@ aiRouter.post('/ai-copilot', aiRateLimiter, async (req: Request, res: Response) 
   }
 
   const { question, history, context } = parseResult.data;
+  const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
+  const tenantProfile = await getTenantIntelligenceProfile(orgId);
   const apiKey = getGeminiApiKey();
 
   if (!apiKey || isGeminiAuthFailed()) {
-    return res.json(getFallbackCopilotResponse(question, context));
+    return res.json(getFallbackCopilotResponse(question, context, tenantProfile));
   }
 
   try {
@@ -404,8 +469,9 @@ aiRouter.post('/ai-copilot', aiRateLimiter, async (req: Request, res: Response) 
       ? history.map(h => `${h.role === 'user' ? 'User' : 'Copilot'}: ${h.text}`).join('\n')
       : 'No prior history.';
 
-    const systemPrompt = `You are an expert EHS (Environmental Health & Safety) AI Copilot for the Aperture Construction People Tracking System connected live to MongoDB Atlas.
-Your job is to answer the user's questions with 100% accuracy based on the ingested MongoDB telemetry and worker roster.
+    const systemPrompt = `${tenantProfile.aiPersonaPrompt}
+You are an expert Industry Intelligence AI Copilot for ${tenantProfile.companyName || 'Enterprise Operations'} (${tenantProfile.industry} - ${tenantProfile.subIndustry}) adhering to ${tenantProfile.complianceFramework}.
+Your job is to answer the user's questions with 100% accuracy based on the ingested MongoDB telemetry and ${tenantProfile.terminology.personnelPlural.toLowerCase()} roster.
 
 Ingested MongoDB Telemetry & System Context:
 ${JSON.stringify(context || {}, null, 2)}
@@ -416,18 +482,18 @@ ${historyText}
 User Question: "${question}"
 
 MANDATORY RESPONSE RULES:
-1. If the user asks for the Tag ID of a worker (e.g., "What is the tag ID of Marcus Vance?"), inspect context.workers and output:
-   - Worker Name
-   - UHF RFID Tag ID (\`tagId\` or \`id\`)
-   - Assigned Trade / Role
-   - Current Zone Location
-2. If the user asks what a worker is doing (e.g., "What is Marcus Vance doing?"), describe their current activity, trade duties, zone location, dwell time, and motion state (MOVING/IDLE).
-3. If the user asks about the database (e.g., "MongoDB status", "database records"), report the connection status, database name (Lat-Aperture-People-Tracking), total records, and active collections (registered_people, hardware_readers, attendance_logs, incidents, ai_insights).
-4. If asked about general workers or headcount, summarize active workers, trade distribution, and zone occupancy.
+1. If the user asks for the Tag ID of an entity (e.g., "What is the tag ID of Marcus Vance?"), inspect context.workers/people and output:
+   - Name
+   - ${tenantProfile.terminology.idBadgeLabel} (\`tagId\` or \`id\`)
+   - Assigned ${tenantProfile.terminology.roleLabel}
+   - Current ${tenantProfile.terminology.zoneLabel}
+2. If the user asks what a person/asset is doing, describe their current activity, role duties, zone location, dwell time, and motion state (MOVING/IDLE).
+3. If the user asks about the database (e.g., "MongoDB status", "database records"), report the connection status, database name (Lat-Aperture-People-Tracking), total records, and active collections.
+4. If asked about general headcount, summarize active ${tenantProfile.terminology.personnelPlural.toLowerCase()}, role distribution, and zone occupancy.
 
 Respond strictly with a JSON object:
 {
-  "answer": "Clear markdown response addressing the exact question with worker telemetry data and emojis.",
+  "answer": "Clear markdown response addressing the exact question with telemetry data and emojis.",
   "suggestedActions": ["Action 1", "Action 2", "Action 3"]
 }`;
 
@@ -462,7 +528,7 @@ aiRouter.post(['/analyze-incident', '/ai/incident-rca'], aiRateLimiter, async (r
 
   // Resolve active dynamic industry configuration from MongoDB
   const industryDoc = await resolveIndustryContext(orgId);
-  const indName = industryDoc?.industryName || 'Industrial Operations';
+  const indName = (industryDoc as any)?.subIndustry || (industryDoc as any)?.industryName || (industryDoc as any)?.industry || 'Industrial Operations';
   const std = industryDoc?.complianceFramework || activeComplianceStandard;
 
   if (!apiKey || isGeminiAuthFailed()) {
@@ -545,7 +611,7 @@ aiRouter.post('/ai/audit-evaluation', aiRateLimiter, async (req: Request, res: R
   const apiKey = getGeminiApiKey();
 
   const industryDoc = await resolveIndustryContext(orgId);
-  const indName = industryDoc?.industryName || 'Enterprise Operations';
+  const indName = (industryDoc as any)?.subIndustry || (industryDoc as any)?.industryName || (industryDoc as any)?.industry || 'Enterprise Operations';
   const std = industryDoc?.complianceFramework || frameworkTitle || activeComplianceStandard;
 
   if (!apiKey || isGeminiAuthFailed()) {
@@ -614,7 +680,7 @@ aiRouter.post(['/bi-synthesis', '/ai/bi-synthesis'], aiRateLimiter, async (req: 
   const apiKey = getGeminiApiKey();
 
   const industryDoc = await resolveIndustryContext(orgId);
-  const indName = industryDoc?.industryName || 'Industrial Operations';
+  const indName = (industryDoc as any)?.subIndustry || (industryDoc as any)?.industryName || (industryDoc as any)?.industry || 'Industrial Operations';
   const std = industryDoc?.complianceFramework || activeComplianceStandard;
   const pPlural = industryDoc?.terminology?.personnelPlural || 'Personnel';
 
