@@ -68,8 +68,8 @@ function getIncidentsForIndustry(industryId: string = 'construction'): Enterpris
       workflowStatus: 'Investigation',
       locationZone: firstZone,
       reportedBy: 'Operations Safety Lead',
-      assignedOfficer: 'Marcus Vance (EHS Director)',
-      assignedRole: 'EHS Director',
+      assignedOfficer: 'Operations Duty Lead',
+      assignedRole: 'Safety Lead',
       reportedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
       description: `${firstCat.description} Automated RFID sensor gate logged threshold crossing within 1.2 seconds.`,
       correctiveActions: [
@@ -104,7 +104,7 @@ function getIncidentsForIndustry(industryId: string = 'construction'): Enterpris
   ];
 }
 
-const DEFAULT_INCIDENTS: EnterpriseIncident[] = getIncidentsForIndustry('construction');
+const DEFAULT_INCIDENTS: EnterpriseIncident[] = [];
 
 export default function IncidentsTab() {
   const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
@@ -164,9 +164,9 @@ export default function IncidentsTab() {
     title: '',
     category: 'Near Miss',
     severity: 'High',
-    locationZone: 'Main Gate 1',
+    locationZone: 'Main Access Portal',
     reportedBy: 'Field Safety Officer',
-    assignedOfficer: 'Marcus Vance (EHS Director)',
+    assignedOfficer: 'Operations Duty Lead',
     equipmentInvolved: '',
     hazardClass: '',
     injuredPersonnelCount: 0,
@@ -178,8 +178,8 @@ export default function IncidentsTab() {
   const [newWitness, setNewWitness] = useState({
     witnessName: '',
     witnessRole: '',
-    company: 'BuildCorp Partner',
-    interviewedBy: 'Marcus Vance',
+    company: organizationType || 'Operations Partner',
+    interviewedBy: 'Safety Lead',
     statement: ''
   });
 
@@ -221,9 +221,9 @@ export default function IncidentsTab() {
     category: d.category || 'Near Miss',
     severity: d.severity || 'Medium',
     workflowStatus: d.workflowStatus || 'Open',
-    locationZone: d.locationZone || 'Excavation Pit',
+    locationZone: d.locationZone || siteLabel || 'Operational Zone',
     reportedBy: d.reportedBy || 'Safety Officer',
-    assignedOfficer: d.assignedOfficer || 'Marcus Vance (EHS Director)',
+    assignedOfficer: d.assignedOfficer || 'Operations Duty Lead',
     reportedAt: d.reportedAt || new Date().toISOString(),
     description: d.description || '',
     correctiveActions: Array.isArray(d.correctiveActions) ? d.correctiveActions : [],
@@ -247,9 +247,9 @@ export default function IncidentsTab() {
 
     const updateCombined = () => {
       const map = new Map<string, EnterpriseIncident>();
-      // Add MongoDB incidents or fallback default incidents
+      // Add MongoDB incidents
       const baseDocs = [...enterpriseDocs, ...standardDocs];
-      const sourceDocs = baseDocs.length > 0 ? baseDocs : DEFAULT_INCIDENTS;
+      const sourceDocs = baseDocs;
 
       sourceDocs.forEach(inc => map.set(inc.id, inc));
       
@@ -409,9 +409,9 @@ export default function IncidentsTab() {
         title: '',
         category: 'Near Miss',
         severity: 'High',
-        locationZone: 'Main Gate 1',
+        locationZone: 'Main Access Portal',
         reportedBy: 'Field Safety Officer',
-        assignedOfficer: 'Marcus Vance (EHS Director)',
+        assignedOfficer: 'Operations Duty Lead',
         equipmentInvolved: '',
         hazardClass: '',
         injuredPersonnelCount: 0,
@@ -742,7 +742,7 @@ export default function IncidentsTab() {
       });
 
       setIsAddWitnessOpen(false);
-      setNewWitness({ witnessName: '', witnessRole: '', company: 'BuildCorp Partner', interviewedBy: 'Marcus Vance', statement: '' });
+      setNewWitness({ witnessName: '', witnessRole: '', company: organizationType || 'Operations Partner', interviewedBy: 'Safety Lead', statement: '' });
       setNotification({ type: 'success', text: 'Witness statement recorded in MongoDB.' });
     } catch (err) {
       console.error('Error adding witness statement:', err);
@@ -960,7 +960,7 @@ export default function IncidentsTab() {
   };
 
   return (
-    <div className="w-full flex flex-col p-4 md:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="w-full flex flex-col p-4 sm:p-6 max-w-[1760px] mx-auto space-y-6 min-w-0">
       
       {/* Top Header Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

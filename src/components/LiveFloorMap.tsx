@@ -792,7 +792,7 @@ export default function LiveFloorMap({
            }).length;
 
            const hasWorkerOverlap = zoneWorkerCount > 0;
-           const maxCapacity = zoneCapacities[name] || bounds.maxCapacity || (isHazard ? 4 : 10);
+           const maxCapacity = zoneCapacities[name] || bounds.capacity || bounds.maxCapacity || (isHazard ? 4 : 10);
            const isOverCapacity = zoneWorkerCount > maxCapacity;
            const isHazardActive = (isHazard || isWarning) && hasWorkerOverlap;
 

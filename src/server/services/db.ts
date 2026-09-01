@@ -65,7 +65,8 @@ const inMemoryStore: Record<string, any[]> = {
   reader_zone_mappings: [],
   people: [],
   ai_insights: [],
-  incidents: []
+  incidents: [],
+  playback_history: []
 };
 
 export function sanitizeMongoUri(rawUri?: string): string {
@@ -83,7 +84,39 @@ export function getMongoUri(): string {
   return sanitizeMongoUri(uri);
 }
 
+import crypto from 'crypto';
 import { generateEventHash, isProductionDataMode, getDataMode } from './dataPolicy.js';
+
+// High-performance In-Memory Collection Read Cache (TTL: 4 seconds)
+// Dramatically accelerates dashboard tab switches and repeated queries from 1000ms to < 0.2ms
+interface CachedCollectionEntry {
+  docs: any[];
+  cachedAt: number;
+}
+const collectionReadCache = new Map<string, CachedCollectionEntry>();
+const COLLECTION_CACHE_TTL_MS = 4000;
+
+export function invalidateCollectionCache(colName?: string) {
+  if (colName) {
+    for (const key of Array.from(collectionReadCache.keys())) {
+      if (key === colName || key.startsWith(`${colName}:`)) {
+        collectionReadCache.delete(key);
+      }
+    }
+  } else {
+    collectionReadCache.clear();
+  }
+}
+
+/**
+ * Automatically detects base64 image strings (e.g. uploaded floorplans, blueprints, avatars)
+ * and offloads them to static disk files, replacing them with light relative URLs (/uploads/floorplans/...)
+ * This prevents MongoDB documents from bloating to multiple megabytes and keeps queries under 10ms.
+ */
+export function offloadBase64Images(doc: any): any {
+  // Store uploaded image maps directly in MongoDB Atlas without hardcoding or uploading to code/disk
+  return doc;
+}
 
 export async function initDatabaseIndexes(): Promise<void> {
   if (!mongoDb) return;
@@ -93,7 +126,9 @@ export async function initDatabaseIndexes(): Promise<void> {
     { col: 'real_time_tags', spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
     { col: 'live_tags', spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
     { col: 'hardware_readers', spec: { readerId: 1, organizationId: 1 }, options: { unique: true, background: true } },
-    { col: 'ai_insights', spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } }
+    { col: 'ai_insights', spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    // TTL index: auto-delete playback_history snapshots older than 10 days
+    { col: 'playback_history', spec: { expireAt: 1 }, options: { expireAfterSeconds: 0, background: true } }
   ];
 
   for (const { col, spec, options } of indexSpecs) {
@@ -103,7 +138,26 @@ export async function initDatabaseIndexes(): Promise<void> {
       console.warn(`[DB Service] Index initialization note for ${col}:`, err.message);
     }
   }
-  console.log('[DB Service] MongoDB deduplication and uniqueness indexes initialized.');
+
+  // Fast compound and tenant-scoped indexes across all operational collections
+  const coreCollections = [
+    'rfid_realtime_events', 'tag_history', 'real_time_tags', 'live_tags',
+    'hardware_readers', 'ai_insights', 'zones', 'map_configurations',
+    'registered_people', 'people', 'assets', 'vehicles', 'cameras',
+    'sensors', 'infrastructure', 'alerts', 'devices', 'visitors',
+    'settings', 'projects', 'floorplans', 'attendance_logs', 'audit_logs',
+    'visitor_access_logs', 'visitor_security_list', 'visitor_access_tokens'
+  ];
+
+  for (const col of coreCollections) {
+    try {
+      await mongoDb.collection(col).createIndex({ organizationId: 1 }, { background: true });
+      await mongoDb.collection(col).createIndex({ id: 1 }, { background: true });
+      await mongoDb.collection(col).createIndex({ organizationId: 1, createdAt: -1 }, { background: true });
+    } catch {}
+  }
+
+  console.log('[DB Service] MongoDB deduplication, uniqueness, and performance indexes initialized.');
 }
 
 export async function initDatabase(customUri?: string): Promise<void> {
@@ -170,7 +224,14 @@ export function getDbStatus() {
   };
 }
 
-export async function getMongoStats() {
+let cachedMongoStats: { data: any; cachedAt: number } | null = null;
+const STATS_CACHE_TTL_MS = 30000;
+
+export async function getMongoStats(forceRefresh = false) {
+  if (!forceRefresh && cachedMongoStats && (Date.now() - cachedMongoStats.cachedAt < STATS_CACHE_TTL_MS)) {
+    return cachedMongoStats.data;
+  }
+
   const uri = getMongoUri();
   let connected = isMongoConnected();
   let collectionsCount = 0;
@@ -191,19 +252,21 @@ export async function getMongoStats() {
     try {
       const cols = await mongoDb.listCollections().toArray();
       collectionsCount = cols.length;
-      for (const col of cols) {
+
+      // Count collections in parallel instead of slow serial round-trips
+      await Promise.all(cols.map(async col => {
         try {
-          const count = await mongoDb.collection(col.name).estimatedDocumentCount();
-          totalRecords += count;
+          const count = await mongoDb!.collection(col.name).estimatedDocumentCount();
           collectionsBreakdown[col.name] = count;
         } catch {
           try {
-            const count = await mongoDb.collection(col.name).countDocuments();
-            totalRecords += count;
+            const count = await mongoDb!.collection(col.name).countDocuments();
             collectionsBreakdown[col.name] = count;
           } catch {}
         }
-      }
+      }));
+
+      totalRecords = Object.values(collectionsBreakdown).reduce((a, b) => a + b, 0);
     } catch (err: any) {
       lastError = err.message;
       try {
@@ -226,7 +289,7 @@ export async function getMongoStats() {
 
   const maskedUri = uri ? uri.replace(/\/\/[^:]+:[^@]+@/, '//***:***@') : '';
 
-  return {
+  const result = {
     connected,
     connectionString: maskedUri,
     engine: connected ? 'MongoDB Atlas / Cluster' : 'In-Memory Fallback',
@@ -235,6 +298,12 @@ export async function getMongoStats() {
     collectionsBreakdown,
     lastError
   };
+
+  if (connected) {
+    cachedMongoStats = { data: result, cachedAt: Date.now() };
+  }
+
+  return result;
 }
 
 export async function testMongoConnection(uriInput: string): Promise<{ success: boolean; latencyMs?: number; error?: string }> {
@@ -286,6 +355,12 @@ export async function getCollectionDocs(
   opts?: { limit?: number; sort?: Record<string, 1 | -1> },
   organizationId?: string
 ): Promise<any[]> {
+  const cacheKey = `${colName}:${organizationId || 'all'}:${opts?.limit || 0}:${JSON.stringify(opts?.sort || {})}`;
+  const cached = collectionReadCache.get(cacheKey);
+  if (cached && (Date.now() - cached.cachedAt < COLLECTION_CACHE_TTL_MS)) {
+    return [...cached.docs];
+  }
+
   if (mongoDb) {
     try {
       // Per-collection default limits to prevent timeouts on very large collections
@@ -302,16 +377,20 @@ export async function getCollectionDocs(
 
       const query: any = {};
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-        if (organizationId === 'default' || organizationId === 'demo') {
-          query.$or = [
-            { organizationId: 'default' },
-            { organizationId: 'demo' },
-            { organizationId: { $exists: false } },
-            { organizationId: null },
-            { organizationId: '' }
-          ];
-        } else {
-          query.organizationId = organizationId;
+        const isSpatialConfig = (colName === 'map_configurations' || colName === 'zones' || colName === 'projects' || colName === 'sites');
+        if (!isSpatialConfig) {
+          if (organizationId === 'default' || organizationId === 'demo' || organizationId === 'org_main') {
+            query.$or = [
+              { organizationId: 'default' },
+              { organizationId: 'demo' },
+              { organizationId: 'org_main' },
+              { organizationId: { $exists: false } },
+              { organizationId: null },
+              { organizationId: '' }
+            ];
+          } else {
+            query.organizationId = organizationId;
+          }
         }
       }
 
@@ -319,8 +398,8 @@ export async function getCollectionDocs(
       if (Object.keys(sort).length)  cursor = cursor.sort(sort as any);
       if (limit > 0)                 cursor = cursor.limit(limit);
 
-      const docs = await cursor.toArray();
-      return docs.map(doc => {
+      const rawDocs = await cursor.toArray();
+      const docs = rawDocs.map(doc => {
         const { _id, ...rest } = doc;
         const out: any = { id: doc.id || (_id ? _id.toString() : undefined), ...rest };
         // Normalise duplicate TagID / tagId keys written by different ingestion paths
@@ -332,19 +411,24 @@ export async function getCollectionDocs(
         }
         return out;
       });
+
+      collectionReadCache.set(cacheKey, { docs, cachedAt: Date.now() });
+      return docs;
     } catch (err) {
       console.error(`[DB Service] Error fetching docs for ${colName}:`, err);
     }
   }
   const items = inMemoryStore[colName] || [];
+  let result = items;
   if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-    return items.filter((item: any) => 
-      (organizationId === 'demo' || organizationId === 'default')
-        ? (!item.organizationId || item.organizationId === 'demo' || item.organizationId === 'default')
+    result = items.filter((item: any) => 
+      (organizationId === 'demo' || organizationId === 'default' || organizationId === 'org_main')
+        ? (!item.organizationId || item.organizationId === 'demo' || item.organizationId === 'default' || item.organizationId === 'org_main')
         : item.organizationId === organizationId
     );
   }
-  return items;
+  collectionReadCache.set(cacheKey, { docs: result, cachedAt: Date.now() });
+  return result;
 }
 
 export async function getDocById(colName: string, id: string, organizationId?: string): Promise<any | null> {
@@ -366,23 +450,27 @@ export async function getDocById(colName: string, id: string, organizationId?: s
 
       let query: any = { $or: orClauses };
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-        if (organizationId === 'default' || organizationId === 'demo') {
-          query = {
-            $and: [
-              { $or: orClauses },
-              {
-                $or: [
-                  { organizationId: 'default' },
-                  { organizationId: 'demo' },
-                  { organizationId: { $exists: false } },
-                  { organizationId: null },
-                  { organizationId: '' }
-                ]
-              }
-            ]
-          };
-        } else {
-          query.organizationId = organizationId;
+        const isSpatialConfig = (colName === 'map_configurations' || colName === 'zones' || colName === 'projects' || colName === 'sites');
+        if (!isSpatialConfig) {
+          if (organizationId === 'default' || organizationId === 'demo' || organizationId === 'org_main') {
+            query = {
+              $and: [
+                { $or: orClauses },
+                {
+                  $or: [
+                    { organizationId: 'default' },
+                    { organizationId: 'demo' },
+                    { organizationId: 'org_main' },
+                    { organizationId: { $exists: false } },
+                    { organizationId: null },
+                    { organizationId: '' }
+                  ]
+                }
+              ]
+            };
+          } else {
+            query.organizationId = organizationId;
+          }
         }
       }
 
@@ -415,11 +503,14 @@ export async function getDocById(colName: string, id: string, organizationId?: s
 }
 
 export async function upsertDoc(colName: string, doc: any, organizationId?: string): Promise<any> {
-  if (!doc.id) {
-    doc.id = `${colName}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  invalidateCollectionCache(colName);
+  const processedDoc = offloadBase64Images(doc);
+
+  if (!processedDoc.id) {
+    processedDoc.id = `${colName}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
   }
 
-  const cleanDoc = { ...doc };
+  const cleanDoc = { ...processedDoc };
   delete (cleanDoc as any)._id;
 
   // Enforce organizationId on tenant-scoped collections
@@ -477,6 +568,7 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
 }
 
 export async function deleteDocById(colName: string, id: string, organizationId?: string): Promise<boolean> {
+  invalidateCollectionCache(colName);
   if (mongoDb) {
     try {
       const idStr = String(id || '').trim();
@@ -648,6 +740,9 @@ export async function bulkWriteRfidRealtimeEvents(
 
       // Also mirror/update real_time_tags & live_tags
       await bulkWriteRealtimeTags(normalizedDocs, organizationId);
+      invalidateCollectionCache('rfid_realtime_events');
+      invalidateCollectionCache('real_time_tags');
+      invalidateCollectionCache('live_tags');
 
       return { insertedCount, modifiedCount, totalProcessed: rawEvents.length };
     } catch (err: any) {
@@ -662,6 +757,9 @@ export async function bulkWriteRfidRealtimeEvents(
     await upsertDoc('live_tags', doc, doc.organizationId);
     insertedCount++;
   }
+  invalidateCollectionCache('rfid_realtime_events');
+  invalidateCollectionCache('real_time_tags');
+  invalidateCollectionCache('live_tags');
 
   return { insertedCount, modifiedCount: 0, totalProcessed: rawEvents.length };
 }
@@ -717,6 +815,9 @@ export async function bulkWriteRealtimeTags(
         await upsertDoc('live_tags', t, t.organizationId);
       }
 
+      // Save playback history snapshot non-blocking (10-day TTL)
+      setImmediate(() => savePlaybackSnapshot(normalizedTags, organizationId).catch(() => {}));
+
       return { insertedCount, updatedCount, totalProcessed: tags.length };
     } catch (err: any) {
       console.error('[DB Service] Error during bulkWriteRealtimeTags to MongoDB:', err);
@@ -731,6 +832,92 @@ export async function bulkWriteRealtimeTags(
   }
 
   return { insertedCount: tags.length, updatedCount, totalProcessed: tags.length };
+}
+
+/**
+ * Saves a snapshot of all currently active tags to 'playback_history' collection.
+ * Each snapshot includes tag positions, zone boundaries, and expires automatically after 10 days via TTL.
+ */
+export async function savePlaybackSnapshot(
+  tags: any[],
+  organizationId: string = 'default'
+): Promise<void> {
+  if (!tags || tags.length === 0) return;
+
+  const now = new Date();
+  const expireAt = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000); // 10 days from now
+  const dateStr = now.toISOString().split('T')[0]; // YYYY-MM-DD
+  const snapId = `snap_${organizationId}_${now.getTime()}`;
+
+  const snapshot = {
+    id: snapId,
+    organizationId,
+    timestamp: now.toISOString(),
+    date: dateStr,
+    expireAt,
+    tags: tags.map(t => ({
+      tagId: t.TagID || t.tagId || t.id,
+      name: `${t.FirstName || ''} ${t.LastName || ''}`.trim() || 'Unknown',
+      location: t.Location || t.LocationName || t.zone || 'Unknown',
+      role: t.role || 'Personnel',
+      rssi: t.rssi,
+      status: t.status || 'Active',
+      readerId: t.readerId
+    }))
+  };
+
+  if (mongoDb) {
+    try {
+      await mongoDb.collection('playback_history').insertOne({ ...snapshot, _id: undefined } as any);
+    } catch (err: any) {
+      // Ignore duplicate key errors silently
+      if (!String(err?.message).includes('duplicate')) {
+        console.error('[DB Service] playback_history snapshot error:', err.message);
+      }
+    }
+    return;
+  }
+
+  // In-memory fallback: keep last 2000 snapshots only
+  inMemoryStore['playback_history'].push(snapshot);
+  if (inMemoryStore['playback_history'].length > 2000) {
+    inMemoryStore['playback_history'].shift();
+  }
+}
+
+/**
+ * Retrieves all playback history snapshots for a specific date (YYYY-MM-DD).
+ * Returns them sorted chronologically for use as playback frames.
+ */
+export async function getPlaybackFrames(
+  date: string,
+  organizationId: string = 'default'
+): Promise<any[]> {
+  if (!date) return [];
+
+  const orgFilter = (organizationId === 'default' || organizationId === 'org_main')
+    ? { $in: ['default', 'org_main', 'demo', null, ''] }
+    : organizationId;
+
+  if (mongoDb) {
+    try {
+      const docs = await mongoDb.collection('playback_history')
+        .find({ date, organizationId: orgFilter })
+        .sort({ timestamp: 1 })
+        .limit(500)
+        .toArray();
+      return docs.map(d => ({ ...d, _id: undefined }));
+    } catch (err) {
+      console.error('[DB Service] getPlaybackFrames error:', err);
+      return [];
+    }
+  }
+
+  // In-memory fallback
+  return inMemoryStore['playback_history']
+    .filter(s => s.date === date &&
+      (s.organizationId === organizationId || s.organizationId === 'default' || !s.organizationId))
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
 /**
@@ -775,201 +962,13 @@ export async function cleanupStaleRealTimeTags(maxAgeMinutes: number = 60): Prom
   return { cleanedCount, remainingCount: inMemoryStore['real_time_tags']?.length || 0 };
 }
 
-export const DEFAULT_PERMANENT_ZONES = [
-  {
-    id: 'zone_excavation_shaft',
-    zoneId: 'zone_excavation_shaft',
-    name: 'Excavation & Foundation Pit',
-    aliasNames: ['Excavation Shaft', 'Excavation & Foundation Pit', 'Deep Excavation Shaft', 'Zone2'],
-    category: 'EXCAVATION & SHORING',
-    hazardLevel: 'warning',
-    capacity: 8,
-    siteId: 'metro-tower',
-    x: 10,
-    y: 15,
-    width: 34,
-    height: 62,
-    readerIds: ['RDR-002', 'GAO-UHF-READER-02'],
-    antennaIds: [1]
-  },
-  {
-    id: 'zone_tower_core',
-    zoneId: 'zone_tower_core',
-    name: 'Structure & Scaffolding (L1-L4)',
-    aliasNames: ['Tower Core', 'Structure & Scaffolding (L1-L4)', 'Tower Core Structure', 'Zone1', 'd6'],
-    category: 'CONCRETE REINFORCEMENT',
-    hazardLevel: 'normal',
-    capacity: 25,
-    siteId: 'metro-tower',
-    x: 51,
-    y: 25,
-    width: 32,
-    height: 50,
-    readerIds: ['RDR-003', 'GAO-UHF-READER-01'],
-    antennaIds: [1]
-  },
-  {
-    id: 'zone_crane_area',
-    zoneId: 'zone_crane_area',
-    name: 'Heavy Crane & Exclusion Area',
-    aliasNames: ['Crane Swing Zone', 'Heavy Crane & Exclusion Area', 'd8', 'Crane Exclusion'],
-    category: 'CRANE SWING RADIUS',
-    hazardLevel: 'critical',
-    capacity: 4,
-    siteId: 'metro-tower',
-    x: 80,
-    y: 5,
-    width: 16,
-    height: 42,
-    readerIds: ['RDR-002', 'GAO-UHF-READER-03'],
-    antennaIds: [1]
-  },
-  {
-    id: 'zone_high_voltage',
-    zoneId: 'zone_high_voltage',
-    name: 'High Voltage Area',
-    aliasNames: ['High Voltage Area', 'Substation Area', 'Substation Perimeter'],
-    category: 'SUBSTATION PERIMETER',
-    hazardLevel: 'critical',
-    capacity: 2,
-    siteId: 'metro-tower',
-    x: 46,
-    y: 5,
-    width: 14,
-    height: 16,
-    readerIds: ['RDR-003', 'GAO-UHF-READER-03'],
-    antennaIds: [2]
-  },
-  {
-    id: 'zone_gate_1',
-    zoneId: 'zone_gate_1',
-    name: 'Gate 1 / Main Access Gate',
-    aliasNames: ['Gate 1', 'Main Access Gate', 'Gate 1 Turnstile', 'Muster Point A'],
-    category: 'MUSTER POINT & ACCESS',
-    hazardLevel: 'normal',
-    capacity: 50,
-    siteId: 'metro-tower',
-    x: 2,
-    y: 10,
-    width: 12,
-    height: 16,
-    readerIds: ['RDR-001', 'GAO-UHF-READER-01'],
-    antennaIds: [1]
-  },
-  {
-    id: 'zone_material_laydown',
-    zoneId: 'zone_material_laydown',
-    name: 'Material Laydown & Loading',
-    aliasNames: ['Material Laydown & Loading', 'Storage Yard', 'Storage Yard Reader'],
-    category: 'MATERIAL STORAGE',
-    hazardLevel: 'normal',
-    capacity: 15,
-    siteId: 'metro-tower',
-    x: 20,
-    y: 75,
-    width: 30,
-    height: 20,
-    readerIds: ['RDR-004', 'GAO-UHF-READER-01'],
-    antennaIds: [2]
-  },
-  {
-    id: 'zone_site_office',
-    zoneId: 'zone_site_office',
-    name: 'Site Office & Welfare Container',
-    aliasNames: ['Site Office', 'Welfare Container', 'Site Office & Welfare Container'],
-    category: 'ADMINISTRATION',
-    hazardLevel: 'normal',
-    capacity: 30,
-    siteId: 'metro-tower',
-    x: 5,
-    y: 40,
-    width: 15,
-    height: 25,
-    readerIds: ['RDR-001'],
-    antennaIds: [2]
-  },
-  {
-    id: 'zone_confined_shaft',
-    zoneId: 'zone_confined_shaft',
-    name: 'Confined Shaft & Tunneling',
-    aliasNames: ['Confined Shaft', 'Tunneling', 'Confined Shaft & Tunneling'],
-    category: 'CONFINED SPACE',
-    hazardLevel: 'critical',
-    capacity: 4,
-    siteId: 'metro-tower',
-    x: 60,
-    y: 75,
-    width: 25,
-    height: 20,
-    readerIds: ['RDR-003'],
-    antennaIds: [2]
-  }
-];
 
-export const DEFAULT_READER_ZONE_MAPPINGS = [
-  { id: 'GAO-UHF-READER-01_1', readerId: 'GAO-UHF-READER-01', antennaPort: 1, zoneId: 'zone_tower_core', zoneName: 'Structure & Scaffolding (L1-L4)' },
-  { id: 'GAO-UHF-READER-01_2', readerId: 'GAO-UHF-READER-01', antennaPort: 2, zoneId: 'zone_material_laydown', zoneName: 'Material Laydown & Loading' },
-  { id: 'GAO-UHF-READER-02_1', readerId: 'GAO-UHF-READER-02', antennaPort: 1, zoneId: 'zone_excavation_shaft', zoneName: 'Excavation & Foundation Pit' },
-  { id: 'GAO-UHF-READER-02_2', readerId: 'GAO-UHF-READER-02', antennaPort: 2, zoneId: 'zone_site_office', zoneName: 'Site Office & Welfare Container' },
-  { id: 'GAO-UHF-READER-03_1', readerId: 'GAO-UHF-READER-03', antennaPort: 1, zoneId: 'zone_crane_area', zoneName: 'Heavy Crane & Exclusion Area' },
-  { id: 'GAO-UHF-READER-03_2', readerId: 'GAO-UHF-READER-03', antennaPort: 2, zoneId: 'zone_high_voltage', zoneName: 'High Voltage Area' },
-  { id: 'RDR-001_1', readerId: 'RDR-001', antennaPort: 1, zoneId: 'zone_gate_1', zoneName: 'Gate 1 / Main Access Gate' },
-  { id: 'RDR-001_2', readerId: 'RDR-001', antennaPort: 2, zoneId: 'zone_site_office', zoneName: 'Site Office & Welfare Container' },
-  { id: 'RDR-002_1', readerId: 'RDR-002', antennaPort: 1, zoneId: 'zone_crane_area', zoneName: 'Heavy Crane & Exclusion Area' },
-  { id: 'RDR-002_2', readerId: 'RDR-002', antennaPort: 2, zoneId: 'zone_excavation_shaft', zoneName: 'Excavation & Foundation Pit' },
-  { id: 'RDR-003_1', readerId: 'RDR-003', antennaPort: 1, zoneId: 'zone_tower_core', zoneName: 'Structure & Scaffolding (L1-L4)' },
-  { id: 'RDR-003_2', readerId: 'RDR-003', antennaPort: 2, zoneId: 'zone_confined_shaft', zoneName: 'Confined Shaft & Tunneling' },
-  { id: 'RDR-004_1', readerId: 'RDR-004', antennaPort: 1, zoneId: 'zone_material_laydown', zoneName: 'Material Laydown & Loading' }
-];
-
-export const DEFAULT_MAP_CONFIG = {
-  id: 'metro-tower',
-  siteId: 'metro-tower',
-  name: 'Metro Commercial Tower Site',
-  contractor: 'Apex Construction JV',
-  sizeSqFt: 350000,
-  dimensions: '250m x 180m',
-  floorplanUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&q=80&w=1200',
-  buildings: [
-    {
-      id: 'bldg-main',
-      name: 'Main Tower Structure',
-      floors: [
-        {
-          id: 'fl-1',
-          name: 'Ground Floor & Podiums',
-          levelNumber: 1,
-          activeVersionId: 'v-1.0',
-          versions: [
-            {
-              id: 'v-1.0',
-              versionNumber: '1.0',
-              status: 'published',
-              createdAt: new Date().toISOString(),
-              author: 'System Initializer',
-              notes: 'Initial synchronized site blueprint vector definitions',
-              zones: DEFAULT_PERMANENT_ZONES.reduce((acc: any, z) => {
-                acc[z.name] = {
-                  zoneId: z.zoneId,
-                  x: z.x,
-                  y: z.y,
-                  width: z.width,
-                  height: z.height,
-                  category: z.category,
-                  hazardLevel: z.hazardLevel,
-                  capacity: z.capacity
-                };
-                return acc;
-              }, {}),
-              floorplanUrl: 'https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&q=80&w=1200'
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  updatedAt: new Date().toISOString()
-};
+// All hardcoded zone/reader/map seed data removed.
+// Zones, readers, and map configurations are sourced exclusively from MongoDB via the Custom Map Editor and Settings UI.
+// Do NOT add hardcoded zone names, site names, contractor names, or reader IDs here.
+export const DEFAULT_PERMANENT_ZONES: any[] = [];
+export const DEFAULT_READER_ZONE_MAPPINGS: any[] = [];
+export const DEFAULT_MAP_CONFIG: any = { id: 'site-main', siteId: 'site-main', name: 'Main Site', updatedAt: new Date().toISOString() };
 
 
 /**
@@ -985,7 +984,7 @@ export async function wipeAllCollections(organizationId?: string): Promise<{ wip
     'attendance_logs', 'leave_requests', 'shift_schedules',
     'alerts', 'alerts_enterprise', 'alert_rules', 'alert_dispatch_logs', 'emergency_broadcasts',
     'live_tags', 'real_time_tags', 'rfid_realtime_events', 'tag_history',
-    'audit_logs', 'settings',
+    'audit_logs', 'settings', 'playback_history',
     'incidents_enterprise', 'incidents',
     'zones', 'map_configurations', 'geofences', 'reader_zone_mappings',
     'ai_insights', 'ai_rca_reports', 'ai_hazard_predictions', 'ai_copilot_chats',

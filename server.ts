@@ -93,6 +93,14 @@ async function startServer() {
   app.use('/GetHistoryRecords', rfidRouter);
   app.use('/GetTagsInRealtime', rfidRouter);
 
+  // Serve static uploaded assets (floorplans, blueprints, icons) with aggressive caching
+  const publicUploadsPath = path.join(process.cwd(), 'public', 'uploads');
+  const distUploadsPath = path.join(process.cwd(), 'dist', 'uploads');
+  if (!fs.existsSync(publicUploadsPath)) fs.mkdirSync(publicUploadsPath, { recursive: true });
+  if (!fs.existsSync(distUploadsPath)) fs.mkdirSync(distUploadsPath, { recursive: true });
+  app.use('/uploads', express.static(publicUploadsPath, { maxAge: '30d' }));
+  app.use('/uploads', express.static(distUploadsPath, { maxAge: '30d' }));
+
   // Centralized Error Handler Middleware
   app.use(errorHandler);
 
@@ -122,11 +130,12 @@ async function startServer() {
     console.warn('[DB Service] Async DB initialization note:', e?.message);
   });
 
-  httpServer.listen(PORT, '0.0.0.0', () => {
+  // Dual-stack server listen (supports both IPv4 and IPv6 localhost without 2000ms delay)
+  httpServer.listen(PORT, () => {
     console.log(`\n=======================================================`);
     console.log(`🚀 Aperture Construction People Tracking System Ready!`);
     console.log(`🌐 Local Web Dashboard: http://localhost:${PORT}`);
-    console.log(`📡 Network Access:      http://0.0.0.0:${PORT}`);
+    console.log(`📡 Network Access:      http://127.0.0.1:${PORT}`);
     console.log(`🔌 WebSocket Stream:    ws://localhost:${PORT}/ws`);
     console.log(`=======================================================\n`);
   });

@@ -39,10 +39,10 @@ const CATEGORIES_LIST: AlertCategory[] = [
 ];
 
 const OFFICERS_LIST = [
-  'Marcus Vance (EHS Director)',
-  'Elena Rostova (Field Safety Lead)',
-  'Frank Reynolds (Equipment Manager)',
-  'Gate 1 Security Lead',
+  'Operations Duty Lead',
+  'Field Safety Lead',
+  'Facility Equipment Manager',
+  'Gate Security Lead',
   'IT Network Systems Admin',
   'Site Operations Duty Manager'
 ];
@@ -102,68 +102,8 @@ function getRulesForIndustry(industryId: string = 'construction'): AlertRule[] {
 
 const DEFAULT_ALERT_RULES: AlertRule[] = getRulesForIndustry('construction');
 
-const DEFAULT_BROADCASTS: EmergencyBroadcast[] = [
-  {
-    id: 'BC-01',
-    timestamp: new Date().toISOString(),
-    activatedBy: 'Marcus Vance (EHS Director)',
-    type: 'Weather Lockout',
-    zone: 'Crane Operating Zone',
-    title: 'Severe High Wind Alert — Crane Operations Suspended',
-    musterTarget: 42,
-    musterAccounted: 42,
-    status: 'CLEARED'
-  }
-];
-
-const DEFAULT_ACTIVE_ALERTS: AIAlert[] = [
-  {
-    id: 'ALT-1001',
-    type: 'security',
-    category: 'Safety',
-    priority: 'Critical',
-    status: 'In Progress',
-    title: 'Crane Swing Radius Proximity Warning',
-    message: 'Worker tag detected inside active crane load quadrant without spotter clearance.',
-    timestamp: new Date(Date.now() - 12 * 60 * 1000),
-    assignedTo: 'Marcus Vance (EHS Director)',
-    evidence: {
-      locationZone: 'Crane Operating Zone',
-      rfidReaderId: 'GAO-RD-216031A-02',
-      cctvCameraId: 'CAM-CRANE-02'
-    }
-  },
-  {
-    id: 'ALT-1002',
-    type: 'warning',
-    category: 'Worker',
-    priority: 'High',
-    status: 'New',
-    title: 'Confined Space Dwell Threshold Exceeded',
-    message: 'Personnel detected in excavation pit exceeding 120-minute continuous shift threshold.',
-    timestamp: new Date(Date.now() - 35 * 60 * 1000),
-    assignedTo: 'Elena Rostova (Field Safety Lead)',
-    evidence: {
-      locationZone: 'Excavation Area',
-      rfidReaderId: 'GAO-RD-216031A-03'
-    }
-  },
-  {
-    id: 'ALT-1003',
-    type: 'warning',
-    category: 'Equipment',
-    priority: 'Medium',
-    status: 'New',
-    title: 'UHF RFID Reader Gateway Periodic Re-calibration Due',
-    message: 'Excavation perimeter gateway antenna gain drift detected (+3.2 dBm).',
-    timestamp: new Date(Date.now() - 75 * 60 * 1000),
-    assignedTo: 'IT Network Systems Admin',
-    evidence: {
-      locationZone: 'Excavation Area',
-      rfidReaderId: 'GAO-RD-216031A-03'
-    }
-  }
-];
+const DEFAULT_BROADCASTS: EmergencyBroadcast[] = [];
+const DEFAULT_ACTIVE_ALERTS: AIAlert[] = [];
 
 export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] }) {
   const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
@@ -357,7 +297,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       const map = new Map<string, AIAlert>();
       // Add MongoDB alerts or default alerts
       const baseAlerts = [...entAlerts, ...stdAlerts, ...incAlerts];
-      const sourceAlerts = baseAlerts.length > 0 ? baseAlerts : DEFAULT_ACTIVE_ALERTS;
+      const sourceAlerts = baseAlerts;
 
       sourceAlerts.forEach(a => map.set(a.id, a));
 
@@ -413,12 +353,12 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
           priority: d.severity === 'Critical' ? 'Critical' : d.severity === 'High' ? 'High' : 'Medium',
           status: d.status === 'Closed' ? 'Resolved' : 'In Progress',
           title: d.title || 'Logged MongoDB Incident Alert',
-          message: d.description || `Incident logged at ${d.zone || 'Construction Zone'} for ${d.personName || 'Worker'}`,
+          message: d.description || `Incident logged at ${d.zone || siteLabel || 'Facility'} for ${d.personName || personnelSingular}`,
           timestamp: typeof d.timestamp === 'string' ? new Date(d.timestamp) : new Date(),
           assignedTo: d.assignedOfficer || OFFICERS_LIST[0],
           evidence: {
-            locationZone: d.zone || 'Construction Site',
-            rfidReaderId: d.tagId ? `TAG-${d.tagId}` : 'RD-GAO-01'
+            locationZone: d.zone || siteLabel || 'Facility Zone',
+            rfidReaderId: d.tagId ? `${idBadgeLabel}-${d.tagId}` : 'RD-GAO-01'
           }
         } as AIAlert;
       });
@@ -428,17 +368,17 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     // 2. Sync Rules
     const unsubRules = onSnapshot(collection(db, 'alert_rules'), (snapshot) => {
       const data = snapshot.docs.map(docSnap => docSnap.data() as AlertRule);
-      setRuleList(data.length > 0 ? data : DEFAULT_ALERT_RULES);
+      setRuleList(data.length > 0 ? data : getRulesForIndustry(activeIndustry));
     }, () => {
-      setRuleList(DEFAULT_ALERT_RULES);
+      setRuleList(getRulesForIndustry(activeIndustry));
     });
 
     // 3. Sync Broadcasts
     const unsubBroadcasts = onSnapshot(collection(db, 'emergency_broadcasts'), (snapshot) => {
       const data = snapshot.docs.map(docSnap => docSnap.data() as EmergencyBroadcast);
-      setBroadcastList(data.length > 0 ? data : DEFAULT_BROADCASTS);
+      setBroadcastList(data);
     }, () => {
-      setBroadcastList(DEFAULT_BROADCASTS);
+      setBroadcastList([]);
     });
 
     return () => {
@@ -934,7 +874,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       title,
       zone,
       type,
-      activatedBy: 'Marcus Vance (EHS Director)',
+      activatedBy: 'Operations Duty Lead',
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       musterTarget: 25,
       musterAccounted: 22,
@@ -1046,7 +986,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   }, [alertList]);
 
   return (
-    <div className="w-full flex flex-col p-4 md:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="w-full flex flex-col p-4 sm:p-6 max-w-[1760px] mx-auto space-y-6 min-w-0">
       
       {/* Top Header & Sub-Nav Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">

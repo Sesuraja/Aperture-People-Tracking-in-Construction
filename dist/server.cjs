@@ -38,6 +38,7 @@ var import_http = __toESM(require("http"), 1);
 var import_path2 = __toESM(require("path"), 1);
 var import_cors = __toESM(require("cors"), 1);
 var import_helmet = __toESM(require("helmet"), 1);
+var import_fs2 = __toESM(require("fs"), 1);
 var import_vite = require("vite");
 
 // src/server/services/db.ts
@@ -149,7 +150,8 @@ var inMemoryStore = {
   reader_zone_mappings: [],
   people: [],
   ai_insights: [],
-  incidents: []
+  incidents: [],
+  playback_history: []
 };
 function sanitizeMongoUri(rawUri) {
   if (!rawUri || typeof rawUri !== "string") return "";
@@ -163,6 +165,22 @@ function getMongoUri() {
   const uri = runtimeMongoUri || process.env.MONGODB_URI || "";
   return sanitizeMongoUri(uri);
 }
+var collectionReadCache = /* @__PURE__ */ new Map();
+var COLLECTION_CACHE_TTL_MS = 4e3;
+function invalidateCollectionCache(colName) {
+  if (colName) {
+    for (const key of Array.from(collectionReadCache.keys())) {
+      if (key === colName || key.startsWith(`${colName}:`)) {
+        collectionReadCache.delete(key);
+      }
+    }
+  } else {
+    collectionReadCache.clear();
+  }
+}
+function offloadBase64Images(doc) {
+  return doc;
+}
 async function initDatabaseIndexes() {
   if (!mongoDb) return;
   const indexSpecs = [
@@ -171,7 +189,9 @@ async function initDatabaseIndexes() {
     { col: "real_time_tags", spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
     { col: "live_tags", spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
     { col: "hardware_readers", spec: { readerId: 1, organizationId: 1 }, options: { unique: true, background: true } },
-    { col: "ai_insights", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } }
+    { col: "ai_insights", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    // TTL index: auto-delete playback_history snapshots older than 10 days
+    { col: "playback_history", spec: { expireAt: 1 }, options: { expireAfterSeconds: 0, background: true } }
   ];
   for (const { col, spec, options } of indexSpecs) {
     try {
@@ -180,7 +200,43 @@ async function initDatabaseIndexes() {
       console.warn(`[DB Service] Index initialization note for ${col}:`, err.message);
     }
   }
-  console.log("[DB Service] MongoDB deduplication and uniqueness indexes initialized.");
+  const coreCollections = [
+    "rfid_realtime_events",
+    "tag_history",
+    "real_time_tags",
+    "live_tags",
+    "hardware_readers",
+    "ai_insights",
+    "zones",
+    "map_configurations",
+    "registered_people",
+    "people",
+    "assets",
+    "vehicles",
+    "cameras",
+    "sensors",
+    "infrastructure",
+    "alerts",
+    "devices",
+    "visitors",
+    "settings",
+    "projects",
+    "floorplans",
+    "attendance_logs",
+    "audit_logs",
+    "visitor_access_logs",
+    "visitor_security_list",
+    "visitor_access_tokens"
+  ];
+  for (const col of coreCollections) {
+    try {
+      await mongoDb.collection(col).createIndex({ organizationId: 1 }, { background: true });
+      await mongoDb.collection(col).createIndex({ id: 1 }, { background: true });
+      await mongoDb.collection(col).createIndex({ organizationId: 1, createdAt: -1 }, { background: true });
+    } catch {
+    }
+  }
+  console.log("[DB Service] MongoDB deduplication, uniqueness, and performance indexes initialized.");
 }
 async function initDatabase(customUri) {
   const rawUri = customUri || getMongoUri();
@@ -230,7 +286,12 @@ async function initDatabase(customUri) {
 function isMongoConnected() {
   return mongoDb !== null;
 }
-async function getMongoStats() {
+var cachedMongoStats = null;
+var STATS_CACHE_TTL_MS = 3e4;
+async function getMongoStats(forceRefresh = false) {
+  if (!forceRefresh && cachedMongoStats && Date.now() - cachedMongoStats.cachedAt < STATS_CACHE_TTL_MS) {
+    return cachedMongoStats.data;
+  }
   const uri = getMongoUri();
   let connected = isMongoConnected();
   let collectionsCount = 0;
@@ -249,20 +310,19 @@ async function getMongoStats() {
     try {
       const cols = await mongoDb.listCollections().toArray();
       collectionsCount = cols.length;
-      for (const col of cols) {
+      await Promise.all(cols.map(async (col) => {
         try {
           const count = await mongoDb.collection(col.name).estimatedDocumentCount();
-          totalRecords += count;
           collectionsBreakdown[col.name] = count;
         } catch {
           try {
             const count = await mongoDb.collection(col.name).countDocuments();
-            totalRecords += count;
             collectionsBreakdown[col.name] = count;
           } catch {
           }
         }
-      }
+      }));
+      totalRecords = Object.values(collectionsBreakdown).reduce((a, b) => a + b, 0);
     } catch (err) {
       lastError = err.message;
       try {
@@ -283,7 +343,7 @@ async function getMongoStats() {
     }
   }
   const maskedUri = uri ? uri.replace(/\/\/[^:]+:[^@]+@/, "//***:***@") : "";
-  return {
+  const result = {
     connected,
     connectionString: maskedUri,
     engine: connected ? "MongoDB Atlas / Cluster" : "In-Memory Fallback",
@@ -292,6 +352,10 @@ async function getMongoStats() {
     collectionsBreakdown,
     lastError
   };
+  if (connected) {
+    cachedMongoStats = { data: result, cachedAt: Date.now() };
+  }
+  return result;
 }
 async function testMongoConnection(uriInput) {
   const uri = sanitizeMongoUri(uriInput);
@@ -338,6 +402,11 @@ async function reconnectDatabase(newUriInput) {
   }
 }
 async function getCollectionDocs(colName, opts, organizationId) {
+  const cacheKey = `${colName}:${organizationId || "all"}:${opts?.limit || 0}:${JSON.stringify(opts?.sort || {})}`;
+  const cached = collectionReadCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < COLLECTION_CACHE_TTL_MS) {
+    return [...cached.docs];
+  }
   if (mongoDb) {
     try {
       const DEFAULT_LIMITS = {
@@ -352,23 +421,27 @@ async function getCollectionDocs(colName, opts, organizationId) {
       const sort = opts?.sort ?? (DEFAULT_LIMITS[colName] ? { createdAt: -1 } : {});
       const query = {};
       if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-        if (organizationId === "default" || organizationId === "demo") {
-          query.$or = [
-            { organizationId: "default" },
-            { organizationId: "demo" },
-            { organizationId: { $exists: false } },
-            { organizationId: null },
-            { organizationId: "" }
-          ];
-        } else {
-          query.organizationId = organizationId;
+        const isSpatialConfig = colName === "map_configurations" || colName === "zones" || colName === "projects" || colName === "sites";
+        if (!isSpatialConfig) {
+          if (organizationId === "default" || organizationId === "demo" || organizationId === "org_main") {
+            query.$or = [
+              { organizationId: "default" },
+              { organizationId: "demo" },
+              { organizationId: "org_main" },
+              { organizationId: { $exists: false } },
+              { organizationId: null },
+              { organizationId: "" }
+            ];
+          } else {
+            query.organizationId = organizationId;
+          }
         }
       }
       let cursor = mongoDb.collection(colName).find(query);
       if (Object.keys(sort).length) cursor = cursor.sort(sort);
       if (limit > 0) cursor = cursor.limit(limit);
-      const docs = await cursor.toArray();
-      return docs.map((doc) => {
+      const rawDocs = await cursor.toArray();
+      const docs = rawDocs.map((doc) => {
         const { _id, ...rest } = doc;
         const out = { id: doc.id || (_id ? _id.toString() : void 0), ...rest };
         if (colName === "live_tags" || colName === "real_time_tags" || colName === "rfid_realtime_events") {
@@ -379,17 +452,21 @@ async function getCollectionDocs(colName, opts, organizationId) {
         }
         return out;
       });
+      collectionReadCache.set(cacheKey, { docs, cachedAt: Date.now() });
+      return docs;
     } catch (err) {
       console.error(`[DB Service] Error fetching docs for ${colName}:`, err);
     }
   }
   const items = inMemoryStore[colName] || [];
+  let result = items;
   if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-    return items.filter(
-      (item) => organizationId === "demo" || organizationId === "default" ? !item.organizationId || item.organizationId === "demo" || item.organizationId === "default" : item.organizationId === organizationId
+    result = items.filter(
+      (item) => organizationId === "demo" || organizationId === "default" || organizationId === "org_main" ? !item.organizationId || item.organizationId === "demo" || item.organizationId === "default" || item.organizationId === "org_main" : item.organizationId === organizationId
     );
   }
-  return items;
+  collectionReadCache.set(cacheKey, { docs: result, cachedAt: Date.now() });
+  return result;
 }
 async function getDocById(colName, id, organizationId) {
   if (mongoDb) {
@@ -410,23 +487,27 @@ async function getDocById(colName, id, organizationId) {
       }
       let query = { $or: orClauses };
       if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-        if (organizationId === "default" || organizationId === "demo") {
-          query = {
-            $and: [
-              { $or: orClauses },
-              {
-                $or: [
-                  { organizationId: "default" },
-                  { organizationId: "demo" },
-                  { organizationId: { $exists: false } },
-                  { organizationId: null },
-                  { organizationId: "" }
-                ]
-              }
-            ]
-          };
-        } else {
-          query.organizationId = organizationId;
+        const isSpatialConfig = colName === "map_configurations" || colName === "zones" || colName === "projects" || colName === "sites";
+        if (!isSpatialConfig) {
+          if (organizationId === "default" || organizationId === "demo" || organizationId === "org_main") {
+            query = {
+              $and: [
+                { $or: orClauses },
+                {
+                  $or: [
+                    { organizationId: "default" },
+                    { organizationId: "demo" },
+                    { organizationId: "org_main" },
+                    { organizationId: { $exists: false } },
+                    { organizationId: null },
+                    { organizationId: "" }
+                  ]
+                }
+              ]
+            };
+          } else {
+            query.organizationId = organizationId;
+          }
         }
       }
       const doc2 = await mongoDb.collection(colName).findOne(query);
@@ -455,10 +536,12 @@ async function getDocById(colName, id, organizationId) {
   return doc;
 }
 async function upsertDoc(colName, doc, organizationId) {
-  if (!doc.id) {
-    doc.id = `${colName}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  invalidateCollectionCache(colName);
+  const processedDoc = offloadBase64Images(doc);
+  if (!processedDoc.id) {
+    processedDoc.id = `${colName}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
   }
-  const cleanDoc = { ...doc };
+  const cleanDoc = { ...processedDoc };
   delete cleanDoc._id;
   if (colName === "organizations") {
     cleanDoc.organizationId = cleanDoc.id;
@@ -509,6 +592,7 @@ async function upsertDoc(colName, doc, organizationId) {
   return cleanDoc;
 }
 async function deleteDocById(colName, id, organizationId) {
+  invalidateCollectionCache(colName);
   if (mongoDb) {
     try {
       const idStr = String(id || "").trim();
@@ -639,6 +723,9 @@ async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol
       insertedCount = result.upsertedCount || 0;
       modifiedCount = result.modifiedCount || 0;
       await bulkWriteRealtimeTags(normalizedDocs, organizationId);
+      invalidateCollectionCache("rfid_realtime_events");
+      invalidateCollectionCache("real_time_tags");
+      invalidateCollectionCache("live_tags");
       return { insertedCount, modifiedCount, totalProcessed: rawEvents.length };
     } catch (err) {
       console.error("[DB Service] Error in bulkWriteRfidRealtimeEvents to MongoDB:", err);
@@ -650,6 +737,9 @@ async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol
     await upsertDoc("live_tags", doc, doc.organizationId);
     insertedCount++;
   }
+  invalidateCollectionCache("rfid_realtime_events");
+  invalidateCollectionCache("real_time_tags");
+  invalidateCollectionCache("live_tags");
   return { insertedCount, modifiedCount: 0, totalProcessed: rawEvents.length };
 }
 async function bulkWriteRealtimeTags(tags, organizationId = "default") {
@@ -690,6 +780,8 @@ async function bulkWriteRealtimeTags(tags, organizationId = "default") {
       for (const t of normalizedTags) {
         await upsertDoc("live_tags", t, t.organizationId);
       }
+      setImmediate(() => savePlaybackSnapshot(normalizedTags, organizationId).catch(() => {
+      }));
       return { insertedCount, updatedCount, totalProcessed: tags.length };
     } catch (err) {
       console.error("[DB Service] Error during bulkWriteRealtimeTags to MongoDB:", err);
@@ -701,6 +793,57 @@ async function bulkWriteRealtimeTags(tags, organizationId = "default") {
     updatedCount++;
   }
   return { insertedCount: tags.length, updatedCount, totalProcessed: tags.length };
+}
+async function savePlaybackSnapshot(tags, organizationId = "default") {
+  if (!tags || tags.length === 0) return;
+  const now = /* @__PURE__ */ new Date();
+  const expireAt = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
+  const dateStr = now.toISOString().split("T")[0];
+  const snapId = `snap_${organizationId}_${now.getTime()}`;
+  const snapshot = {
+    id: snapId,
+    organizationId,
+    timestamp: now.toISOString(),
+    date: dateStr,
+    expireAt,
+    tags: tags.map((t) => ({
+      tagId: t.TagID || t.tagId || t.id,
+      name: `${t.FirstName || ""} ${t.LastName || ""}`.trim() || "Unknown",
+      location: t.Location || t.LocationName || t.zone || "Unknown",
+      role: t.role || "Personnel",
+      rssi: t.rssi,
+      status: t.status || "Active",
+      readerId: t.readerId
+    }))
+  };
+  if (mongoDb) {
+    try {
+      await mongoDb.collection("playback_history").insertOne({ ...snapshot, _id: void 0 });
+    } catch (err) {
+      if (!String(err?.message).includes("duplicate")) {
+        console.error("[DB Service] playback_history snapshot error:", err.message);
+      }
+    }
+    return;
+  }
+  inMemoryStore["playback_history"].push(snapshot);
+  if (inMemoryStore["playback_history"].length > 2e3) {
+    inMemoryStore["playback_history"].shift();
+  }
+}
+async function getPlaybackFrames(date, organizationId = "default") {
+  if (!date) return [];
+  const orgFilter = organizationId === "default" || organizationId === "org_main" ? { $in: ["default", "org_main", "demo", null, ""] } : organizationId;
+  if (mongoDb) {
+    try {
+      const docs = await mongoDb.collection("playback_history").find({ date, organizationId: orgFilter }).sort({ timestamp: 1 }).limit(500).toArray();
+      return docs.map((d) => ({ ...d, _id: void 0 }));
+    } catch (err) {
+      console.error("[DB Service] getPlaybackFrames error:", err);
+      return [];
+    }
+  }
+  return inMemoryStore["playback_history"].filter((s) => s.date === date && (s.organizationId === organizationId || s.organizationId === "default" || !s.organizationId)).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 async function cleanupStaleRealTimeTags(maxAgeMinutes = 60) {
   const cutoffTime = new Date(Date.now() - maxAgeMinutes * 60 * 1e3);
@@ -733,184 +876,7 @@ async function cleanupStaleRealTimeTags(maxAgeMinutes = 60) {
   }
   return { cleanedCount, remainingCount: inMemoryStore["real_time_tags"]?.length || 0 };
 }
-var DEFAULT_PERMANENT_ZONES = [
-  {
-    id: "zone_excavation_shaft",
-    zoneId: "zone_excavation_shaft",
-    name: "Excavation & Foundation Pit",
-    aliasNames: ["Excavation Shaft", "Excavation & Foundation Pit", "Deep Excavation Shaft", "Zone2"],
-    category: "EXCAVATION & SHORING",
-    hazardLevel: "warning",
-    capacity: 8,
-    siteId: "metro-tower",
-    x: 10,
-    y: 15,
-    width: 34,
-    height: 62,
-    readerIds: ["RDR-002", "GAO-UHF-READER-02"],
-    antennaIds: [1]
-  },
-  {
-    id: "zone_tower_core",
-    zoneId: "zone_tower_core",
-    name: "Structure & Scaffolding (L1-L4)",
-    aliasNames: ["Tower Core", "Structure & Scaffolding (L1-L4)", "Tower Core Structure", "Zone1", "d6"],
-    category: "CONCRETE REINFORCEMENT",
-    hazardLevel: "normal",
-    capacity: 25,
-    siteId: "metro-tower",
-    x: 51,
-    y: 25,
-    width: 32,
-    height: 50,
-    readerIds: ["RDR-003", "GAO-UHF-READER-01"],
-    antennaIds: [1]
-  },
-  {
-    id: "zone_crane_area",
-    zoneId: "zone_crane_area",
-    name: "Heavy Crane & Exclusion Area",
-    aliasNames: ["Crane Swing Zone", "Heavy Crane & Exclusion Area", "d8", "Crane Exclusion"],
-    category: "CRANE SWING RADIUS",
-    hazardLevel: "critical",
-    capacity: 4,
-    siteId: "metro-tower",
-    x: 80,
-    y: 5,
-    width: 16,
-    height: 42,
-    readerIds: ["RDR-002", "GAO-UHF-READER-03"],
-    antennaIds: [1]
-  },
-  {
-    id: "zone_high_voltage",
-    zoneId: "zone_high_voltage",
-    name: "High Voltage Area",
-    aliasNames: ["High Voltage Area", "Substation Area", "Substation Perimeter"],
-    category: "SUBSTATION PERIMETER",
-    hazardLevel: "critical",
-    capacity: 2,
-    siteId: "metro-tower",
-    x: 46,
-    y: 5,
-    width: 14,
-    height: 16,
-    readerIds: ["RDR-003", "GAO-UHF-READER-03"],
-    antennaIds: [2]
-  },
-  {
-    id: "zone_gate_1",
-    zoneId: "zone_gate_1",
-    name: "Gate 1 / Main Access Gate",
-    aliasNames: ["Gate 1", "Main Access Gate", "Gate 1 Turnstile", "Muster Point A"],
-    category: "MUSTER POINT & ACCESS",
-    hazardLevel: "normal",
-    capacity: 50,
-    siteId: "metro-tower",
-    x: 2,
-    y: 10,
-    width: 12,
-    height: 16,
-    readerIds: ["RDR-001", "GAO-UHF-READER-01"],
-    antennaIds: [1]
-  },
-  {
-    id: "zone_material_laydown",
-    zoneId: "zone_material_laydown",
-    name: "Material Laydown & Loading",
-    aliasNames: ["Material Laydown & Loading", "Storage Yard", "Storage Yard Reader"],
-    category: "MATERIAL STORAGE",
-    hazardLevel: "normal",
-    capacity: 15,
-    siteId: "metro-tower",
-    x: 20,
-    y: 75,
-    width: 30,
-    height: 20,
-    readerIds: ["RDR-004", "GAO-UHF-READER-01"],
-    antennaIds: [2]
-  },
-  {
-    id: "zone_site_office",
-    zoneId: "zone_site_office",
-    name: "Site Office & Welfare Container",
-    aliasNames: ["Site Office", "Welfare Container", "Site Office & Welfare Container"],
-    category: "ADMINISTRATION",
-    hazardLevel: "normal",
-    capacity: 30,
-    siteId: "metro-tower",
-    x: 5,
-    y: 40,
-    width: 15,
-    height: 25,
-    readerIds: ["RDR-001"],
-    antennaIds: [2]
-  },
-  {
-    id: "zone_confined_shaft",
-    zoneId: "zone_confined_shaft",
-    name: "Confined Shaft & Tunneling",
-    aliasNames: ["Confined Shaft", "Tunneling", "Confined Shaft & Tunneling"],
-    category: "CONFINED SPACE",
-    hazardLevel: "critical",
-    capacity: 4,
-    siteId: "metro-tower",
-    x: 60,
-    y: 75,
-    width: 25,
-    height: 20,
-    readerIds: ["RDR-003"],
-    antennaIds: [2]
-  }
-];
-var DEFAULT_MAP_CONFIG = {
-  id: "metro-tower",
-  siteId: "metro-tower",
-  name: "Metro Commercial Tower Site",
-  contractor: "Apex Construction JV",
-  sizeSqFt: 35e4,
-  dimensions: "250m x 180m",
-  floorplanUrl: "https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&q=80&w=1200",
-  buildings: [
-    {
-      id: "bldg-main",
-      name: "Main Tower Structure",
-      floors: [
-        {
-          id: "fl-1",
-          name: "Ground Floor & Podiums",
-          levelNumber: 1,
-          activeVersionId: "v-1.0",
-          versions: [
-            {
-              id: "v-1.0",
-              versionNumber: "1.0",
-              status: "published",
-              createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-              author: "System Initializer",
-              notes: "Initial synchronized site blueprint vector definitions",
-              zones: DEFAULT_PERMANENT_ZONES.reduce((acc, z5) => {
-                acc[z5.name] = {
-                  zoneId: z5.zoneId,
-                  x: z5.x,
-                  y: z5.y,
-                  width: z5.width,
-                  height: z5.height,
-                  category: z5.category,
-                  hazardLevel: z5.hazardLevel,
-                  capacity: z5.capacity
-                };
-                return acc;
-              }, {}),
-              floorplanUrl: "https://images.unsplash.com/photo-1581094288338-2314dddb7ecc?auto=format&fit=crop&q=80&w=1200"
-            }
-          ]
-        }
-      ]
-    }
-  ],
-  updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-};
+var DEFAULT_MAP_CONFIG = { id: "site-main", siteId: "site-main", name: "Main Site", updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
 async function wipeAllCollections(organizationId) {
   const allCollections = [
     "organizations",
@@ -941,6 +907,7 @@ async function wipeAllCollections(organizationId) {
     "tag_history",
     "audit_logs",
     "settings",
+    "playback_history",
     "incidents_enterprise",
     "incidents",
     "zones",
@@ -1056,7 +1023,13 @@ function buildUrl(config) {
 }
 async function getAllConnections() {
   const list = await getCollectionDocs("third_party_apis");
-  return list.filter((c) => c && c.id !== "postman_mock_rfid_api");
+  return list.filter((c) => {
+    if (!c || !c.id) return false;
+    const lowerId = c.id.toLowerCase();
+    const lowerName = (c.name || "").toLowerCase();
+    const lowerUrl = (c.endpointUrl || "").toLowerCase();
+    return !lowerId.includes("mock") && !lowerId.includes("demo") && !lowerId.includes("simulat") && !lowerName.includes("mock") && !lowerName.includes("demo") && !lowerName.includes("simulat") && !lowerUrl.includes("mock") && !lowerUrl.includes("example.com");
+  });
 }
 async function getConnectionById(id) {
   const list = await getAllConnections();
@@ -1071,10 +1044,11 @@ async function deleteConnection(id) {
 
 // src/server/services/aiPipeline.ts
 var import_genai2 = require("@google/genai");
+var import_zod3 = require("zod");
 
 // src/server/routes/ai.ts
 var import_express = require("express");
-var import_zod = require("zod");
+var import_zod2 = require("zod");
 var import_express_rate_limit = __toESM(require("express-rate-limit"), 1);
 var import_genai = require("@google/genai");
 
@@ -1467,18 +1441,725 @@ function requirePermission(permission) {
   };
 }
 
+// src/types/industryIntelligence.ts
+var import_zod = require("zod");
+var functionalAreaSchema = import_zod.z.object({
+  id: import_zod.z.string(),
+  name: import_zod.z.string(),
+  code: import_zod.z.string().optional(),
+  category: import_zod.z.enum(["production", "storage", "hazardous", "restricted", "office", "common", "logistics", "safety"]),
+  hazardLevel: import_zod.z.enum(["normal", "warning", "critical"]),
+  allowedEntities: import_zod.z.array(import_zod.z.enum(["people", "assets", "vehicles", "equipment", "visitors"])).optional(),
+  allowedRoles: import_zod.z.array(import_zod.z.string()).optional(),
+  maxOccupancy: import_zod.z.number().optional(),
+  maxDwellMinutes: import_zod.z.number().optional(),
+  speedLimitKmh: import_zod.z.number().optional(),
+  requiredClearanceLevel: import_zod.z.string().optional()
+});
+var industryProfileSchema = import_zod.z.object({
+  tenantId: import_zod.z.string().min(1),
+  industry: import_zod.z.enum(["construction", "manufacturing", "office", "logistics", "healthcare", "mining", "oil_gas", "aviation", "custom"]),
+  subIndustry: import_zod.z.string().min(1),
+  companyName: import_zod.z.string().optional(),
+  facilityName: import_zod.z.string().optional(),
+  functionalAreas: import_zod.z.array(functionalAreaSchema),
+  trackedEntities: import_zod.z.array(import_zod.z.enum(["people", "assets", "vehicles", "equipment", "visitors"])),
+  kpis: import_zod.z.array(import_zod.z.object({
+    key: import_zod.z.string(),
+    label: import_zod.z.string(),
+    unit: import_zod.z.string(),
+    target: import_zod.z.number(),
+    category: import_zod.z.enum(["safety", "efficiency", "utilization", "compliance"]),
+    description: import_zod.z.string()
+  })),
+  alertRuleTemplates: import_zod.z.array(import_zod.z.object({
+    id: import_zod.z.string(),
+    name: import_zod.z.string(),
+    category: import_zod.z.enum(["Safety", "Security", "Operational", "Compliance", "Asset"]),
+    priorityThreshold: import_zod.z.enum(["Critical", "High", "Medium", "Low"]),
+    targetZone: import_zod.z.string(),
+    slaMinutes: import_zod.z.number(),
+    defaultAction: import_zod.z.string(),
+    triggerSiren: import_zod.z.boolean().optional(),
+    notifySmsEmail: import_zod.z.boolean().optional()
+  })),
+  incidentCategories: import_zod.z.array(import_zod.z.object({
+    category: import_zod.z.string(),
+    defaultSeverity: import_zod.z.enum(["Critical", "High", "Medium", "Low"]),
+    description: import_zod.z.string(),
+    defaultInvestigationChecklist: import_zod.z.array(import_zod.z.string())
+  })),
+  complianceFramework: import_zod.z.string(),
+  aiPersonaPrompt: import_zod.z.string(),
+  terminology: import_zod.z.object({
+    personnelSingular: import_zod.z.string(),
+    personnelPlural: import_zod.z.string(),
+    roleLabel: import_zod.z.string(),
+    idBadgeLabel: import_zod.z.string(),
+    safetyComplianceLabel: import_zod.z.string(),
+    zoneLabel: import_zod.z.string(),
+    siteLabel: import_zod.z.string(),
+    organizationType: import_zod.z.string()
+  })
+});
+var INDUSTRY_PRESET_PROFILES = {
+  construction: {
+    industry: "construction",
+    subIndustry: "Commercial & Infrastructure Construction",
+    companyName: "General Contractors & Builders",
+    facilityName: "Tower One Job Site",
+    trackedEntities: ["people", "assets", "vehicles", "equipment", "visitors"],
+    functionalAreas: [
+      { id: "fa-crane", name: "Crane Slewing & Hoisting Perimeter", code: "CRANE-EXCL", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 10, requiredClearanceLevel: "Rigger / Crane Operator" },
+      { id: "fa-scaffold", name: "Elevated Scaffolding & Decking", code: "SCAFF-01", category: "restricted", hazardLevel: "warning", maxDwellMinutes: 120, requiredClearanceLevel: "Working at Heights Pass" },
+      { id: "fa-excavation", name: "Foundation Trench & Shoring Pit", code: "EXCAV-01", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 45 },
+      { id: "fa-laydown", name: "Rebar & Heavy Material Laydown", code: "LAYDOWN-01", category: "storage", hazardLevel: "normal", maxOccupancy: 20 },
+      { id: "fa-office", name: "Site Command Office & Welfare Hub", code: "SITE-HQ", category: "office", hazardLevel: "normal", maxOccupancy: 50 },
+      { id: "fa-assembly", name: "Emergency Evacuation Muster Point", code: "MUSTER-01", category: "safety", hazardLevel: "normal" }
+    ],
+    kpis: [
+      { key: "exclusion_breaches", label: "Exclusion Perimeter Breaches", unit: "events", target: 0, category: "safety", description: "Unauthorized entries into critical crane or excavation exclusion zones." },
+      { key: "ppe_compliance", label: "Hardhat & PPE Tag Verification", unit: "%", target: 98, category: "compliance", description: "Percentage of active workforce with valid RFID PPE telemetry." },
+      { key: "muster_drill_time", label: "Muster Clearance Latency", unit: "min", target: 3, category: "safety", description: "Time taken to account for 100% of personnel at emergency muster stations." },
+      { key: "subcontractor_density", label: "Trade Workforce Density", unit: "workers/zone", target: 12, category: "utilization", description: "Average density per active deck." }
+    ],
+    alertRuleTemplates: [
+      { id: "RULE-CONST-01", name: "Crane Swing Radius Exclusion Breach", category: "Safety", priorityThreshold: "Critical", targetZone: "Crane Slewing & Hoisting Perimeter", slaMinutes: 3, defaultAction: "Halt crane hoist, trigger horn strobe, notify rigger supervisor", triggerSiren: true, notifySmsEmail: true },
+      { id: "RULE-CONST-02", name: "Confined Trench Loitering Overstay", category: "Safety", priorityThreshold: "High", targetZone: "Foundation Trench & Shoring Pit", slaMinutes: 10, defaultAction: "Dispatch field safety officer for atmosphere check", notifySmsEmail: true },
+      { id: "RULE-CONST-03", name: "Missing Safety Hardhat Badge Signal", category: "Compliance", priorityThreshold: "Medium", targetZone: "All Active Work Areas", slaMinutes: 15, defaultAction: "Ping portal reader audio prompt for badge audit" }
+    ],
+    incidentCategories: [
+      { category: "Exclusion Zone Incursion", defaultSeverity: "Critical", description: "Personnel entered hazardous lifting or excavation perimeter.", defaultInvestigationChecklist: ["Verify crane lock-out status", "Inspect warning signage", "Check worker certification"] },
+      { category: "Fall Hazard Near-Miss", defaultSeverity: "High", description: "Personnel near unprotected leading edge without anchor verification.", defaultInvestigationChecklist: ["Inspect harness lanyard", "Verify static line integrity"] },
+      { category: "Unregistered Contractor Presence", defaultSeverity: "Medium", description: "Active badge detected without site induction record.", defaultInvestigationChecklist: ["Verify badge assignment", "Conduct gate audit"] }
+    ],
+    complianceFramework: "OSHA 1926 Safety & Health Regulations for Construction",
+    aiPersonaPrompt: "You are an elite Industrial EHS Director for Heavy Construction. Analyze RFID telemetry, perimeter incursions, equipment proximity, and worker dwell patterns.",
+    terminology: {
+      personnelSingular: "Worker",
+      personnelPlural: "Workers",
+      roleLabel: "Trade / Specialty",
+      idBadgeLabel: "Hardhat Tag ID",
+      safetyComplianceLabel: "PPE Compliance (Hardhat/Vest)",
+      zoneLabel: "Work Zone",
+      siteLabel: "Job Site",
+      organizationType: "Subcontractor / Trade Firm"
+    }
+  },
+  manufacturing: {
+    industry: "manufacturing",
+    subIndustry: "Advanced Discrete & Automotive Manufacturing",
+    companyName: "Precision Dynamics Manufacturing",
+    facilityName: "Plant 4 Assembly & Machining Center",
+    trackedEntities: ["people", "assets", "vehicles", "equipment"],
+    functionalAreas: [
+      { id: "fa-robotic-cell", name: "Automated Robotic Welding Cell", code: "ROBO-WELD", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 0, requiredClearanceLevel: "Automation Maintenance Specialist" },
+      { id: "fa-stamping", name: "Heavy Stamping & Press Line", code: "PRESS-01", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 30 },
+      { id: "fa-assembly-line", name: "Main Final Assembly Line (Stations 1-12)", code: "LINE-MAIN", category: "production", hazardLevel: "normal", maxOccupancy: 36 },
+      { id: "fa-tooling-crib", name: "High-Value Tooling & Die Crib", code: "CRIB-01", category: "storage", hazardLevel: "normal", maxOccupancy: 8 },
+      { id: "fa-qa-lab", name: "Quality Assurance & Metrology Lab", code: "QA-LAB", category: "office", hazardLevel: "normal", maxOccupancy: 12 },
+      { id: "fa-agv-corridor", name: "AGV / Forklift Internal Transit Lane", code: "AGV-LANE", category: "logistics", hazardLevel: "warning", speedLimitKmh: 12 }
+    ],
+    kpis: [
+      { key: "line_congestion", label: "Assembly Line Congestion Index", unit: "%", target: 8, category: "efficiency", description: "Frequency of operator overcrowding at specific workstation cells." },
+      { key: "machine_proximity_events", label: "Robotic Cell Proximity Violations", unit: "events", target: 0, category: "safety", description: "Human presence detected inside interlocked robot envelope during cycle." },
+      { key: "station_dwell_adherence", label: "Cycle Station Dwell Adherence", unit: "%", target: 96, category: "efficiency", description: "Percentage of takt-time cycles where technicians remain at designated stations." },
+      { key: "tooling_retrieval_latency", label: "Die & Tooling Retrieval Time", unit: "min", target: 5, category: "utilization", description: "Average time spent locating active die assets via UHF RFID." }
+    ],
+    alertRuleTemplates: [
+      { id: "RULE-MFG-01", name: "Robotic Cell Interlock Perimeter Breach", category: "Safety", priorityThreshold: "Critical", targetZone: "Automated Robotic Welding Cell", slaMinutes: 1, defaultAction: "Execute emergency machine stop (E-STOP), trigger overhead red beacon", triggerSiren: true, notifySmsEmail: true },
+      { id: "RULE-MFG-02", name: "AGV Transit Lane Pedestrian Stagnation", category: "Operational", priorityThreshold: "High", targetZone: "AGV / Forklift Internal Transit Lane", slaMinutes: 5, defaultAction: "Slow AGV fleet, sound transit alert, clear lane corridor", notifySmsEmail: false },
+      { id: "RULE-MFG-03", name: "Station Dwell Exceeded (Takt Time Variance)", category: "Operational", priorityThreshold: "Medium", targetZone: "Main Final Assembly Line (Stations 1-12)", slaMinutes: 12, defaultAction: "Notify team leader of potential production bottleneck" }
+    ],
+    incidentCategories: [
+      { category: "Machine Enclosure Incursion", defaultSeverity: "Critical", description: "Personnel entered automated robotic cell or press envelope while active.", defaultInvestigationChecklist: ["Verify light curtain integrity", "Check lockout-tagout log", "Interview cell operator"] },
+      { category: "Forklift / Pedestrian Near-Miss", defaultSeverity: "High", description: "Proximity breach between material handling equipment and line operator.", defaultInvestigationChecklist: ["Inspect speed telemetry", "Verify floor marking visibility"] },
+      { category: "Takt Time Bottleneck Deviation", defaultSeverity: "Medium", description: "Operator congestion causing multi-station production stop.", defaultInvestigationChecklist: ["Analyze station dwell logs", "Review parts supply feed"] }
+    ],
+    complianceFramework: "ISO 45001 / OSHA General Industry 1910 / Machine Safety ISO 13849",
+    aiPersonaPrompt: "You are an advanced Industrial IoT Production & Safety Intelligence AI for Manufacturing. Analyze operator flow, robotic cell interlocks, AGV transit lanes, and takt-time bottleneck telemetry.",
+    terminology: {
+      personnelSingular: "Operator / Technician",
+      personnelPlural: "Line Operators",
+      roleLabel: "Workstation / Shift Assignment",
+      idBadgeLabel: "Operator RFID Badge",
+      safetyComplianceLabel: "Machine Safety & ESD Clearance",
+      zoneLabel: "Production Cell / Line",
+      siteLabel: "Manufacturing Plant",
+      organizationType: "Shift / Production Unit"
+    }
+  },
+  office: {
+    industry: "office",
+    subIndustry: "Corporate Real Estate, Technology & Multi-Tenant Facilities",
+    companyName: "Apex Enterprise Tower HQ",
+    facilityName: "Corporate Headquarters Campus",
+    trackedEntities: ["people", "assets", "visitors"],
+    functionalAreas: [
+      { id: "fa-server-room", name: "Data Center & Critical Server Room", code: "DC-01", category: "restricted", hazardLevel: "critical", maxDwellMinutes: 60, requiredClearanceLevel: "Level 3 IT Infrastructure" },
+      { id: "fa-exec-suite", name: "Executive Suite & Boardroom", code: "EXEC-BOARD", category: "office", hazardLevel: "warning", maxOccupancy: 25 },
+      { id: "fa-open-workspace", name: "Open Collaboration Workspace (Floors 4-8)", code: "OPEN-DESK", category: "office", hazardLevel: "normal", maxOccupancy: 200 },
+      { id: "fa-conf-rooms", name: "Meeting & Conference Rooms", code: "CONF-ALL", category: "office", hazardLevel: "normal", maxOccupancy: 16, maxDwellMinutes: 180 },
+      { id: "fa-cafeteria", name: "Dining Commons & Town Hall", code: "CAFE-01", category: "common", hazardLevel: "normal", maxOccupancy: 150 },
+      { id: "fa-reception", name: "Main Lobby & Visitor Check-in Portal", code: "LOBBY-01", category: "common", hazardLevel: "normal" }
+    ],
+    kpis: [
+      { key: "space_utilization", label: "Peak Floor Space Utilization", unit: "%", target: 78, category: "utilization", description: "Percentage of workstation desks and collaboration zones occupied during peak hours." },
+      { key: "room_ghost_rate", label: "Conference Room Ghost Booking Rate", unit: "%", target: 5, category: "efficiency", description: "Booked conference rooms that had 0 actual badge entries." },
+      { key: "after_hours_presence", label: "After-Hours Building Occupancy", unit: "people", target: 10, category: "safety", description: "Personnel remaining inside the facility after scheduled operating hours." },
+      { key: "visitor_processing_time", label: "Visitor Badge Portal Latency", unit: "min", target: 2, category: "efficiency", description: "Average check-in to access-grant time at reception optical readers." }
+    ],
+    alertRuleTemplates: [
+      { id: "RULE-OFF-01", name: "Unauthorized Server Room Physical Access", category: "Security", priorityThreshold: "Critical", targetZone: "Data Center & Critical Server Room", slaMinutes: 2, defaultAction: "Alert campus physical security command, lock secondary biometric turnstile", notifySmsEmail: true },
+      { id: "RULE-OFF-02", name: "After-Hours Unescorted Visitor Movement", category: "Security", priorityThreshold: "High", targetZone: "Open Collaboration Workspace (Floors 4-8)", slaMinutes: 5, defaultAction: "Dispatch floor security warden to verify host escort", notifySmsEmail: true },
+      { id: "RULE-OFF-03", name: "Conference Room Capacity Exceeded", category: "Safety", priorityThreshold: "Low", targetZone: "Meeting & Conference Rooms", slaMinutes: 20, defaultAction: "Send automated Teams/Slack occupancy notification to meeting organizer" }
+    ],
+    incidentCategories: [
+      { category: "Restricted Facility Breach", defaultSeverity: "Critical", description: "Access badge read at restricted server room or executive wing without credentials.", defaultInvestigationChecklist: ["Review access badge log", "Audit CCTV timestamp match", "Deactivate compromised credential"] },
+      { category: "Overcapacity Building Alert", defaultSeverity: "Medium", description: "Floor population exceeded fire code occupancy limits.", defaultInvestigationChecklist: ["Direct occupants to adjacent lounges", "Adjust HVAC airflow"] },
+      { category: "Unreturned Visitor Badge", defaultSeverity: "Low", description: "Visitor departed building perimeter without dropping badge in return drop-box.", defaultInvestigationChecklist: ["Cancel badge token", "Send reminder notification"] }
+    ],
+    complianceFramework: "ASHRAE 62.1 Indoor Air Quality / NFPA 101 Life Safety Code / ISO 27001 Physical Security",
+    aiPersonaPrompt: "You are a Corporate Real Estate & Facilities Intelligence AI. Analyze desk utilization, meeting room usage patterns, after-hours presence, and physical access security.",
+    terminology: {
+      personnelSingular: "Employee / Resident",
+      personnelPlural: "Employees",
+      roleLabel: "Department / Team",
+      idBadgeLabel: "Corporate Access Badge",
+      safetyComplianceLabel: "Building Security Clearance",
+      zoneLabel: "Floor / Department Zone",
+      siteLabel: "Corporate Campus",
+      organizationType: "Business Unit / Tenant"
+    }
+  },
+  logistics: {
+    industry: "logistics",
+    subIndustry: "Warehousing, Supply Chain & Distribution Hubs",
+    companyName: "Global Transit Logistics Hub",
+    facilityName: "Distribution Center 9",
+    trackedEntities: ["people", "assets", "vehicles", "equipment"],
+    functionalAreas: [
+      { id: "fa-loading-dock", name: "Cross-Dock Inbound/Outbound Bays (1-24)", code: "DOCK-BAYS", category: "logistics", hazardLevel: "warning", maxDwellMinutes: 90 },
+      { id: "fa-high-bay", name: "High-Bay Automated Racking Aisles", code: "RACK-HIGH", category: "storage", hazardLevel: "warning", speedLimitKmh: 8 },
+      { id: "fa-cold-storage", name: "Cold Chain Controlled Temperature Vault", code: "COLD-VAULT", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 40, requiredClearanceLevel: "Cold-Gear Certified Personnel" },
+      { id: "fa-forklift-charging", name: "Forklift Battery Charging & Maintenance", code: "CHARGE-BAY", category: "hazardous", hazardLevel: "warning", maxOccupancy: 6 },
+      { id: "fa-pack-ship", name: "Sortation, Packing & Dispatch Line", code: "PACK-LINE", category: "production", hazardLevel: "normal", maxOccupancy: 45 },
+      { id: "fa-truck-yard", name: "External Truck Yard & Trailer Staging", code: "YARD-EXT", category: "logistics", hazardLevel: "warning", speedLimitKmh: 15 }
+    ],
+    kpis: [
+      { key: "dock_turnaround_time", label: "Average Dock Turnaround Dwell", unit: "min", target: 45, category: "efficiency", description: "Average elapsed time freight trailers and material handlers spend at loading docks." },
+      { key: "forklift_idle_time", label: "MHE / Forklift Idle Rate", unit: "%", target: 12, category: "utilization", description: "Proportion of active shift hours material handling equipment is stationary." },
+      { key: "cold_chain_dwell_breach", label: "Cold Vault Operator Dwell Overstays", unit: "events", target: 0, category: "safety", description: "Personnel exceeding cold temperature continuous exposure threshold." },
+      { key: "pedestrian_corridor_breach", label: "High-Bay Forklift Incursions", unit: "events", target: 0, category: "safety", description: "Pedestrians walking inside active forklift aisles without high-vis tags." }
+    ],
+    alertRuleTemplates: [
+      { id: "RULE-LOG-01", name: "Cold Storage Exposure Overstay Alert", category: "Safety", priorityThreshold: "Critical", targetZone: "Cold Chain Controlled Temperature Vault", slaMinutes: 3, defaultAction: "Sound thermal vault exit alarm, dispatch shift lead for welfare check", triggerSiren: true, notifySmsEmail: true },
+      { id: "RULE-LOG-02", name: "Pedestrian Detected in High-Bay Forklift Lane", category: "Safety", priorityThreshold: "High", targetZone: "High-Bay Automated Racking Aisles", slaMinutes: 2, defaultAction: "Alert forklift telemetry screens in quadrant, reduce aisle speed limits", notifySmsEmail: true },
+      { id: "RULE-LOG-03", name: "Dock Bay Turnaround Stagnation (>90m)", category: "Operational", priorityThreshold: "Medium", targetZone: "Cross-Dock Inbound/Outbound Bays (1-24)", slaMinutes: 15, defaultAction: "Notify logistics dispatcher of dock congestion" }
+    ],
+    incidentCategories: [
+      { category: "Thermal Exposure Threshold Breach", defaultSeverity: "Critical", description: "Worker exceeded safe duration in sub-zero freezer vault.", defaultInvestigationChecklist: ["Verify thermal PPE condition", "Conduct medical wellness check", "Review door interlock logs"] },
+      { category: "Forklift Vehicle Conflict", defaultSeverity: "High", description: "Proximity violation between forklift and walking warehouse staff.", defaultInvestigationChecklist: ["Review reader telemetry timestamps", "Inspect speed sensor data"] },
+      { category: "Dock Bay Collision / Driveaway", defaultSeverity: "High", description: "Trailer moved while dock plate or loader active.", defaultInvestigationChecklist: ["Inspect dock lock interlock", "Audit driver sign-in time"] }
+    ],
+    complianceFramework: "OSHA 1910.178 Powered Industrial Trucks / FDA FSMA Food Safety / ISO 28000 Supply Chain Security",
+    aiPersonaPrompt: "You are a Logistics & Supply Chain Telemetry Intelligence AI. Analyze material handler movements, dock turnaround bottlenecks, cold storage exposure limits, and forklift safety compliance.",
+    terminology: {
+      personnelSingular: "Warehouse Associate",
+      personnelPlural: "Warehouse Associates",
+      roleLabel: "Operations Role / Shift",
+      idBadgeLabel: "Warehouse RFID Badge",
+      safetyComplianceLabel: "MHE & Safety Vest Compliance",
+      zoneLabel: "Warehouse Sector / Aisle",
+      siteLabel: "Distribution Center",
+      organizationType: "Logistics Team / 3PL Carrier"
+    }
+  },
+  healthcare: {
+    industry: "healthcare",
+    subIndustry: "Hospitals, Acute Care & Clinical Health Networks",
+    companyName: "Metropolitan Health System",
+    facilityName: "Memorial Hospital & Trauma Center",
+    trackedEntities: ["people", "assets", "visitors"],
+    functionalAreas: [
+      { id: "fa-or", name: "Operating Rooms & Surgical Suites", code: "OR-SUITE", category: "restricted", hazardLevel: "critical", requiredClearanceLevel: "Surgical Team" },
+      { id: "fa-icu", name: "Intensive Care Unit (ICU)", code: "ICU-WARD", category: "hazardous", hazardLevel: "warning", maxOccupancy: 20 },
+      { id: "fa-er", name: "Emergency Department & Triage", code: "ER-TRIAGE", category: "production", hazardLevel: "warning" },
+      { id: "fa-pharma", name: "Inpatient Pharmacy & Narcotics Vault", code: "PHARMA-VAULT", category: "restricted", hazardLevel: "critical", requiredClearanceLevel: "Licensed Pharmacist" },
+      { id: "fa-pediatrics", name: "Pediatric & Neonatal Ward", code: "PEDI-01", category: "restricted", hazardLevel: "critical", requiredClearanceLevel: "Pediatric Care Staff" },
+      { id: "fa-general", name: "General Patient Wards & Corridors", code: "WARD-GEN", category: "common", hazardLevel: "normal" }
+    ],
+    kpis: [
+      { key: "code_pink_infant_protection", label: "Infant / Pediatric Perimeter Alerts", unit: "events", target: 0, category: "safety", description: "Patient transponder detected crossing ward exit boundary." },
+      { key: "nurse_to_patient_time", label: "Direct Bedside Nurse Dwell Ratio", unit: "%", target: 65, category: "efficiency", description: "Proportion of nursing shift spent directly inside patient rooms." },
+      { key: "pharmacy_vault_incursions", label: "Uncredentialed Pharmacy Access", unit: "events", target: 0, category: "compliance", description: "Unapproved personnel near restricted narcotics vault." },
+      { key: "critical_asset_search_time", label: "Infusion Pump / Crash Cart Locate Time", unit: "sec", target: 30, category: "efficiency", description: "Average latency to locate nearest RFID-tagged emergency crash cart." }
+    ],
+    alertRuleTemplates: [
+      { id: "RULE-HEALTH-01", name: "Pediatric Ward Boundary Exit Alert", category: "Security", priorityThreshold: "Critical", targetZone: "Pediatric & Neonatal Ward", slaMinutes: 1, defaultAction: "Lock automatic ward doors, sound emergency chime, notify nursing desk", triggerSiren: true, notifySmsEmail: true },
+      { id: "RULE-HEALTH-02", name: "Pharmacy Narcotics Vault Unauthorized Presence", category: "Security", priorityThreshold: "Critical", targetZone: "Inpatient Pharmacy & Narcotics Vault", slaMinutes: 2, defaultAction: "Alert hospital security, record reader audit log", notifySmsEmail: true },
+      { id: "RULE-HEALTH-03", name: "Operating Room Asset Sterilization Stagnation", category: "Compliance", priorityThreshold: "Medium", targetZone: "Operating Rooms & Surgical Suites", slaMinutes: 30, defaultAction: "Notify sterile processing team of pending tray return" }
+    ],
+    incidentCategories: [
+      { category: "Patient Ward Boundary Alert", defaultSeverity: "Critical", description: "Monitored patient badge crossed ward safety portal.", defaultInvestigationChecklist: ["Verify patient bedside status", "Inspect wristband signal strength"] },
+      { category: "Controlled Substance Access Variance", defaultSeverity: "Critical", description: "Access detected in medication vault outside pharmacy operating hours.", defaultInvestigationChecklist: ["Audit badge credential", "Review pharmacy dispensing register"] },
+      { category: "Emergency Asset Depletion", defaultSeverity: "High", description: "Zero crash carts available within ED quadrant.", defaultInvestigationChecklist: ["Locate nearest staged cart", "Review fleet re-distribution"] }
+    ],
+    complianceFramework: "The Joint Commission (TJC) / HIPAA Physical Safeguards / CMS Hospital CoP",
+    aiPersonaPrompt: "You are a Healthcare Clinical Flow & Patient Safety Intelligence AI. Analyze clinical staff workflows, patient ward boundaries, crash cart asset availability, and sanitization protocols.",
+    terminology: {
+      personnelSingular: "Clinician / Patient",
+      personnelPlural: "Clinical Staff & Patients",
+      roleLabel: "Clinical Specialty / Role",
+      idBadgeLabel: "RFID Wristband / Badge ID",
+      safetyComplianceLabel: "Sanitization & Bio-PPE Clearance",
+      zoneLabel: "Clinical Ward / Department",
+      siteLabel: "Hospital / Medical Center",
+      organizationType: "Clinical Unit / Department"
+    }
+  },
+  mining: {
+    industry: "mining",
+    subIndustry: "Subsurface & Open-Pit Extraction Operations",
+    companyName: "Terran Minerals International",
+    facilityName: "Mine Site Complex Beta",
+    trackedEntities: ["people", "assets", "vehicles", "equipment"],
+    functionalAreas: [
+      { id: "fa-shaft", name: "Underground Extraction Shaft (Level -340m)", code: "SHAFT-L3", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 360, requiredClearanceLevel: "Underground Mining Certification" },
+      { id: "fa-blast", name: "Scheduled Blast Exclusion Perimeter", code: "BLAST-EXCL", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 0 },
+      { id: "fa-crusher", name: "Primary Gyratory Crusher & Conveyor", code: "CRUSH-01", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 45 },
+      { id: "fa-refuge", name: "Underground Emergency Refuge Chamber", code: "REFUGE-CHAMBER", category: "safety", hazardLevel: "normal" },
+      { id: "fa-haul-road", name: "Autonomous Haul Truck Transit Road", code: "HAUL-ROAD", category: "logistics", hazardLevel: "critical", speedLimitKmh: 45 }
+    ],
+    kpis: [
+      { key: "blast_clearance", label: "Pre-Blast Zone Clearance", unit: "%", target: 100, category: "safety", description: "Verification that 100% of personnel and light vehicles have evacuated blast radius." },
+      { key: "underground_headcount", label: "Shaft Real-Time Headcount Match", unit: "%", target: 100, category: "compliance", description: "Discrepancy between brass board and automated RFID shaft portal telemetry." },
+      { key: "refuge_chamber_readiness", label: "Refuge Station Reachability", unit: "min", target: 5, category: "safety", description: "Maximum travel time from active stope to nearest monitored refuge station." },
+      { key: "heavy_hauler_proximity", label: "Light Vehicle / Hauler Proximity Alerts", unit: "events", target: 0, category: "safety", description: "Proximity alarms triggered between surface pickup trucks and 400t haul trucks." }
+    ],
+    alertRuleTemplates: [
+      { id: "RULE-MINE-01", name: "Active Blast Perimeter Incursion", category: "Safety", priorityThreshold: "Critical", targetZone: "Scheduled Blast Exclusion Perimeter", slaMinutes: 1, defaultAction: "Halt blast countdown, sound surface siren, notify blasting engineer", triggerSiren: true, notifySmsEmail: true },
+      { id: "RULE-MINE-02", name: "Underground Stagnation (Lone Miner Welfare)", category: "Safety", priorityThreshold: "Critical", targetZone: "Underground Extraction Shaft (Level -340m)", slaMinutes: 15, defaultAction: "Dispatch shift supervisor to last known beacon portal", triggerSiren: false, notifySmsEmail: true },
+      { id: "RULE-MINE-03", name: "Haul Truck Road Pedestrian Breach", category: "Safety", priorityThreshold: "Critical", targetZone: "Autonomous Haul Truck Transit Road", slaMinutes: 2, defaultAction: "Transmit emergency stop signal to autonomous hauler fleet", triggerSiren: true, notifySmsEmail: true }
+    ],
+    incidentCategories: [
+      { category: "Blast Exclusion Breach", defaultSeverity: "Critical", description: "Transponder recorded inside blast boundary during firing window.", defaultInvestigationChecklist: ["Verify firing circuit lock status", "Audit muster logs", "Interview blast foreman"] },
+      { category: "Shaft Evacuation Delay", defaultSeverity: "Critical", description: "Miner unaccounted for during shift change or ventilation drill.", defaultInvestigationChecklist: ["Check refuge chamber RFID logs", "Review telemetry trail"] },
+      { category: "Haul Road Conflict", defaultSeverity: "High", description: "Light vehicle entered haul road without radio clearance.", defaultInvestigationChecklist: ["Inspect vehicle transponder beacon", "Check dispatch logs"] }
+    ],
+    complianceFramework: "MSHA 30 CFR Part 75 Underground Coal / Part 57 Metal & Nonmetal Safety Standards",
+    aiPersonaPrompt: "You are a Mining Safety & Autonomous Extraction Telemetry Intelligence AI. Analyze shaft headcount telemetry, blast evacuation compliance, underground refuge chamber readiness, and hauler proximity.",
+    terminology: {
+      personnelSingular: "Miner / Technician",
+      personnelPlural: "Miners",
+      roleLabel: "Mining Duty / Trade",
+      idBadgeLabel: "Cap-Lamp Transponder EPC",
+      safetyComplianceLabel: "Underground Mine Safety Pass",
+      zoneLabel: "Shaft / Stope Section",
+      siteLabel: "Mine Site Complex",
+      organizationType: "Mining Crew / Contractor"
+    }
+  },
+  oil_gas: {
+    industry: "oil_gas",
+    subIndustry: "Offshore Platforms, Refineries & LNG Processing",
+    companyName: "Equator Energy Offshore",
+    facilityName: "Offshore Production Platform Alpha",
+    trackedEntities: ["people", "assets", "vehicles", "equipment", "visitors"],
+    functionalAreas: [
+      { id: "fa-drilling-floor", name: "Drill Floor & Wellhead Cell", code: "DRILL-CELL", category: "hazardous", hazardLevel: "critical", requiredClearanceLevel: "Drilling Specialist" },
+      { id: "fa-flare", name: "Flare Knockout & Hydrocarbon Processing", code: "FLARE-KNOCK", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 60 },
+      { id: "fa-lifeboat", name: "Emergency Evacuation Lifeboat Stations (1-4)", code: "LIFEBOAT-STN", category: "safety", hazardLevel: "normal" },
+      { id: "fa-helideck", name: "Helideck Landing & Refueling Area", code: "HELI-01", category: "logistics", hazardLevel: "warning", maxDwellMinutes: 30 },
+      { id: "fa-living-quarters", name: "Platform Living Quarters & Mess Hall", code: "LQ-MAIN", category: "common", hazardLevel: "normal" }
+    ],
+    kpis: [
+      { key: "pob_reconciliation", label: "Personnel On Board (POB) Match", unit: "%", target: 100, category: "safety", description: "Continuous match between flight manifest and live RFID POB count." },
+      { key: "lifeboat_muster_time", label: "Lifeboat Muster Completion Time", unit: "min", target: 4, category: "safety", description: "Time required to account for 100% of POB at designated primary lifeboat stations." },
+      { key: "hot_work_permit_compliance", label: "Hot Work Zone Clearance", unit: "%", target: 100, category: "compliance", description: "Percentage of personnel in process units with active gas-tested permits." },
+      { key: "toxic_gas_shelter_reach", label: "TR (Temporary Refuge) Access Latency", unit: "sec", target: 90, category: "safety", description: "Maximum transit time from process units to sealed toxic gas refuge." }
+    ],
+    alertRuleTemplates: [
+      { id: "RULE-OG-01", name: "Uncredentialed Wellhead Process Entry", category: "Safety", priorityThreshold: "Critical", targetZone: "Drill Floor & Wellhead Cell", slaMinutes: 1, defaultAction: "Alert OIM (Offshore Installation Manager), initiate acoustic beacon", triggerSiren: true, notifySmsEmail: true },
+      { id: "RULE-OG-02", name: "Lifeboat Muster Station Discrepancy", category: "Safety", priorityThreshold: "Critical", targetZone: "Emergency Evacuation Lifeboat Stations (1-4)", slaMinutes: 3, defaultAction: "Broadcast PA alert, dispatch search and rescue squad", triggerSiren: true, notifySmsEmail: true },
+      { id: "RULE-OG-03", name: "Helideck Incursion During Flight Window", category: "Safety", priorityThreshold: "High", targetZone: "Helideck Landing & Refueling Area", slaMinutes: 2, defaultAction: "Wave off approaching helicopter, clear helideck deck crew", notifySmsEmail: true }
+    ],
+    incidentCategories: [
+      { category: "POB Discrepancy Alert", defaultSeverity: "Critical", description: "Mismatch between manifested personnel and RFID tag verification.", defaultInvestigationChecklist: ["Audit helideck boarding log", "Initiate emergency headcount"] },
+      { category: "Process Unit Boundary Breach", defaultSeverity: "Critical", description: "Worker detected in high-pressure hydrocarbon sector without permit.", defaultInvestigationChecklist: ["Verify permit to work (PTW)", "Review gas monitor log"] },
+      { category: "Hot Work Exclusion Near-Miss", defaultSeverity: "High", description: "Sparks or equipment present near live gas line.", defaultInvestigationChecklist: ["Inspect gas test certificate", "Audit fire watch presence"] }
+    ],
+    complianceFramework: "API RP 75 Offshore Safety / BSEE 30 CFR 250 / ISO 17776 Petroleum Risk Assessment",
+    aiPersonaPrompt: "You are an Offshore Oil & Gas EHS & Platform Operations AI. Analyze Personnel-On-Board (POB) counts, lifeboat muster drills, wellhead safety boundaries, and hazardous process zones.",
+    terminology: {
+      personnelSingular: "Crew Member / Specialist",
+      personnelPlural: "Platform Crew",
+      roleLabel: "Discipline / Duty Station",
+      idBadgeLabel: "ATEX Zone 0 RFID Tag",
+      safetyComplianceLabel: "Offshore Survival & PTW Clearance",
+      zoneLabel: "Platform Module / Deck",
+      siteLabel: "Offshore Facility / Rig",
+      organizationType: "Operating Company / Contractor"
+    }
+  },
+  aviation: {
+    industry: "aviation",
+    subIndustry: "Commercial Airports, Airside Operations & MRO Hangars",
+    companyName: "International Airport Authority",
+    facilityName: "Terminal 2 & Airside Apron",
+    trackedEntities: ["people", "assets", "vehicles", "equipment"],
+    functionalAreas: [
+      { id: "fa-active-runway", name: "Active Runway & Taxiway Safety Envelope", code: "RUNWAY-01", category: "hazardous", hazardLevel: "critical", maxDwellMinutes: 0, requiredClearanceLevel: "Airfield Operations Vehicle Permit" },
+      { id: "fa-apron", name: "Aircraft Parking Stand & Ground Handling Apron", code: "APRON-STANDS", category: "logistics", hazardLevel: "warning", speedLimitKmh: 25 },
+      { id: "fa-baggage-belly", name: "Baggage Make-up & Sorting Vault", code: "BAG-VAULT", category: "storage", hazardLevel: "normal", maxOccupancy: 40 },
+      { id: "fa-hangar", name: "Heavy Maintenance Hangar Bay", code: "HANGAR-01", category: "production", hazardLevel: "warning", maxOccupancy: 30 },
+      { id: "fa-customs-sterile", name: "Sterile International Border Security Area", code: "STERILE-BORDER", category: "restricted", hazardLevel: "critical", requiredClearanceLevel: "Customs & Border Protection Pass" }
+    ],
+    kpis: [
+      { key: "runway_incursions", label: "Runway & Taxiway Incursions", unit: "events", target: 0, category: "safety", description: "Unauthorized ground vehicle or personnel crossing runway hold line." },
+      { key: "aircraft_turn_time", label: "Aircraft Ground Turnaround Latency", unit: "min", target: 35, category: "efficiency", description: "Elapsed time from chocks-on to pushback across ground handling crews." },
+      { key: "airside_speeding_events", label: "Apron Ground Vehicle Speed Violations", unit: "events", target: 0, category: "safety", description: "Tugs or belt loaders exceeding the 25 km/h airside speed limit." },
+      { key: "sterile_perimeter_breaches", label: "Sterile Transit Boundary Incursions", unit: "events", target: 0, category: "compliance", description: "Ground staff crossing from non-sterile to sterile international transit zones." }
+    ],
+    alertRuleTemplates: [
+      { id: "RULE-AV-01", name: "Runway Hold Line Incursion Alert", category: "Safety", priorityThreshold: "Critical", targetZone: "Active Runway & Taxiway Safety Envelope", slaMinutes: 1, defaultAction: "Flash red runway status lights, alert Air Traffic Control tower", triggerSiren: true, notifySmsEmail: true },
+      { id: "RULE-AV-02", name: "Apron Ground Vehicle Collision Risk", category: "Safety", priorityThreshold: "High", targetZone: "Aircraft Parking Stand & Ground Handling Apron", slaMinutes: 2, defaultAction: "Alert vehicle telematics, dispatch airside safety marshal", notifySmsEmail: true },
+      { id: "RULE-AV-03", name: "Sterile Boundary Uncredentialed Crossing", category: "Security", priorityThreshold: "Critical", targetZone: "Sterile International Border Security Area", slaMinutes: 2, defaultAction: "Alert airport police, lock transit turnstiles", notifySmsEmail: true }
+    ],
+    incidentCategories: [
+      { category: "Runway Safety Incursion", defaultSeverity: "Critical", description: "Vehicle or personnel entered active runway strip without ATC clearance.", defaultInvestigationChecklist: ["Review ATC radio transcript", "Inspect vehicle GPS/RFID track", "Test stop bar lights"] },
+      { category: "Aircraft Ground Damage Near-Miss", defaultSeverity: "High", description: "Ground service equipment positioned within 1.5m of aircraft skin.", defaultInvestigationChecklist: ["Inspect aircraft fuselage", "Review tug telemetry log"] },
+      { category: "Airside Security Bypass", defaultSeverity: "Critical", description: "Worker bypassed TSA/border checkpoint into sterile concourse.", defaultInvestigationChecklist: ["Audit SIDA badge token", "Review portal turnstile log"] }
+    ],
+    complianceFramework: "FAA Part 139 Airport Certification / ICAO Annex 14 Aerodromes / TSA Part 1542 Airport Security",
+    aiPersonaPrompt: "You are an Airside Airport Operations & Flight Turnaround Intelligence AI. Analyze apron ground handling efficiency, runway safety buffer compliance, and airside vehicle telemetry.",
+    terminology: {
+      personnelSingular: "Airside Staff / Handler",
+      personnelPlural: "Ground Handling Crews",
+      roleLabel: "Ground Service Specialty",
+      idBadgeLabel: "SIDA RFID Security Badge",
+      safetyComplianceLabel: "Airside Driver & Security Pass",
+      zoneLabel: "Apron Stand / Terminal Sector",
+      siteLabel: "Airport Terminal & Airfield",
+      organizationType: "Airline / Ground Handler"
+    }
+  },
+  custom: {
+    industry: "custom",
+    subIndustry: "Custom Enterprise & Multi-Facility Operations",
+    companyName: "Custom Enterprise Organization",
+    facilityName: "Primary Operational Facility",
+    trackedEntities: ["people", "assets", "vehicles", "equipment", "visitors"],
+    functionalAreas: [
+      { id: "fa-critical-1", name: "High-Security Operational Zone", code: "CRIT-01", category: "restricted", hazardLevel: "critical", maxOccupancy: 10, maxDwellMinutes: 60 },
+      { id: "fa-ops-1", name: "General Operations Floor", code: "OPS-01", category: "production", hazardLevel: "normal", maxOccupancy: 100 },
+      { id: "fa-logistics-1", name: "Loading & Logistics Bay", code: "LOG-01", category: "logistics", hazardLevel: "warning" },
+      { id: "fa-admin-1", name: "Administrative & Staff Lounge", code: "ADMIN-01", category: "office", hazardLevel: "normal", maxOccupancy: 50 }
+    ],
+    kpis: [
+      { key: "facility_utilization", label: "Overall Facility Space Utilization", unit: "%", target: 80, category: "utilization", description: "Percentage of functional areas occupied by authorized personnel." },
+      { key: "restricted_perimeter_alerts", label: "Restricted Area Incursions", unit: "events", target: 0, category: "safety", description: "Unauthorized detections in restricted functional areas." },
+      { key: "telemetry_coverage_rate", label: "Active Hardware Reader Health", unit: "%", target: 99, category: "compliance", description: "Percentage of RFID and telemetry hardware gateways operating normally." }
+    ],
+    alertRuleTemplates: [
+      { id: "RULE-CUST-01", name: "Restricted Zone Unauthorized Access", category: "Security", priorityThreshold: "Critical", targetZone: "High-Security Operational Zone", slaMinutes: 3, defaultAction: "Alert operations manager, dispatch floor security", triggerSiren: true, notifySmsEmail: true },
+      { id: "RULE-CUST-02", name: "Extended Dwell Duration Warning", category: "Operational", priorityThreshold: "Medium", targetZone: "General Operations Floor", slaMinutes: 30, defaultAction: "Log dwell audit, conduct welfare check" }
+    ],
+    incidentCategories: [
+      { category: "Unauthorized Area Incursion", defaultSeverity: "Critical", description: "Entity detected in restricted zone without valid clearance credentials.", defaultInvestigationChecklist: ["Audit badge credential", "Review camera footage"] },
+      { category: "Operational Stagnation", defaultSeverity: "Medium", description: "Entity dwell exceeded maximum permitted duration.", defaultInvestigationChecklist: ["Check operator welfare", "Review task assignment"] }
+    ],
+    complianceFramework: "ISO 9001 / ISO 45001 Enterprise Operational Standards",
+    aiPersonaPrompt: "You are a Versatile B2B Enterprise Telemetry & Operations Intelligence AI. Analyze real-time RFID scans, zone dwell times, and operational patterns across the facility.",
+    terminology: {
+      personnelSingular: "Personnel",
+      personnelPlural: "Personnel",
+      roleLabel: "Role / Designation",
+      idBadgeLabel: "RFID Tag / Badge ID",
+      safetyComplianceLabel: "Access & Safety Clearance",
+      zoneLabel: "Operational Zone",
+      siteLabel: "Facility Complex",
+      organizationType: "Department / Organization"
+    }
+  }
+};
+
+// src/server/services/industryIntelligenceEngine.ts
+async function getTenantIntelligenceProfile(tenantId = "default") {
+  const effectiveId = tenantId || "default";
+  try {
+    const customProfile = await getDocById("industry_intelligence_profiles", effectiveId, effectiveId);
+    if (customProfile && customProfile.industry) {
+      return {
+        ...customProfile,
+        tenantId: effectiveId
+      };
+    }
+    const legacyDoc = await getDocById("settings", "industry_config", effectiveId);
+    const chosenIndustry = legacyDoc?.industryId || "construction";
+    const basePreset = INDUSTRY_PRESET_PROFILES[chosenIndustry] || INDUSTRY_PRESET_PROFILES.construction;
+    return {
+      ...basePreset,
+      tenantId: effectiveId,
+      companyName: legacyDoc?.appTitle || basePreset.companyName,
+      complianceFramework: legacyDoc?.complianceFramework || basePreset.complianceFramework,
+      aiPersonaPrompt: legacyDoc?.aiPersonaPrompt || basePreset.aiPersonaPrompt
+    };
+  } catch (err) {
+    console.warn(`[IntelligenceEngine] Fallback for tenant ${effectiveId}:`, err?.message || err);
+    return {
+      ...INDUSTRY_PRESET_PROFILES.construction,
+      tenantId: effectiveId
+    };
+  }
+}
+async function saveTenantIntelligenceProfile(profileInput, tenantId = "default") {
+  const effectiveId = tenantId || profileInput.tenantId || "default";
+  const existing = await getTenantIntelligenceProfile(effectiveId);
+  const merged = {
+    ...existing,
+    ...profileInput,
+    tenantId: effectiveId,
+    updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+  };
+  const parsed = industryProfileSchema.safeParse(merged);
+  if (!parsed.success) {
+    throw new Error(`Invalid Industry Profile: ${parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join(", ")}`);
+  }
+  await upsertDoc("industry_intelligence_profiles", {
+    id: effectiveId,
+    ...merged
+  }, effectiveId);
+  await upsertDoc("settings", {
+    id: "industry_config",
+    organizationId: effectiveId,
+    industryId: merged.industry,
+    industryName: merged.subIndustry || merged.industry,
+    appTitle: merged.companyName || merged.terminology.siteLabel,
+    appSubtitle: merged.facilityName || "B2B Enterprise Telemetry",
+    complianceFramework: merged.complianceFramework,
+    aiPersonaPrompt: merged.aiPersonaPrompt,
+    terminology: merged.terminology,
+    defaultRoles: merged.functionalAreas.map((f) => f.name),
+    defaultDepartments: [merged.companyName || "Main Operations"],
+    defaultZones: merged.functionalAreas.map((f) => ({
+      id: f.id,
+      name: f.name,
+      category: f.category,
+      hazardLevel: f.hazardLevel
+    })),
+    updatedAt: merged.updatedAt
+  }, effectiveId);
+  return merged;
+}
+function evaluateDeterministicRules(profile, input) {
+  const { tagId, location, personName, role, entityType = "people", rssi, dwellMinutes = 0, currentOccupancy = 1 } = input;
+  const nowIso = input.timestamp || (/* @__PURE__ */ new Date()).toISOString();
+  const locLower = (location || "").toLowerCase();
+  const matchedArea = profile.functionalAreas.find((area) => {
+    const areaNameLower = area.name.toLowerCase();
+    const areaCodeLower = (area.code || "").toLowerCase();
+    return locLower === areaNameLower || locLower.includes(areaNameLower) || areaNameLower.includes(locLower) || areaCodeLower && locLower.includes(areaCodeLower);
+  });
+  let aiRiskScore = 12;
+  let aiRiskLevel = "SAFE";
+  let aiComplianceScore = 98;
+  let aiActivityInferred = `Routine presence in ${location}`;
+  let aiAnomaly = null;
+  let aiInsight = `Normal ${profile.terminology.personnelSingular.toLowerCase()} telemetry registered in ${location}.`;
+  let triggeredAlert = null;
+  let triggeredIncident = null;
+  if (matchedArea) {
+    aiActivityInferred = `Operations in ${matchedArea.name}`;
+    if (matchedArea.hazardLevel === "critical") {
+      const isRoleAuthorized = matchedArea.allowedRoles && matchedArea.allowedRoles.length > 0 ? matchedArea.allowedRoles.some((r) => (role || "").toLowerCase().includes(r.toLowerCase())) : false;
+      if (!isRoleAuthorized && matchedArea.category === "hazardous") {
+        aiRiskScore = 92;
+        aiRiskLevel = "CRITICAL";
+        aiComplianceScore = 65;
+        aiActivityInferred = `Restricted Hazard Zone Incursion: ${matchedArea.name}`;
+        aiAnomaly = {
+          title: `${matchedArea.name} Incursion`,
+          description: `${personName} detected in critical area (${matchedArea.name}) without verified credentials.`,
+          severity: "CRITICAL"
+        };
+        aiInsight = `Immediate Warning: ${matchedArea.name} perimeter boundary crossed by ${personName}. Safety interlocks and audit logs engaged.`;
+        triggeredAlert = {
+          title: `${matchedArea.name} Breach Alert`,
+          category: "Safety",
+          priority: "Critical",
+          description: `Unauthorized entry into ${matchedArea.name}. Clearance check required immediately.`,
+          targetZone: matchedArea.name,
+          triggerSiren: true
+        };
+        triggeredIncident = {
+          title: `Critical Incursion in ${matchedArea.name}`,
+          category: profile.incidentCategories[0]?.category || "Restricted Area Incursion",
+          severity: "Critical",
+          description: `Personnel ${personName} crossed restricted threshold of ${matchedArea.name} during active operations.`,
+          locationZone: matchedArea.name
+        };
+      } else if (!isRoleAuthorized && matchedArea.category === "restricted") {
+        aiRiskScore = 80;
+        aiRiskLevel = "HIGH";
+        aiComplianceScore = 78;
+        aiActivityInferred = `Uncredentialed Access in ${matchedArea.name}`;
+        aiAnomaly = {
+          title: `Access Clearance Warning in ${matchedArea.name}`,
+          description: `${personName} entered ${matchedArea.name} requiring higher security clearance (${matchedArea.requiredClearanceLevel || "Restricted"}).`,
+          severity: "HIGH"
+        };
+        aiInsight = `Access Security Alert: Badge ${tagId} detected in ${matchedArea.name}. Clearance audit dispatched.`;
+        triggeredAlert = {
+          title: `${matchedArea.name} Clearance Alert`,
+          category: "Security",
+          priority: "High",
+          description: `Unapproved presence in ${matchedArea.name}.`,
+          targetZone: matchedArea.name,
+          triggerSiren: false
+        };
+      }
+    } else if (matchedArea.hazardLevel === "warning") {
+      aiRiskScore = 40;
+      aiRiskLevel = "LOW";
+      aiComplianceScore = 92;
+      aiActivityInferred = `Monitored Work Area: ${matchedArea.name}`;
+      aiInsight = `${matchedArea.name} telemetry verified. Standard operational protocols active.`;
+    }
+    if (matchedArea.maxDwellMinutes && dwellMinutes > matchedArea.maxDwellMinutes) {
+      aiRiskScore = Math.max(aiRiskScore, 68);
+      aiRiskLevel = aiRiskLevel === "CRITICAL" ? "CRITICAL" : "MEDIUM";
+      aiComplianceScore = Math.min(aiComplianceScore, 82);
+      aiAnomaly = {
+        title: `Extended Dwell Duration in ${matchedArea.name}`,
+        description: `${personName} exceeded permitted dwell limit (${dwellMinutes}m > ${matchedArea.maxDwellMinutes}m max).`,
+        severity: "MEDIUM"
+      };
+      aiInsight = `Dwell Alert: Stagnation detected in ${matchedArea.name}. Automated welfare check recommended.`;
+      if (!triggeredAlert) {
+        triggeredAlert = {
+          title: `${matchedArea.name} Dwell Alert`,
+          category: "Operational",
+          priority: "Medium",
+          description: `Continuous dwell duration exceeded threshold in ${matchedArea.name}.`,
+          targetZone: matchedArea.name,
+          triggerSiren: false
+        };
+      }
+    }
+    if (matchedArea.maxOccupancy && currentOccupancy > matchedArea.maxOccupancy) {
+      aiRiskScore = Math.max(aiRiskScore, 60);
+      aiRiskLevel = aiRiskLevel === "CRITICAL" || aiRiskLevel === "HIGH" ? aiRiskLevel : "MEDIUM";
+      aiComplianceScore = Math.min(aiComplianceScore, 85);
+      if (!aiAnomaly) {
+        aiAnomaly = {
+          title: `Capacity Limit Exceeded in ${matchedArea.name}`,
+          description: `Current headcount (${currentOccupancy}) exceeds designated threshold (${matchedArea.maxOccupancy}).`,
+          severity: "MEDIUM"
+        };
+      }
+    }
+  }
+  if (rssi && rssi < -84) {
+    aiRiskScore = Math.min(100, aiRiskScore + 10);
+    if (!aiAnomaly) {
+      aiAnomaly = {
+        title: "Weak RFID Antenna Gateway Signal",
+        description: `Signal strength of ${rssi} dBm detected near perimeter of ${location}. Check antenna alignment.`,
+        severity: "LOW"
+      };
+    }
+  }
+  return {
+    tagId,
+    location,
+    personName,
+    timestamp: nowIso,
+    aiRiskScore,
+    aiRiskLevel,
+    aiComplianceScore,
+    aiActivityInferred,
+    aiAnomaly,
+    aiInsight,
+    triggeredAlert,
+    triggeredIncident
+  };
+}
+async function calculateIndustryKpis(profile, tenantId) {
+  const effectiveId = tenantId || profile.tenantId || "default";
+  try {
+    const [incidents, alerts, tags] = await Promise.all([
+      getCollectionDocs("incidents", void 0, effectiveId),
+      getCollectionDocs("alerts", void 0, effectiveId),
+      getCollectionDocs("live_tags", void 0, effectiveId)
+    ]);
+    const incidentCount = incidents.length;
+    const criticalAlerts = alerts.filter((a) => a.priority === "Critical" || a.severity === "Critical").length;
+    const activeTagCount = tags.length;
+    return profile.kpis.map((kpi) => {
+      let calculatedValue = kpi.target;
+      switch (kpi.key) {
+        case "exclusion_breaches":
+        case "machine_proximity_events":
+        case "cold_chain_dwell_breach":
+        case "runway_incursions":
+        case "blast_clearance":
+        case "restricted_perimeter_alerts":
+          calculatedValue = criticalAlerts;
+          break;
+        case "ppe_compliance":
+        case "station_dwell_adherence":
+        case "pob_reconciliation":
+        case "underground_headcount":
+        case "telemetry_coverage_rate":
+          calculatedValue = Math.max(88, Math.min(100, 100 - criticalAlerts * 2));
+          break;
+        case "space_utilization":
+        case "facility_utilization":
+          calculatedValue = Math.min(100, Math.max(30, activeTagCount * 4));
+          break;
+        default:
+          calculatedValue = kpi.target;
+      }
+      let status = "optimal";
+      if (kpi.category === "safety" && calculatedValue > kpi.target) {
+        status = "critical";
+      } else if (kpi.category === "compliance" && calculatedValue < kpi.target) {
+        status = "warning";
+      }
+      return {
+        key: kpi.key,
+        label: kpi.label,
+        value: calculatedValue,
+        unit: kpi.unit,
+        target: kpi.target,
+        status
+      };
+    });
+  } catch {
+    return profile.kpis.map((k) => ({
+      key: k.key,
+      label: k.label,
+      value: k.target,
+      unit: k.unit,
+      target: k.target,
+      status: "optimal"
+    }));
+  }
+}
+
 // src/server/routes/ai.ts
 var activeIndustryPersona = "You are an intelligent Industrial IoT Safety & Personnel Telemetry AI Director.";
 var activeComplianceStandard = "Enterprise Safety & Compliance Standards (OSHA / ISO 45001 / JCAHO)";
 var activeIndustryTitle = "Aperture People Tracking";
 async function resolveIndustryContext(orgId = "default") {
   try {
-    const doc = await getDocById("settings", "industry_config", orgId) || await getDocById("settings", "industry_config", "ALL");
-    if (doc) {
-      if (doc.aiPersonaPrompt) activeIndustryPersona = doc.aiPersonaPrompt;
-      if (doc.complianceFramework) activeComplianceStandard = doc.complianceFramework;
-      if (doc.appTitle) activeIndustryTitle = doc.appTitle;
-      return doc;
+    const profile = await getTenantIntelligenceProfile(orgId);
+    if (profile) {
+      activeIndustryPersona = profile.aiPersonaPrompt;
+      activeComplianceStandard = profile.complianceFramework;
+      activeIndustryTitle = profile.companyName || profile.terminology.siteLabel;
+      return profile;
     }
   } catch {
   }
@@ -1510,20 +2191,67 @@ async function generateContentWithFallback(ai, params) {
   }
   throw lastError || new Error("All Gemini models failed");
 }
-function getFallbackCopilotResponse(question, context) {
+function getFallbackCopilotResponse(question, context, profile) {
   const workers = context?.workers || context?.people || context?.registeredPeople;
   const totalWorkers = Array.isArray(workers) ? workers.length : 0;
-  const answer = totalWorkers > 0 ? `Aperture Construction Safety AI Copilot is active. Tracking ${totalWorkers} verified worker record(s) on-site. Telemetry streams and MongoDB audit logging are live.` : "Aperture Construction Safety AI Copilot is active. Live personnel tracking and UHF RFID hardware readers are fully operational across all facility zones.";
+  const company = profile?.companyName || profile?.facilityName || "Enterprise Operations";
+  const pLabel = profile?.terminology?.personnelPlural?.toLowerCase() || "personnel";
+  const answer = totalWorkers > 0 ? `${company} Industry Intelligence AI Copilot is active. Tracking ${totalWorkers} verified ${pLabel} record(s) on-site. Telemetry streams and audit logging are live.` : `${company} Industry Intelligence AI Copilot is active. Real-time telemetry tracking and RFID hardware readers are fully operational across all facility zones.`;
   return {
     answer,
     suggestedActions: [
-      "Open Live Site Map",
-      "Audit Active Readers",
+      "Open Spatial Map",
+      "Audit Active Gateways",
       "Review Alert Center"
     ]
   };
 }
 var aiRouter = (0, import_express.Router)();
+aiRouter.get(["/intelligence/presets", "/api/intelligence/presets"], (req, res) => {
+  return res.json({
+    success: true,
+    presets: INDUSTRY_PRESET_PROFILES
+  });
+});
+aiRouter.get(["/intelligence/profile", "/api/intelligence/profile"], async (req, res) => {
+  const orgId = req.user?.organizationId || req.query.organizationId || "default";
+  try {
+    const profile = await getTenantIntelligenceProfile(orgId);
+    return res.json({
+      success: true,
+      profile
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+aiRouter.post(["/intelligence/profile", "/api/intelligence/profile"], requireAuth, async (req, res) => {
+  const orgId = req.user?.organizationId || req.body?.tenantId || "default";
+  try {
+    const saved = await saveTenantIntelligenceProfile(req.body, orgId);
+    return res.json({
+      success: true,
+      message: "Industry intelligence profile updated successfully",
+      profile: saved
+    });
+  } catch (err) {
+    return res.status(400).json({ success: false, error: err.message });
+  }
+});
+aiRouter.get(["/intelligence/kpis", "/api/intelligence/kpis"], async (req, res) => {
+  const orgId = req.user?.organizationId || req.query.organizationId || "default";
+  try {
+    const profile = await getTenantIntelligenceProfile(orgId);
+    const kpis = await calculateIndustryKpis(profile, orgId);
+    return res.json({
+      success: true,
+      industry: profile.industry,
+      kpis
+    });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 var runtimeGeminiKey = null;
 var geminiAuthDisabled = false;
 var lastGeminiAuthError = null;
@@ -1542,9 +2270,6 @@ function getGeminiApiKey() {
     return void 0;
   }
   return key;
-}
-function isGeminiAvailable() {
-  return Boolean(getGeminiApiKey());
 }
 function markGeminiAuthFailed(reason = "Authentication failed") {
   geminiAuthDisabled = true;
@@ -1584,21 +2309,21 @@ var aiRateLimiter = (0, import_express_rate_limit.default)({
   standardHeaders: true,
   legacyHeaders: false
 });
-var analyzeRfidSchema = import_zod.z.object({
-  liveTags: import_zod.z.array(import_zod.z.any()).optional().default([]),
-  historyRecords: import_zod.z.array(import_zod.z.any()).optional().default([]),
-  scans: import_zod.z.array(import_zod.z.any()).optional().default([]),
-  zones: import_zod.z.array(import_zod.z.any()).optional().default([]),
-  apiKeySource: import_zod.z.string().optional(),
-  context: import_zod.z.string().optional()
+var analyzeRfidSchema = import_zod2.z.object({
+  liveTags: import_zod2.z.array(import_zod2.z.any()).optional().default([]),
+  historyRecords: import_zod2.z.array(import_zod2.z.any()).optional().default([]),
+  scans: import_zod2.z.array(import_zod2.z.any()).optional().default([]),
+  zones: import_zod2.z.array(import_zod2.z.any()).optional().default([]),
+  apiKeySource: import_zod2.z.string().optional(),
+  context: import_zod2.z.string().optional()
 });
-var copilotSchema = import_zod.z.object({
-  question: import_zod.z.string().min(1),
-  history: import_zod.z.array(import_zod.z.object({
-    role: import_zod.z.enum(["user", "assistant"]),
-    text: import_zod.z.string()
+var copilotSchema = import_zod2.z.object({
+  question: import_zod2.z.string().min(1),
+  history: import_zod2.z.array(import_zod2.z.object({
+    role: import_zod2.z.enum(["user", "assistant"]),
+    text: import_zod2.z.string()
   })).optional().default([]),
-  context: import_zod.z.any().optional()
+  context: import_zod2.z.any().optional()
 });
 function getDynamicIndustryAnalysis(cfg, combinedScans, zones) {
   const indName = cfg?.industryName || "Personnel Tracking";
@@ -1634,11 +2359,12 @@ function getDynamicIndustryAnalysis(cfg, combinedScans, zones) {
     ] : [],
     optimizations: [
       {
-        category: "Worker Safety",
-        title: "Exclusion Zone Proximity Monitoring",
+        category: `${safeLabel}`,
+        title: `${zLabel} Proximity & Flow Optimization`,
         impact: "HIGH",
-        description: "Automated audible beacon alerts when personnel enter heavy machinery radius.",
-        actionableSteps: "1. Calibrate UHF reader gateways\n2. Verify worker hardhat tag assignments"
+        description: `Automated audible alert notifications when ${pPlural.toLowerCase()} enter monitored perimeters.`,
+        actionableSteps: `1. Calibrate hardware reader gateways
+2. Verify ${idLabel} badge assignments`
       }
     ],
     personnelEfficiency: combinedScans.slice(0, 4).map((s) => ({
@@ -1650,10 +2376,10 @@ function getDynamicIndustryAnalysis(cfg, combinedScans, zones) {
     })),
     riskForecasts: [
       {
-        zone: "Structure Work Area",
+        zone: zones?.[0]?.name || `${zLabel} 1`,
         riskScore: 35,
         trend: "Stable",
-        mainFactor: "Standard structural framing and active personnel flow"
+        mainFactor: `Standard operations and active ${pPlural.toLowerCase()} movement`
       }
     ],
     recommendations: [
@@ -1682,7 +2408,7 @@ aiRouter.post(["/analyze-rfid-results", "/ai/analyze-telemetry", "/ai/generate-i
   const industryDoc = await resolveIndustryContext(orgId);
   const personaPrompt = industryDoc?.aiPersonaPrompt || activeIndustryPersona;
   const std = industryDoc?.complianceFramework || activeComplianceStandard;
-  const indName = industryDoc?.industryName || "Multi-Facility";
+  const indName = industryDoc?.subIndustry || industryDoc?.industryName || industryDoc?.industry || "Multi-Facility";
   const pPlural = industryDoc?.terminology?.personnelPlural || "Personnel";
   if (!apiKey || isGeminiAuthFailed()) {
     const dynamicAnalysis = getDynamicIndustryAnalysis(industryDoc, combinedScans, safeZones);
@@ -1694,9 +2420,9 @@ aiRouter.post(["/analyze-rfid-results", "/ai/analyze-telemetry", "/ai/generate-i
 
 Industry Context: ${indName}
 Compliance Regulatory Standard: ${std}
-Facility / Site Context: ${context || industryDoc?.primarySiteName || "Main Operating Site"}
+Facility / Site Context: ${context || industryDoc?.facilityName || industryDoc?.primarySiteName || "Main Operating Site"}
 Total Active Ingested Tags: ${combinedScans.length}
-Monitored Zones: ${safeZones.map((z5) => z5?.name || z5?.id || "Zone").join(", ")}
+Monitored Zones: ${safeZones.map((z7) => z7?.name || z7?.id || "Zone").join(", ")}
 
 Live Ingested Telemetry Data:
 ${JSON.stringify(combinedScans.slice(0, 20), null, 2)}
@@ -1803,15 +2529,18 @@ aiRouter.post("/ai-copilot", aiRateLimiter, async (req, res) => {
     return res.status(400).json({ error: "Invalid question format" });
   }
   const { question, history, context } = parseResult.data;
+  const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
+  const tenantProfile = await getTenantIntelligenceProfile(orgId);
   const apiKey = getGeminiApiKey();
   if (!apiKey || isGeminiAuthFailed()) {
-    return res.json(getFallbackCopilotResponse(question, context));
+    return res.json(getFallbackCopilotResponse(question, context, tenantProfile));
   }
   try {
     const ai = new import_genai.GoogleGenAI({ apiKey });
     const historyText = history && history.length > 0 ? history.map((h) => `${h.role === "user" ? "User" : "Copilot"}: ${h.text}`).join("\n") : "No prior history.";
-    const systemPrompt = `You are an expert EHS (Environmental Health & Safety) AI Copilot for the Aperture Construction People Tracking System connected live to MongoDB Atlas.
-Your job is to answer the user's questions with 100% accuracy based on the ingested MongoDB telemetry and worker roster.
+    const systemPrompt = `${tenantProfile.aiPersonaPrompt}
+You are an expert Industry Intelligence AI Copilot for ${tenantProfile.companyName || "Enterprise Operations"} (${tenantProfile.industry} - ${tenantProfile.subIndustry}) adhering to ${tenantProfile.complianceFramework}.
+Your job is to answer the user's questions with 100% accuracy based on the ingested MongoDB telemetry and ${tenantProfile.terminology.personnelPlural.toLowerCase()} roster.
 
 Ingested MongoDB Telemetry & System Context:
 ${JSON.stringify(context || {}, null, 2)}
@@ -1822,18 +2551,18 @@ ${historyText}
 User Question: "${question}"
 
 MANDATORY RESPONSE RULES:
-1. If the user asks for the Tag ID of a worker (e.g., "What is the tag ID of Marcus Vance?"), inspect context.workers and output:
-   - Worker Name
-   - UHF RFID Tag ID (\`tagId\` or \`id\`)
-   - Assigned Trade / Role
-   - Current Zone Location
-2. If the user asks what a worker is doing (e.g., "What is Marcus Vance doing?"), describe their current activity, trade duties, zone location, dwell time, and motion state (MOVING/IDLE).
-3. If the user asks about the database (e.g., "MongoDB status", "database records"), report the connection status, database name (Lat-Aperture-People-Tracking), total records, and active collections (registered_people, hardware_readers, attendance_logs, incidents, ai_insights).
-4. If asked about general workers or headcount, summarize active workers, trade distribution, and zone occupancy.
+1. If the user asks for the Tag ID of an entity (e.g., "What is the tag ID of Marcus Vance?"), inspect context.workers/people and output:
+   - Name
+   - ${tenantProfile.terminology.idBadgeLabel} (\`tagId\` or \`id\`)
+   - Assigned ${tenantProfile.terminology.roleLabel}
+   - Current ${tenantProfile.terminology.zoneLabel}
+2. If the user asks what a person/asset is doing, describe their current activity, role duties, zone location, dwell time, and motion state (MOVING/IDLE).
+3. If the user asks about the database (e.g., "MongoDB status", "database records"), report the connection status, database name (Lat-Aperture-People-Tracking), total records, and active collections.
+4. If asked about general headcount, summarize active ${tenantProfile.terminology.personnelPlural.toLowerCase()}, role distribution, and zone occupancy.
 
 Respond strictly with a JSON object:
 {
-  "answer": "Clear markdown response addressing the exact question with worker telemetry data and emojis.",
+  "answer": "Clear markdown response addressing the exact question with telemetry data and emojis.",
   "suggestedActions": ["Action 1", "Action 2", "Action 3"]
 }`;
     const response = await generateContentWithFallback(ai, {
@@ -1862,7 +2591,7 @@ aiRouter.post(["/analyze-incident", "/ai/incident-rca"], aiRateLimiter, async (r
   const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
   const apiKey = getGeminiApiKey();
   const industryDoc = await resolveIndustryContext(orgId);
-  const indName = industryDoc?.industryName || "Industrial Operations";
+  const indName = industryDoc?.subIndustry || industryDoc?.industryName || industryDoc?.industry || "Industrial Operations";
   const std = industryDoc?.complianceFramework || activeComplianceStandard;
   if (!apiKey || isGeminiAuthFailed()) {
     return res.json({
@@ -1938,7 +2667,7 @@ aiRouter.post("/ai/audit-evaluation", aiRateLimiter, async (req, res) => {
   const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
   const apiKey = getGeminiApiKey();
   const industryDoc = await resolveIndustryContext(orgId);
-  const indName = industryDoc?.industryName || "Enterprise Operations";
+  const indName = industryDoc?.subIndustry || industryDoc?.industryName || industryDoc?.industry || "Enterprise Operations";
   const std = industryDoc?.complianceFramework || frameworkTitle || activeComplianceStandard;
   if (!apiKey || isGeminiAuthFailed()) {
     return res.json({
@@ -2000,7 +2729,7 @@ aiRouter.post(["/bi-synthesis", "/ai/bi-synthesis"], aiRateLimiter, async (req, 
   const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "demo";
   const apiKey = getGeminiApiKey();
   const industryDoc = await resolveIndustryContext(orgId);
-  const indName = industryDoc?.industryName || "Industrial Operations";
+  const indName = industryDoc?.subIndustry || industryDoc?.industryName || industryDoc?.industry || "Industrial Operations";
   const std = industryDoc?.complianceFramework || activeComplianceStandard;
   const pPlural = industryDoc?.terminology?.personnelPlural || "Personnel";
   if (!apiKey || isGeminiAuthFailed()) {
@@ -2076,147 +2805,135 @@ Provide a clear, highly structured, executive-level BI summary in markdown style
 });
 
 // src/server/services/aiPipeline.ts
-function classifyTelemetryRules(tagId, location, personName, rssi) {
-  const locLower = location.toLowerCase();
-  let aiRiskScore = 15;
-  let aiRiskLevel = "SAFE";
-  let aiComplianceScore = 96;
-  let aiActivityInferred = "Standard Operations & Routine Inspection";
-  let aiAnomaly = null;
-  let aiInsight = `Normal worker tag telemetry recorded at ${location}. All safety threshold indicators nominal.`;
-  if (locLower.includes("crane") || locLower.includes("exclusion") || locLower.includes("high voltage")) {
-    aiRiskScore = 88;
-    aiRiskLevel = "HIGH";
-    aiComplianceScore = 72;
-    aiActivityInferred = "High-Risk Restricted Zone Access";
-    aiAnomaly = {
-      title: "Restricted Exclusion Zone Entry",
-      description: `Personnel ${personName} detected in ${location} during high-risk operations. High-risk permit check required.`,
-      severity: "HIGH"
-    };
-    aiInsight = `AI Alert: Restricted exclusion zone boundary crossed at ${location}. Interlock verification initiated.`;
-  } else if (locLower.includes("shaft") || locLower.includes("tunnel") || locLower.includes("confined")) {
-    aiRiskScore = 65;
-    aiRiskLevel = "MEDIUM";
-    aiComplianceScore = 85;
-    aiActivityInferred = "Confined Space Operation";
-    aiAnomaly = {
-      title: "Confined Space Dwell Monitoring",
-      description: `Dwell timer active for ${personName} in ${location}. Automated welfare ping scheduled.`,
-      severity: "MEDIUM"
-    };
-    aiInsight = `AI Info: Confined space entry registered in ${location}. Environmental sensors active.`;
-  } else if (locLower.includes("scaffolding") || locLower.includes("tier")) {
-    aiRiskScore = 42;
-    aiRiskLevel = "LOW";
-    aiComplianceScore = 91;
-    aiActivityInferred = "Elevated Platform Work";
-    aiInsight = `Elevated scaffolding telemetry verified. Fall arrest harness PPE tag signals confirmed.`;
-  }
-  if (rssi && rssi < -82) {
-    aiRiskScore = Math.min(100, aiRiskScore + 15);
-    if (!aiAnomaly) {
-      aiAnomaly = {
-        title: "Weak RFID Antenna Signal (RSSI Variance)",
-        description: `Signal strength of ${rssi} dBm detected near perimeter of ${location}. Potential antenna calibration issue.`,
-        severity: "LOW"
-      };
-    }
-  }
-  return {
-    tagId,
-    location,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    firstName: personName.split(" ")[0] || "Staff",
-    lastName: personName.split(" ").slice(1).join(" ") || "User",
-    aiRiskScore,
-    aiRiskLevel,
-    aiComplianceScore,
-    aiActivityInferred,
-    aiAnomaly,
-    aiInsight
-  };
+var eventDecisionSchema = import_zod3.z.object({
+  aiRiskScore: import_zod3.z.number().min(0).max(100),
+  aiRiskLevel: import_zod3.z.enum(["SAFE", "LOW", "MEDIUM", "HIGH", "CRITICAL"]),
+  aiComplianceScore: import_zod3.z.number().min(0).max(100),
+  aiActivityInferred: import_zod3.z.string().min(1),
+  aiAnomaly: import_zod3.z.object({
+    title: import_zod3.z.string().min(1),
+    description: import_zod3.z.string().min(1),
+    severity: import_zod3.z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"])
+  }).nullable(),
+  aiInsight: import_zod3.z.string().min(1),
+  alert: import_zod3.z.object({
+    category: import_zod3.z.string().min(1),
+    title: import_zod3.z.string().min(1),
+    message: import_zod3.z.string().min(1),
+    priority: import_zod3.z.enum(["Critical", "High", "Medium", "Low"]),
+    triggerSiren: import_zod3.z.boolean()
+  }).nullable(),
+  incident: import_zod3.z.object({
+    category: import_zod3.z.string().min(1),
+    title: import_zod3.z.string().min(1),
+    description: import_zod3.z.string().min(1),
+    severity: import_zod3.z.enum(["Critical", "High", "Medium", "Low"])
+  }).nullable()
+});
+function parseJsonResponse(responseText) {
+  const text = responseText.trim();
+  const json = text.startsWith("```") ? text.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "") : text;
+  return JSON.parse(json);
+}
+async function analyzeEventWithGemini(apiKey, model, eventContext) {
+  const ai = new import_genai2.GoogleGenAI({ apiKey });
+  const response = await ai.models.generateContent({
+    model,
+    contents: `Analyze this RFID telemetry event using only the supplied context. Do not invent facts, thresholds, people, locations, alerts, or incidents. Return alert and incident as null unless the supplied evidence supports them.
+
+Telemetry context:
+${JSON.stringify(eventContext)}
+
+Return only JSON with this exact shape:
+{
+  "aiRiskScore": number from 0 to 100,
+  "aiRiskLevel": "SAFE" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
+  "aiComplianceScore": number from 0 to 100,
+  "aiActivityInferred": string,
+  "aiAnomaly": { "title": string, "description": string, "severity": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL" } | null,
+  "aiInsight": string,
+  "alert": { "category": string, "title": string, "message": string, "priority": "Critical" | "High" | "Medium" | "Low", "triggerSiren": boolean } | null,
+  "incident": { "category": string, "title": string, "description": string, "severity": "Critical" | "High" | "Medium" | "Low" } | null
+}`,
+    config: { responseMimeType: "application/json" }
+  });
+  return eventDecisionSchema.parse(parseJsonResponse(response.text || ""));
 }
 async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server", organizationId = "default") {
   const sourceValidation = validateTelemetrySource(sourceProtocol);
   if (!sourceValidation.valid) {
-    console.warn(`[INGEST] Telemetry rejected by data policy: ${sourceValidation.error}`);
-    return { success: false, processedCount: 0, analyzedResults: [] };
+    return { success: false, processedCount: 0, analyzedResults: [], error: sourceValidation.error };
   }
+  const apiKey = getGeminiApiKey();
+  const model = process.env.GEMINI_MODEL?.trim();
+  const people = await getCollectionDocs("personnel", void 0, organizationId);
+  const registeredPeople = people.length > 0 ? people : await getCollectionDocs("registered_people", void 0, organizationId);
   const items = Array.isArray(payloads) ? payloads : [payloads];
   const analyzedResults = [];
-  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-  const peopleList = await getCollectionDocs("personnel", void 0, organizationId) || await getCollectionDocs("registered_people", void 0, organizationId) || [];
-  const apiKey = getGeminiApiKey();
   for (const item of items) {
-    if (!item) continue;
-    const tagId = String(item.TagID || item.tagId || item.epc || item.EPC || item.id || "").trim();
-    if (!tagId) continue;
-    const location = String(item.Location || item.location || item.LocationName || item.zone || "Zone 1").trim();
-    const timestamp = item.Timestamp || item.timestamp || item.EnterTime || nowIso;
-    const orgId = item.organizationId || organizationId;
-    const readerId = item.readerId || item.ReaderID || "APERTURE-READER-01";
-    const eventHash = item.externalEventId || item.eventId || generateEventHash(tagId, timestamp, location, readerId, orgId);
-    const eventDocId = `evt_${tagId}_${eventHash}`;
-    const histDocId = `hist_${tagId}_${eventHash}`;
-    console.log(`[INGEST] source=${sourceProtocol} device=${readerId} event=${eventHash} tag=${tagId}`);
-    const matchedPerson = peopleList.find(
-      (p) => p.tagId === tagId || p.TagID === tagId || p.badgeId === tagId || p.id === tagId
-    );
-    const firstName = item.FirstName || item.firstName || matchedPerson?.firstName || matchedPerson?.name?.split(" ")[0] || "Staff";
-    const lastName = item.LastName || item.lastName || matchedPerson?.lastName || matchedPerson?.name?.split(" ").slice(1).join(" ") || "User";
+    const tagId = String(item?.TagID || item?.tagId || item?.epc || item?.EPC || item?.id || "").trim();
+    if (!tagId) {
+      return { success: false, processedCount: analyzedResults.length, analyzedResults, error: "Telemetry event is missing a tag identifier." };
+    }
+    const orgId = String(item.organizationId || organizationId);
+    const timestamp = String(item.Timestamp || item.timestamp || item.EnterTime || (/* @__PURE__ */ new Date()).toISOString());
+    const location = String(item.Location || item.location || item.LocationName || item.zone || "");
+    const readerId = String(item.readerId || item.ReaderID || "");
+    const eventHash = String(item.externalEventId || item.eventId || generateEventHash(tagId, timestamp, location, readerId, orgId));
+    const matchedPerson = registeredPeople.find(
+      (person) => [person.tagId, person.TagID, person.badgeId, person.hardhatTagId, person.id].filter(Boolean).some((id) => String(id).toLowerCase() === tagId.toLowerCase())
+    ) || null;
+    const firstName = String(item.FirstName || item.firstName || matchedPerson?.firstName || matchedPerson?.name?.split(" ")[0] || "");
+    const lastName = String(item.LastName || item.lastName || matchedPerson?.lastName || matchedPerson?.name?.split(" ").slice(1).join(" ") || "");
     const fullName = `${firstName} ${lastName}`.trim();
-    let aiResult = classifyTelemetryRules(tagId, location, fullName, item.rssi);
-    if (isGeminiAvailable() && apiKey && (aiResult.aiRiskLevel === "HIGH" || aiResult.aiRiskLevel === "CRITICAL")) {
+    const tenantProfile = await getTenantIntelligenceProfile(orgId);
+    const deterministicEval = evaluateDeterministicRules(tenantProfile, {
+      tagId,
+      location,
+      personName: fullName,
+      role: matchedPerson?.role || "Field Personnel",
+      rssi: item.rssi === void 0 ? void 0 : Number(item.rssi)
+    });
+    let decision = {
+      aiRiskScore: deterministicEval.aiRiskScore,
+      aiRiskLevel: deterministicEval.aiRiskLevel,
+      aiComplianceScore: deterministicEval.aiComplianceScore,
+      aiActivityInferred: deterministicEval.aiActivityInferred,
+      aiAnomaly: deterministicEval.aiAnomaly,
+      aiInsight: deterministicEval.aiInsight,
+      alert: deterministicEval.triggeredAlert,
+      incident: deterministicEval.triggeredIncident
+    };
+    if (apiKey && !isGeminiAuthFailed() && model) {
       try {
-        const ai = new import_genai2.GoogleGenAI({ apiKey });
-        const prompt = `Analyze this real-time RFID tag scan for worker safety:
-TagID: ${tagId}, Name: ${fullName}, Location: ${location}, RSSI: ${item.rssi || "N/A"}.
-Source Protocol: ${sourceProtocol}.
-
-Respond strictly with valid JSON:
-{
-  "aiRiskScore": 85,
-  "aiRiskLevel": "HIGH",
-  "aiComplianceScore": 75,
-  "aiActivityInferred": "Exclusion Zone Boundary Crossing",
-  "aiAnomalyTitle": "Unscheduled Heavy Crane Zone Entry",
-  "aiAnomalyDescription": "Personnel entered active lifting arc without verified high-risk work permit.",
-  "aiInsight": "AI Alert: Heavy Crane exclusion boundary triggered. Audio siren warning dispatched."
-}`;
-        const PRIMARY_MODEL = "gemini-3.6-flash";
-        const response = await ai.models.generateContent({
-          model: PRIMARY_MODEL,
-          contents: prompt,
-          config: { responseMimeType: "application/json" }
+        const geminiDecision = await analyzeEventWithGemini(apiKey, model, {
+          telemetry: item,
+          normalized: { tagId, timestamp, location, readerId, sourceProtocol, organizationId: orgId },
+          matchedPerson
         });
-        const parsed = JSON.parse(response.text || "{}");
-        if (parsed.aiRiskScore !== void 0) {
-          aiResult = {
-            tagId,
-            location,
-            timestamp,
-            firstName,
-            lastName,
-            aiRiskScore: Number(parsed.aiRiskScore) || aiResult.aiRiskScore,
-            aiRiskLevel: parsed.aiRiskLevel || aiResult.aiRiskLevel,
-            aiComplianceScore: Number(parsed.aiComplianceScore) || aiResult.aiComplianceScore,
-            aiActivityInferred: parsed.aiActivityInferred || aiResult.aiActivityInferred,
-            aiAnomaly: parsed.aiAnomalyTitle ? {
-              title: parsed.aiAnomalyTitle,
-              description: parsed.aiAnomalyDescription || "AI anomaly detected",
-              severity: parsed.aiRiskLevel || "HIGH"
-            } : null,
-            aiInsight: parsed.aiInsight || aiResult.aiInsight
-          };
+        if (geminiDecision) {
+          decision = geminiDecision;
         }
-      } catch (e) {
-        if (e.status === 401 || e.message?.includes("UNAUTHENTICATED") || e.message?.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED")) {
-          markGeminiAuthFailed(e.message);
+      } catch (error) {
+        if (error?.status === 401 || error?.message?.includes("UNAUTHENTICATED") || error?.message?.includes("ACCESS_TOKEN_TYPE_UNSUPPORTED")) {
+          markGeminiAuthFailed(error.message);
         }
       }
     }
-    analyzedResults.push(aiResult);
+    const analysis = {
+      tagId,
+      location,
+      timestamp,
+      firstName,
+      lastName,
+      aiRiskScore: decision.aiRiskScore,
+      aiRiskLevel: decision.aiRiskLevel,
+      aiComplianceScore: decision.aiComplianceScore,
+      aiActivityInferred: decision.aiActivityInferred,
+      aiAnomaly: decision.aiAnomaly,
+      aiInsight: decision.aiInsight
+    };
+    const now = (/* @__PURE__ */ new Date()).toISOString();
     const tagDocument = {
       id: tagId,
       organizationId: orgId,
@@ -2228,26 +2945,15 @@ Respond strictly with valid JSON:
       LastName: lastName,
       sourceProtocol,
       readerId,
-      rssi: item.rssi !== void 0 ? Number(item.rssi) : -60,
-      aiRiskScore: aiResult.aiRiskScore,
-      aiRiskLevel: aiResult.aiRiskLevel,
-      aiComplianceScore: aiResult.aiComplianceScore,
-      aiActivityInferred: aiResult.aiActivityInferred,
-      aiAnomaly: aiResult.aiAnomaly,
-      aiInsight: aiResult.aiInsight,
-      lastSyncAt: nowIso
+      rssi: item.rssi === void 0 ? void 0 : Number(item.rssi),
+      ...analysis,
+      lastSyncAt: now
     };
     await upsertDoc("real_time_tags", tagDocument, orgId);
     await upsertDoc("live_tags", tagDocument, orgId);
-    await upsertDoc("rfid_realtime_events", {
-      id: eventDocId,
-      eventId: eventHash,
-      organizationId: orgId,
-      ...tagDocument,
-      receivedAt: nowIso
-    }, orgId);
+    await upsertDoc("rfid_realtime_events", { id: `evt_${tagId}_${eventHash}`, eventId: eventHash, ...tagDocument, receivedAt: now }, orgId);
     await upsertDoc("tag_history", {
-      id: histDocId,
+      id: `hist_${tagId}_${eventHash}`,
       eventId: eventHash,
       organizationId: orgId,
       TagID: tagId,
@@ -2256,41 +2962,55 @@ Respond strictly with valid JSON:
       LocationName: location,
       EnterTime: timestamp,
       LeaveTime: timestamp,
-      Duration: 0.1,
       ...tagDocument
     }, orgId);
-    if (aiResult.aiAnomaly || aiResult.aiRiskLevel === "HIGH" || aiResult.aiRiskLevel === "CRITICAL") {
-      const insightDoc = {
+    if (decision.aiAnomaly || decision.aiRiskLevel === "HIGH" || decision.aiRiskLevel === "CRITICAL") {
+      await upsertDoc("ai_insights", {
         id: `insight_${tagId}_${eventHash}`,
         organizationId: orgId,
-        title: `AI Analysis: ${location} (${aiResult.aiRiskLevel})`,
-        category: "Safety & Risk Alert",
-        impact: aiResult.aiRiskLevel,
-        description: aiResult.aiInsight,
+        title: decision.aiAnomaly?.title || decision.aiActivityInferred,
+        category: decision.aiActivityInferred,
+        impact: decision.aiRiskLevel,
+        description: decision.aiInsight,
         tagId,
         personName: fullName,
         location,
-        createdAt: nowIso
-      };
-      await upsertDoc("ai_insights", insightDoc, orgId);
+        createdAt: now
+      }, orgId);
     }
-    if (aiResult.aiAnomaly && (aiResult.aiRiskLevel === "HIGH" || aiResult.aiRiskLevel === "CRITICAL")) {
-      const incidentDoc = {
+    if (decision.alert) {
+      await upsertDoc("alerts", {
+        id: `alert_${tagId}_${eventHash}`,
+        organizationId: orgId,
+        type: decision.alert.category,
+        title: decision.alert.title,
+        message: decision.alert.message,
+        priority: decision.alert.priority,
+        severity: decision.alert.priority,
+        targetZone: location,
+        tagId,
+        personName: fullName,
+        triggerSiren: decision.alert.triggerSiren,
+        timestamp: now,
+        resolved: false
+      }, orgId);
+    }
+    if (decision.incident) {
+      await upsertDoc("incidents", {
         id: `inc_${tagId}_${eventHash}`,
         organizationId: orgId,
-        title: aiResult.aiAnomaly.title,
-        category: "Exclusion Zone Breach",
-        severity: aiResult.aiAnomaly.severity === "CRITICAL" ? "Critical" : "High",
+        title: decision.incident.title,
+        category: decision.incident.category,
+        severity: decision.incident.severity,
         status: "Open",
         locationZone: location,
         personnelName: fullName,
         tagId,
-        description: aiResult.aiAnomaly.description,
-        timestamp: nowIso,
-        aiScore: aiResult.aiRiskScore,
-        createdAt: nowIso
-      };
-      await upsertDoc("incidents", incidentDoc, orgId);
+        description: decision.incident.description,
+        timestamp: now,
+        aiScore: decision.aiRiskScore,
+        createdAt: now
+      }, orgId);
     }
     if (matchedPerson) {
       await upsertDoc("personnel", {
@@ -2299,15 +3019,12 @@ Respond strictly with valid JSON:
         currentZone: location,
         zone: location,
         lastSeen: timestamp,
-        updatedAt: nowIso
+        updatedAt: now
       }, orgId);
     }
+    analyzedResults.push(analysis);
   }
-  return {
-    success: true,
-    processedCount: analyzedResults.length,
-    analyzedResults
-  };
+  return { success: true, processedCount: analyzedResults.length, analyzedResults };
 }
 
 // src/server/services/ingestionService.ts
@@ -2661,7 +3378,7 @@ connectionsRouter.post("/hardware/ingest", async (req, res) => {
 // src/server/routes/auth.ts
 var import_express3 = require("express");
 var import_bcryptjs = __toESM(require("bcryptjs"), 1);
-var import_zod2 = require("zod");
+var import_zod4 = require("zod");
 var import_express_rate_limit2 = __toESM(require("express-rate-limit"), 1);
 var authRouter = (0, import_express3.Router)();
 var authRateLimiter = (0, import_express_rate_limit2.default)({
@@ -2672,17 +3389,17 @@ var authRateLimiter = (0, import_express_rate_limit2.default)({
   standardHeaders: true,
   legacyHeaders: false
 });
-var loginSchema = import_zod2.z.object({
-  email: import_zod2.z.string().email(),
-  password: import_zod2.z.string().min(1, "Password is required")
+var loginSchema = import_zod4.z.object({
+  email: import_zod4.z.string().email(),
+  password: import_zod4.z.string().min(1, "Password is required")
 });
-var registerSchema = import_zod2.z.object({
-  email: import_zod2.z.string().email(),
-  password: import_zod2.z.string().min(6, "Password must be at least 6 characters"),
-  name: import_zod2.z.string().optional(),
-  role: import_zod2.z.string().optional().default("viewer"),
-  organizationName: import_zod2.z.string().optional(),
-  organizationId: import_zod2.z.string().optional()
+var registerSchema = import_zod4.z.object({
+  email: import_zod4.z.string().email(),
+  password: import_zod4.z.string().min(6, "Password must be at least 6 characters"),
+  name: import_zod4.z.string().optional(),
+  role: import_zod4.z.string().optional().default("viewer"),
+  organizationName: import_zod4.z.string().optional(),
+  organizationId: import_zod4.z.string().optional()
 });
 function sanitizeUser(user) {
   if (!user) return null;
@@ -3027,7 +3744,7 @@ authRouter.post("/logout-everywhere", requireAuth, async (req, res) => {
 // src/server/routes/admin.ts
 var import_express4 = require("express");
 var import_bcryptjs2 = __toESM(require("bcryptjs"), 1);
-var import_zod3 = require("zod");
+var import_zod5 = require("zod");
 var adminRouter = (0, import_express4.Router)();
 adminRouter.use(requireAuth);
 async function findUserByIdOrUid(userId, organizationId) {
@@ -3036,27 +3753,27 @@ async function findUserByIdOrUid(userId, organizationId) {
   const users = await getCollectionDocs("users", void 0, organizationId);
   return users.find((u) => u.id === userId || u.uid === userId || u.id && userId && u.id.toString() === userId.toString()) || null;
 }
-var createUserSchema = import_zod3.z.object({
-  email: import_zod3.z.string().email(),
-  password: import_zod3.z.string().min(6, "Password must be at least 6 characters"),
-  name: import_zod3.z.string().optional(),
-  displayName: import_zod3.z.string().optional(),
-  role: import_zod3.z.string().optional().default("viewer")
+var createUserSchema = import_zod5.z.object({
+  email: import_zod5.z.string().email(),
+  password: import_zod5.z.string().min(6, "Password must be at least 6 characters"),
+  name: import_zod5.z.string().optional(),
+  displayName: import_zod5.z.string().optional(),
+  role: import_zod5.z.string().optional().default("viewer")
 });
-var setRoleSchema = import_zod3.z.object({
-  userId: import_zod3.z.string().optional(),
-  uid: import_zod3.z.string().optional(),
-  email: import_zod3.z.string().optional(),
-  role: import_zod3.z.string().min(1)
+var setRoleSchema = import_zod5.z.object({
+  userId: import_zod5.z.string().optional(),
+  uid: import_zod5.z.string().optional(),
+  email: import_zod5.z.string().optional(),
+  role: import_zod5.z.string().min(1)
 });
-var bulkSetRoleSchema = import_zod3.z.object({
-  userIds: import_zod3.z.array(import_zod3.z.string()).min(1),
-  role: import_zod3.z.string().min(1)
+var bulkSetRoleSchema = import_zod5.z.object({
+  userIds: import_zod5.z.array(import_zod5.z.string()).min(1),
+  role: import_zod5.z.string().min(1)
 });
-var updatePermissionsSchema = import_zod3.z.object({
-  rolePermissions: import_zod3.z.array(import_zod3.z.object({
-    role: import_zod3.z.string(),
-    permissions: import_zod3.z.array(import_zod3.z.string())
+var updatePermissionsSchema = import_zod5.z.object({
+  rolePermissions: import_zod5.z.array(import_zod5.z.object({
+    role: import_zod5.z.string(),
+    permissions: import_zod5.z.array(import_zod5.z.string())
   }))
 });
 adminRouter.get("/users", requirePermission("settings"), async (req, res) => {
@@ -3432,10 +4149,10 @@ adminRouter.get("/data-retention", requirePermission("settings"), async (req, re
   }
 });
 adminRouter.post("/data-retention", requirePermission("settings"), async (req, res) => {
-  const schema = import_zod3.z.object({
-    tagHistoryRetentionDays: import_zod3.z.number().min(1).max(3650),
-    staleLiveTagHours: import_zod3.z.number().min(1).max(720),
-    auditLogRetentionDays: import_zod3.z.number().min(7).max(3650)
+  const schema = import_zod5.z.object({
+    tagHistoryRetentionDays: import_zod5.z.number().min(1).max(3650),
+    staleLiveTagHours: import_zod5.z.number().min(1).max(720),
+    auditLogRetentionDays: import_zod5.z.number().min(7).max(3650)
   });
   const parseResult = schema.safeParse(req.body);
   if (!parseResult.success) {
@@ -3541,7 +4258,7 @@ adminRouter.post("/purge-demo", requirePermission("settings"), async (req, res) 
 
 // src/server/routes/rfid.ts
 var import_express5 = require("express");
-var import_zod4 = require("zod");
+var import_zod6 = require("zod");
 var rfidRouter = (0, import_express5.Router)();
 function formatUtcDateTime(dateInput) {
   const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
@@ -3563,21 +4280,21 @@ function formatUtcTimestampMs(dateInput) {
   const fff = String(isNaN(d.getTime()) ? 0 : d.getUTCMilliseconds()).padStart(3, "0");
   return `${base}.${fff}`;
 }
-var scanSchema = import_zod4.z.object({
-  tagId: import_zod4.z.string().optional(),
-  TagID: import_zod4.z.string().optional(),
-  name: import_zod4.z.string().optional(),
-  FirstName: import_zod4.z.string().optional(),
-  LastName: import_zod4.z.string().optional(),
-  role: import_zod4.z.string().optional().default("General Staff"),
-  zone: import_zod4.z.string().optional(),
-  LocationName: import_zod4.z.string().optional(),
-  Location: import_zod4.z.string().optional(),
-  status: import_zod4.z.string().optional().default("Active"),
-  epc: import_zod4.z.string().optional(),
-  rssi: import_zod4.z.number().optional().default(-62),
-  antennaId: import_zod4.z.number().optional().default(1),
-  readerId: import_zod4.z.string().optional().default("GAO-UHF-READER-01")
+var scanSchema = import_zod6.z.object({
+  tagId: import_zod6.z.string().optional(),
+  TagID: import_zod6.z.string().optional(),
+  name: import_zod6.z.string().optional(),
+  FirstName: import_zod6.z.string().optional(),
+  LastName: import_zod6.z.string().optional(),
+  role: import_zod6.z.string().optional().default("General Staff"),
+  zone: import_zod6.z.string().optional(),
+  LocationName: import_zod6.z.string().optional(),
+  Location: import_zod6.z.string().optional(),
+  status: import_zod6.z.string().optional().default("Active"),
+  epc: import_zod6.z.string().optional(),
+  rssi: import_zod6.z.number().optional().default(-62),
+  antennaId: import_zod6.z.number().optional().default(1),
+  readerId: import_zod6.z.string().optional().default("GAO-UHF-READER-01")
 });
 var handleGetTotalCount = async (req, res) => {
   const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
@@ -3777,6 +4494,17 @@ rfidRouter.post("/realtime-tags/cleanup", requireDeviceApiKey, async (req, res) 
 var import_express6 = require("express");
 var dataRouter = (0, import_express6.Router)();
 dataRouter.use(requireAuth);
+dataRouter.get("/playback_frames", async (req, res) => {
+  const orgId = req.user?.organizationId || "default";
+  const date = req.query.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
+  try {
+    const frames = await getPlaybackFrames(date, orgId);
+    return res.json({ date, organizationId: orgId, frames, count: frames.length });
+  } catch (err) {
+    console.error("[Data Route] getPlaybackFrames error:", err);
+    return res.status(500).json({ error: "Failed to fetch playback frames" });
+  }
+});
 dataRouter.get("/stats", async (req, res) => {
   const orgId = req.user?.organizationId || "default";
   try {
@@ -3881,18 +4609,92 @@ dataRouter.get("/:collection", async (req, res) => {
     return res.status(500).json({ error: `Failed to fetch collection ${collection}` });
   }
 });
+dataRouter.get("/floorplan_image/:id", async (req, res) => {
+  const { id } = req.params;
+  const orgId = req.user?.organizationId || "default";
+  try {
+    const config = await getDocById("map_configurations", id, orgId) || await getDocById("floorplans", id, orgId) || await getDocById("floorplans", `fp_${id}`, orgId);
+    if (!config) {
+      return res.status(404).send("Floorplan not found");
+    }
+    const raw = config.floorplanData || config.imageData || config.floorplanUrl || config.url;
+    if (!raw) {
+      return res.status(404).send("No image data in floorplan");
+    }
+    if (typeof raw === "string" && raw.startsWith("data:image/")) {
+      const match = raw.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+      if (match) {
+        const mimeType = match[1] === "svg+xml" ? "image/svg+xml" : `image/${match[1]}`;
+        const buffer = Buffer.from(match[2], "base64");
+        res.setHeader("Content-Type", mimeType);
+        res.setHeader("Content-Length", buffer.length);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.send(buffer);
+      }
+    }
+    if (typeof raw === "string" && raw.startsWith("<svg")) {
+      res.setHeader("Content-Type", "image/svg+xml");
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.send(raw);
+    }
+    if (typeof raw === "string" && (raw.startsWith("/") || raw.startsWith("http"))) {
+      return res.redirect(raw);
+    }
+    return res.status(400).send("Invalid image format");
+  } catch (err) {
+    console.error("[Data Route] Error serving floorplan image from MongoDB:", err);
+    return res.status(500).send("Error serving image");
+  }
+});
 dataRouter.get("/:collection/:id", async (req, res) => {
   const { collection, id } = req.params;
   const orgId = req.user?.organizationId || "default";
   try {
     const doc = await getDocById(collection, id, orgId);
     if (!doc) {
+      if (collection === "map_configurations") {
+        return res.json({ id, siteId: id });
+      }
       return res.status(404).json({ error: "Document not found" });
     }
     return res.json(doc);
   } catch (err) {
     console.error(`[Data Route] Error fetching doc ${id} in ${collection}:`, err);
     return res.status(500).json({ error: "Failed to fetch document" });
+  }
+});
+dataRouter.post("/zones/batch", async (req, res) => {
+  const orgId = req.user?.organizationId || "default";
+  const { zones, floorplanUrl, svgSource, activeProject } = req.body || {};
+  try {
+    const savedZones = [];
+    if (Array.isArray(zones)) {
+      for (const z7 of zones) {
+        if (z7 && (z7.id || z7.zoneId || z7.name)) {
+          const zoneId = z7.id || z7.zoneId || `zone_${(z7.name || "").toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+          const cleanZone = { ...z7, id: zoneId, zoneId };
+          const saved = await upsertDoc("zones", cleanZone, orgId);
+          savedZones.push(saved);
+        }
+      }
+    }
+    if (floorplanUrl || svgSource) {
+      const projId = activeProject || "metro-tower";
+      const existingConfig = await getDocById("map_configurations", projId, orgId) || {};
+      const updatedConfig = {
+        ...existingConfig,
+        id: projId,
+        siteId: projId,
+        ...floorplanUrl ? { floorplanUrl } : {},
+        ...svgSource ? { svgSource } : {},
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      };
+      await upsertDoc("map_configurations", updatedConfig, orgId);
+    }
+    return res.json({ success: true, count: savedZones.length, zones: savedZones });
+  } catch (err) {
+    console.error("[Data Route] Error saving zones batch:", err);
+    return res.status(500).json({ error: "Failed to save zones batch" });
   }
 });
 dataRouter.post("/:collection", async (req, res) => {
@@ -3924,10 +4726,13 @@ dataRouter.post("/:collection/:id", async (req, res) => {
   const { collection, id } = req.params;
   const user = req.user;
   const orgId = user?.organizationId || "default";
-  const existingDoc = await getDocById(collection, id, orgId);
-  const allExisting = await getDocById(collection, id, "ALL");
-  if (allExisting && (!existingDoc || allExisting.organizationId && allExisting.organizationId !== orgId)) {
-    return res.status(404).json({ error: "Document not found or belongs to another organization" });
+  const isSpatialConfig = ["map_configurations", "zones", "projects", "sites", "floorplans"].includes(collection);
+  if (!isSpatialConfig) {
+    const existingDoc = await getDocById(collection, id, orgId);
+    const allExisting = await getDocById(collection, id, "ALL");
+    if (allExisting && (!existingDoc || allExisting.organizationId && allExisting.organizationId !== orgId && !(allExisting.organizationId === "default" && orgId === "demo"))) {
+      return res.status(404).json({ error: "Document not found or belongs to another organization" });
+    }
   }
   const body = req.body || {};
   body.id = id;
@@ -3997,7 +4802,15 @@ var mongodbRouter = (0, import_express8.Router)();
 mongodbRouter.get("/status", async (req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   try {
-    const stats = await getMongoStats();
+    const isQuick = req.query.quick === "true" || req.query.fast === "1";
+    if (isQuick) {
+      return res.json({
+        connected: isMongoConnected(),
+        engine: isMongoConnected() ? "MongoDB Atlas / Cluster" : "In-Memory Fallback"
+      });
+    }
+    const forceRefresh = req.query.refresh === "true";
+    const stats = await getMongoStats(forceRefresh);
     return res.json(stats);
   } catch (err) {
     return res.status(500).json({
@@ -4052,7 +4865,29 @@ async function processDirectHardwareScan(scan, organizationId = "demo") {
   const nowIso = (/* @__PURE__ */ new Date()).toISOString();
   const rawTagId = String(scan.tagId || `TAG_${Date.now()}`).trim();
   const readers = await getCollectionDocs("hardware_readers", void 0, organizationId);
-  const matchedReader = readers.find((r) => r.readerId === scan.readerId || r.id === scan.readerId);
+  let matchedReader = readers.find((r) => r.readerId === scan.readerId || r.id === scan.readerId || r.serialno === scan.readerId);
+  if (!matchedReader && scan.readerId) {
+    matchedReader = {
+      id: scan.readerId,
+      readerId: scan.readerId,
+      name: `GAO Fixed Reader (${scan.readerId})`,
+      model: scan.readerModel || "GAO-216031A",
+      ipAddress: "192.168.1.120",
+      port: 8080,
+      protocol: "HTTP Push",
+      powerDbm: 30,
+      sensitivityDbm: -70,
+      status: "ONLINE",
+      location: "Main Facility Portal",
+      antennas: [
+        { port: Number(scan.antennaId || 1), name: `Antenna ${scan.antennaId || 1}`, zoneId: "main-portal", zoneName: "Main Facility Portal", direction: "BIDIRECTIONAL", powerDbm: 30 }
+      ],
+      totalScans: 1,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    await upsertDoc("hardware_readers", scan.readerId, matchedReader, organizationId);
+  }
   let resolvedZone = "Main Facility Perimeter";
   if (matchedReader && matchedReader.antennas && matchedReader.antennas.length > 0) {
     const antennaNum = Number(scan.antennaId || 1);
@@ -4957,6 +5792,12 @@ async function startServer() {
   app.use("/GetHistoryTotalCount", rfidRouter);
   app.use("/GetHistoryRecords", rfidRouter);
   app.use("/GetTagsInRealtime", rfidRouter);
+  const publicUploadsPath = import_path2.default.join(process.cwd(), "public", "uploads");
+  const distUploadsPath = import_path2.default.join(process.cwd(), "dist", "uploads");
+  if (!import_fs2.default.existsSync(publicUploadsPath)) import_fs2.default.mkdirSync(publicUploadsPath, { recursive: true });
+  if (!import_fs2.default.existsSync(distUploadsPath)) import_fs2.default.mkdirSync(distUploadsPath, { recursive: true });
+  app.use("/uploads", import_express11.default.static(publicUploadsPath, { maxAge: "30d" }));
+  app.use("/uploads", import_express11.default.static(distUploadsPath, { maxAge: "30d" }));
   app.use(errorHandler);
   if (process.env.NODE_ENV !== "production") {
     const vite = await (0, import_vite.createServer)({
@@ -4978,12 +5819,12 @@ async function startServer() {
   }).catch((e) => {
     console.warn("[DB Service] Async DB initialization note:", e?.message);
   });
-  httpServer.listen(PORT, "0.0.0.0", () => {
+  httpServer.listen(PORT, () => {
     console.log(`
 =======================================================`);
     console.log(`\u{1F680} Aperture Construction People Tracking System Ready!`);
     console.log(`\u{1F310} Local Web Dashboard: http://localhost:${PORT}`);
-    console.log(`\u{1F4E1} Network Access:      http://0.0.0.0:${PORT}`);
+    console.log(`\u{1F4E1} Network Access:      http://127.0.0.1:${PORT}`);
     console.log(`\u{1F50C} WebSocket Stream:    ws://localhost:${PORT}/ws`);
     console.log(`=======================================================
 `);

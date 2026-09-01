@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { getMongoStats, testMongoConnection, reconnectDatabase, getMongoUri } from '../services/db.js';
+import { getMongoStats, testMongoConnection, reconnectDatabase, getMongoUri, isMongoConnected } from '../services/db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
 export const mongodbRouter = Router();
@@ -8,7 +8,15 @@ export const mongodbRouter = Router();
 mongodbRouter.get('/status', async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   try {
-    const stats = await getMongoStats();
+    const isQuick = req.query.quick === 'true' || req.query.fast === '1';
+    if (isQuick) {
+      return res.json({
+        connected: isMongoConnected(),
+        engine: isMongoConnected() ? 'MongoDB Atlas / Cluster' : 'In-Memory Fallback'
+      });
+    }
+    const forceRefresh = req.query.refresh === 'true';
+    const stats = await getMongoStats(forceRefresh);
     return res.json(stats);
   } catch (err: any) {
     return res.status(500).json({

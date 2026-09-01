@@ -110,22 +110,29 @@ export interface PanelConfig {
   accentColor?: string;
 }
 
-export function getDefaultKPIs(): KPIConfig[] {
+export function getDefaultKPIs(terminology?: any): KPIConfig[] {
+  const pPlural = terminology?.personnelPlural || 'Personnel';
+  const roleLabel = terminology?.roleLabel || 'Role / Department';
+  const badgeLabel = terminology?.idBadgeLabel || 'RFID Tag';
+  const safetyLabel = terminology?.safetyComplianceLabel || 'Safety Compliance';
+  const siteLabel = terminology?.siteLabel || 'Site';
+  const orgType = terminology?.organizationType || 'Contractors / Teams';
+
   return [
-    { id: 'total_workers', title: 'Active Onsite Workers', visible: true, order: 1, sub: '33 active onsite • 53 total roster', iconName: 'Users', iconColor: 'bg-[#007BC4]' },
-    { id: 'active_workers', title: 'Active Workers', visible: true, order: 2, sub: '33 active onsite • 53 total roster', iconName: 'UserCheck', iconColor: 'bg-emerald-600' },
+    { id: 'total_workers', title: `Active Onsite ${pPlural}`, visible: true, order: 1, sub: `Live verified ${pPlural.toLowerCase()}`, iconName: 'Users', iconColor: 'bg-[#007BC4]' },
+    { id: 'active_workers', title: `Active ${pPlural}`, visible: true, order: 2, sub: `Active telemetry & presence`, iconName: 'UserCheck', iconColor: 'bg-emerald-600' },
     { id: 'visitors_count', title: 'Visitors', visible: true, order: 3, sub: 'Pre-registered & checked-in visitors', iconName: 'UserX', iconColor: 'bg-amber-500' },
-    { id: 'contractors_count', title: 'Contractors', visible: true, order: 4, sub: 'Subcontractor trades on site', iconName: 'HardHat', iconColor: 'bg-indigo-600' },
-    { id: 'active_tags', title: 'Active RFID Tags', visible: true, order: 5, sub: '33 transmitting live • 53 registered tags', iconName: 'Radio', iconColor: 'bg-sky-600' },
+    { id: 'contractors_count', title: orgType, visible: true, order: 4, sub: 'External organizations & units', iconName: 'HardHat', iconColor: 'bg-indigo-600' },
+    { id: 'active_tags', title: `Active ${badgeLabel}s`, visible: true, order: 5, sub: `Live transmitting ${badgeLabel.toLowerCase()}s`, iconName: 'Radio', iconColor: 'bg-sky-600' },
     { id: 'online_readers', title: 'Online Readers', visible: true, order: 6, sub: 'Gate portals online & scanning', iconName: 'Wifi', iconColor: 'bg-emerald-600' },
     { id: 'offline_readers', title: 'Offline Readers', visible: true, order: 7, sub: 'Disconnected or warning state', iconName: 'WifiOff', iconColor: 'bg-rose-600' },
-    { id: 'active_equipment', title: 'Active Equipment', visible: true, order: 8, sub: 'Cranes, excavators & lifts tracked', iconName: 'Truck', iconColor: 'bg-purple-600' },
-    { id: 'safety_alerts', title: 'Safety Alerts', visible: true, order: 9, sub: 'PPE & hazard proximity warnings', iconName: 'ShieldAlert', iconColor: 'bg-amber-500' },
-    { id: 'emergency_alerts', title: 'Emergency Alerts', visible: true, order: 10, sub: 'Critical panic & crane radius breaches', iconName: 'Siren', iconColor: 'bg-rose-600' },
-    { id: 'attendance_today', title: 'Attendance Today', visible: true, order: 11, sub: 'Workers scheduled vs checked in', iconName: 'Clock', iconColor: 'bg-blue-600' },
-    { id: 'ppe_compliance', title: 'PPE Compliance', visible: true, order: 12, sub: 'Hardhat tag & vest scan rate', iconName: 'ShieldCheck', iconColor: 'bg-teal-600' },
+    { id: 'active_equipment', title: 'Active Equipment & Assets', visible: true, order: 8, sub: 'Monitored machinery & assets', iconName: 'Truck', iconColor: 'bg-purple-600' },
+    { id: 'safety_alerts', title: `${safetyLabel} Alerts`, visible: true, order: 9, sub: 'Hazard proximity & compliance warnings', iconName: 'ShieldAlert', iconColor: 'bg-amber-500' },
+    { id: 'emergency_alerts', title: 'Emergency Alerts', visible: true, order: 10, sub: 'Critical incidents & perimeter breaches', iconName: 'Siren', iconColor: 'bg-rose-600' },
+    { id: 'attendance_today', title: 'Attendance Today', visible: true, order: 11, sub: `${pPlural} checked in today`, iconName: 'Clock', iconColor: 'bg-blue-600' },
+    { id: 'ppe_compliance', title: safetyLabel, visible: true, order: 12, sub: `${badgeLabel} & safety gear status`, iconName: 'ShieldCheck', iconColor: 'bg-teal-600' },
     { id: 'productivity_score', title: 'Productivity Score', visible: false, order: 13, sub: 'Active work vs idle dwell rating', iconName: 'TrendingUp', iconColor: 'bg-emerald-600' },
-    { id: 'site_utilization', title: 'Site Utilization', visible: false, order: 14, sub: 'Active sectors vs max capacity', iconName: 'Gauge', iconColor: 'bg-violet-600' },
+    { id: 'site_utilization', title: `${siteLabel} Utilization`, visible: false, order: 14, sub: 'Active sectors vs max capacity', iconName: 'Gauge', iconColor: 'bg-violet-600' },
   ];
 }
 
@@ -180,7 +187,7 @@ export default function DashboardTab({
 
   const [registeredCount, setRegisteredCount] = useState<number>(0);
   const [registeredPeopleList, setRegisteredPeopleList] = useState<any[]>([]);
-  const [activeOnsiteCount, setActiveOnsiteCount] = useState<number>(33);
+  const [activeOnsiteCount, setActiveOnsiteCount] = useState<number>(0);
   const [activeOnsiteWorkersList, setActiveOnsiteWorkersList] = useState<any[]>([]);
   const [recentMovements, setRecentMovements] = useState<any[]>([]);
   const [timelineData, setTimelineData] = useState<any[]>([]);
@@ -560,7 +567,7 @@ export default function DashboardTab({
       rawPeopleList = [];
       snapshot.forEach(doc => rawPeopleList.push({ id: doc.id, ...doc.data() }));
       const activeFiltered = rawPeopleList.filter((p: any) => p.presenceState !== 'EXITED');
-      const resolvedCount = activeFiltered.length > 0 ? activeFiltered.length : (rawPeopleList.length > 0 ? rawPeopleList.length : 33);
+      const resolvedCount = activeFiltered.length > 0 ? activeFiltered.length : rawPeopleList.length;
       setActiveOnsiteCount(resolvedCount);
       setActiveOnsiteWorkersList(rawPeopleList);
       syncCombinedPeople();
@@ -728,11 +735,6 @@ export default function DashboardTab({
             }
          });
          
-         if (snapshot.size === 0) {
-            defaultBuckets[2].load = 2;
-            defaultBuckets[3].load = Math.max(people.length, 1);
-         }
-         
          setTimelineData(defaultBuckets);
       },
       (error) => console.warn("Failed tag_history timeline subscription:", error)
@@ -791,19 +793,20 @@ export default function DashboardTab({
         const docRef = doc(db, 'settings', `dashboard_${userId}`);
         const docSnap = await getDoc(docRef);
         
+        const termObj = { personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, siteLabel, organizationType };
         let loadedKpis: KPIConfig[] = [];
         let loadedPanels: PanelConfig[] = [];
         
         if (docSnap.exists()) {
           const data = docSnap.data();
           if (data.kpis && Array.isArray(data.kpis)) {
-             const mergedKpis = getDefaultKPIs().map(def => {
+             const mergedKpis = getDefaultKPIs(termObj).map(def => {
                const saved = data.kpis.find((k: any) => k.id === def.id);
                return saved ? { ...def, visible: saved.visible, order: saved.order, deleted: saved.deleted } : def;
              });
              loadedKpis = mergedKpis.sort((a,b) => a.order - b.order);
           } else {
-             loadedKpis = getDefaultKPIs();
+             loadedKpis = getDefaultKPIs(termObj);
           }
           if (data.panels && Array.isArray(data.panels)) {
              const mergedPanels = getDefaultPanels().map(def => {
@@ -818,7 +821,7 @@ export default function DashboardTab({
           setPanels(loadedPanels);
         } else {
           // If the MongoDB document doesn't exist, use default layouts locally without auto-inserting into DB
-          const kpisInit = getDefaultKPIs();
+          const kpisInit = getDefaultKPIs(termObj);
           const panelsInit = getDefaultPanels();
           setKpis(kpisInit);
           setPanels(panelsInit);
@@ -826,7 +829,8 @@ export default function DashboardTab({
       } catch (err) {
         console.warn("Failed to load dashboard layout preference:", err);
         // Fallback to local default layouts
-        setKpis(getDefaultKPIs());
+        const termObj = { personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, siteLabel, organizationType };
+        setKpis(getDefaultKPIs(termObj));
         setPanels(getDefaultPanels());
       }
     };
@@ -1069,7 +1073,7 @@ export default function DashboardTab({
                   }`}
                 >
                   <Users className="w-3 h-3" />
-                  Workers ({filteredWorkers.length})
+                  {personnelPlural} ({filteredWorkers.length})
                 </button>
                 <button
                   onClick={() => setShowVehiclesFilter(!showVehiclesFilter)}
@@ -1119,7 +1123,7 @@ export default function DashboardTab({
                   </div>
                 ) : (
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 flex-1 overflow-y-auto pr-1">
-                    {/* Active Workers */}
+                    {/* Active Personnel */}
                     {showWorkersFilter && filteredWorkers.map((w: any) => (
                       <div key={w.id} className="p-2.5 bg-slate-50 border border-slate-150 hover:border-[#007BC4]/40 hover:bg-[#007BC4]/5 rounded-xl transition flex flex-col justify-between gap-1 shadow-sm">
                         <div className="flex items-center justify-between gap-2">
@@ -1128,8 +1132,8 @@ export default function DashboardTab({
                               {(w.name || 'U').charAt(0)}
                             </div>
                             <div className="min-w-0">
-                              <div className="font-bold text-[11px] text-slate-800 truncate leading-tight">{w.name || 'Worker'}</div>
-                              <div className="text-[9px] text-slate-500 font-medium truncate mt-0.5">{w.role || w.department || 'Tradesperson'}</div>
+                              <div className="font-bold text-[11px] text-slate-800 truncate leading-tight">{w.name || personnelSingular}</div>
+                              <div className="text-[9px] text-slate-500 font-medium truncate mt-0.5">{w.role || w.department || roleLabel}</div>
                             </div>
                           </div>
                           <span className={`text-[8px] font-black px-1.5 py-0.5 rounded uppercase shrink-0 ${
@@ -1137,7 +1141,7 @@ export default function DashboardTab({
                             w.ppeStatus === 'WARNING' ? 'bg-amber-50 text-amber-700 border border-amber-200' :
                             'bg-rose-50 text-rose-700 border border-rose-200'
                           }`}>
-                            PPE: {w.ppeStatus || 'COMPLIANT'}
+                            {safetyComplianceLabel}: {w.ppeStatus || 'COMPLIANT'}
                           </span>
                         </div>
                         <div className="flex items-center justify-between text-[9px] text-slate-500 font-mono mt-1 pt-1.5 border-t border-slate-200/60">
@@ -1312,7 +1316,7 @@ export default function DashboardTab({
                   <div key={z} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-xs font-medium">
                     <span className="font-semibold text-slate-800 truncate max-w-[200px]">{z}</span>
                     <div className="flex items-center gap-2 shrink-0">
-                      <span className="text-slate-600 font-bold">{count} workers</span>
+                      <span className="text-slate-600 font-bold">{count} {count === 1 ? personnelSingular.toLowerCase() : personnelPlural.toLowerCase()}</span>
                       <span className={`w-2 h-2 rounded-full ${count > 0 ? 'bg-emerald-500' : 'bg-slate-300'}`} />
                     </div>
                   </div>
@@ -1380,7 +1384,7 @@ export default function DashboardTab({
 
             <div className="grid grid-cols-2 gap-2 mb-3">
               <div className="bg-slate-50 p-2.5 rounded-lg border border-slate-100">
-                <span className="text-[10px] font-bold text-slate-500 uppercase">On-Shift Workers</span>
+                <span className="text-[10px] font-bold text-slate-500 uppercase">On-Shift {personnelPlural}</span>
                 <div className="text-base font-bold text-slate-900 mt-0.5">{checkedInToday} / {totalRoster}</div>
                 <span className="text-[10px] text-emerald-600 font-bold">{attRate}% Attendance</span>
               </div>
@@ -2049,11 +2053,9 @@ export default function DashboardTab({
     switch (id) {
       case 'total_workers':
       case 'total_people': {
-        const totalRoster = registeredPeopleList.length > 0 ? registeredPeopleList.length : (registeredCount || 53);
-        const activeCount = (activeOnsiteCount && activeOnsiteCount > 0 && activeOnsiteCount < totalRoster)
-          ? activeOnsiteCount 
-          : (activeOnsiteWorkersList.length > 0 && activeOnsiteWorkersList.length < totalRoster ? activeOnsiteWorkersList.length : 33);
-        const cardTitle = (title && title !== 'Total Workers on Site') ? title : "Active Onsite Workers";
+        const totalRoster = registeredPeopleList.length || registeredCount || people.length || 0;
+        const activeCount = activeOnsiteCount || activeOnsiteWorkersList.length || 0;
+        const cardTitle = (title && title !== 'Total Workers on Site') ? title : (personnelPlural ? `Active Onsite ${personnelPlural}` : "Active Onsite Personnel");
         const cardSub = (subOverride && subOverride.includes('•')) 
           ? subOverride 
           : `${activeCount} active onsite • ${totalRoster} total roster`;
@@ -2071,18 +2073,17 @@ export default function DashboardTab({
       }
       case 'active_workers':
       case 'on_site': {
-        const totalRoster = registeredPeopleList.length > 0 ? registeredPeopleList.length : (registeredCount || 53);
-        const activeCount = (activeOnsiteCount && activeOnsiteCount > 0 && activeOnsiteCount < totalRoster)
-          ? activeOnsiteCount 
-          : (activeOnsiteWorkersList.length > 0 && activeOnsiteWorkersList.length < totalRoster ? activeOnsiteWorkersList.length : 33);
-        const moving = movingCount || (people.filter(p => p.presenceState === 'MOVING').length || 1);
+        const totalRoster = registeredPeopleList.length || registeredCount || people.length || 0;
+        const activeCount = activeOnsiteCount || activeOnsiteWorkersList.length || 0;
+        const moving = movingCount || people.filter(p => p.presenceState === 'MOVING').length;
+        const cardTitle = title || (personnelPlural ? `Active ${personnelPlural}` : "Active Personnel");
         const cardSub = (subOverride && subOverride.includes('•')) 
           ? subOverride 
           : `${moving} in motion • ${activeCount} active onsite (${totalRoster} total roster)`;
         return (
           <KpiCard 
             key={id} 
-            title={title || "Active Workers"} 
+            title={cardTitle} 
             value={activeCount.toString()} 
             sub={cardSub} 
             icon={renderKpiIcon(kpi?.iconName || 'UserCheck')} 
@@ -2107,12 +2108,13 @@ export default function DashboardTab({
       }
       case 'contractors_count': {
         const cCount = contractorsCount || (registeredPeopleList.length > 0 ? registeredPeopleList.filter(p => (p.role || '').toLowerCase().includes('contractor') || (p.role || '').toLowerCase().includes('sub') || (p.department || '').toLowerCase().includes('logistics') || (p.department || '').toLowerCase().includes('steel')).length : 0);
+        const cardTitle = title || (organizationType || "Contractors / Units");
         return (
           <KpiCard 
             key={id} 
-            title={title || "Contractors"} 
+            title={cardTitle} 
             value={cCount.toString()} 
-            sub={subOverride || `${cCount} subcontractor trades on site`} 
+            sub={subOverride || `${cCount} external ${organizationType.toLowerCase()} on site`} 
             icon={renderKpiIcon(kpi?.iconName || 'HardHat')} 
             iconColor={iconColorOverride || "bg-indigo-600"} 
             onClick={() => navigate('/people')} 
@@ -2121,19 +2123,17 @@ export default function DashboardTab({
       }
       case 'active_tags': {
         const totalEquipment = vehiclesList.length + assetsList.length;
-        const totalRoster = registeredPeopleList.length > 0 ? registeredPeopleList.length : (registeredCount || 53);
+        const totalRoster = registeredPeopleList.length || registeredCount || people.length || 0;
         const totalFleetTags = totalRoster + visitorsList.length + totalEquipment;
-        const activeCount = (activeOnsiteCount && activeOnsiteCount > 0 && activeOnsiteCount < totalRoster)
-          ? activeOnsiteCount 
-          : (activeOnsiteWorkersList.length > 0 && activeOnsiteWorkersList.length < totalRoster ? activeOnsiteWorkersList.length : 33);
-        const activeLiveTransmitting = (liveTagsCount > 0 && liveTagsCount < totalFleetTags) ? liveTagsCount : activeCount;
+        const activeLiveTransmitting = liveTagsCount > 0 ? liveTagsCount : (activeOnsiteCount || 0);
+        const cardTitle = title || (idBadgeLabel ? `Active ${idBadgeLabel}s` : "Active RFID Tags");
         const cardSub = (subOverride && subOverride.includes('•')) 
           ? subOverride 
           : `${activeLiveTransmitting} transmitting live • ${totalFleetTags} registered tags`;
         return (
           <KpiCard 
             key={id} 
-            title={title || "Active RFID Tags"} 
+            title={cardTitle} 
             value={activeLiveTransmitting.toString()} 
             sub={cardSub} 
             icon={renderKpiIcon(kpi?.iconName || 'Radio')} 
@@ -2232,7 +2232,7 @@ export default function DashboardTab({
             key={id} 
             title={title || "Attendance Today"} 
             value={`${attRate}%`} 
-            sub={subOverride || `${checkedInToday} / ${totalRoster} scheduled workers checked in`} 
+            sub={subOverride || `${checkedInToday} / ${totalRoster} scheduled ${personnelPlural.toLowerCase()} checked in`} 
             icon={renderKpiIcon(kpi?.iconName || 'Clock')} 
             iconColor={iconColorOverride || "bg-blue-600"} 
             onClick={() => navigate('/attendance')} 
@@ -2245,12 +2245,13 @@ export default function DashboardTab({
           ? registeredPeopleList.filter(p => p.ppeStatus === 'COMPLIANT' || !p.ppeStatus).length
           : people.filter(p => p.ppeStatus === 'COMPLIANT' || !p.ppeStatus).length;
         const complianceRate = totalPeopleCount > 0 ? Math.min(100, Math.round((compliantCount / totalPeopleCount) * 1000) / 10) : 100;
+        const cardTitle = title || (safetyComplianceLabel || "Safety Compliance");
         return (
           <KpiCard 
             key={id} 
-            title={title || "PPE Compliance"} 
+            title={cardTitle} 
             value={`${complianceRate}%`} 
-            sub={subOverride || `${compliantCount} / ${totalPeopleCount} hardhat & PPE tags verified`} 
+            sub={subOverride || `${compliantCount} / ${totalPeopleCount} ${safetyComplianceLabel.toLowerCase()} verified`} 
             icon={renderKpiIcon(kpi?.iconName || 'ShieldCheck')} 
             iconColor={iconColorOverride || "bg-teal-600"} 
             onClick={() => navigate('/ai-insights')} 
@@ -2338,7 +2339,7 @@ export default function DashboardTab({
   }
 
   return (
-    <div className="w-full p-4 md:p-6 lg:p-8 flex flex-col gap-6 max-w-7xl mx-auto">
+    <div className="w-full p-4 sm:p-6 lg:p-8 flex flex-col gap-6 max-w-[1760px] mx-auto min-w-0">
       
       {/* Dashboard Top Action Bar */}
       <div className="flex items-center justify-end gap-2.5 flex-wrap shrink-0">

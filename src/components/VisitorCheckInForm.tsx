@@ -28,14 +28,14 @@ export default function VisitorCheckInForm({ onCheckInComplete, securityListProp
     phone: '',
     idDocType: 'Driver License',
     idDocNumber: '',
-    purpose: 'Site Inspection & Engineering Audit',
+    purpose: 'Facility Inspection & Audit',
     vehiclePlate: '',
-    vehicleType: 'Sedan',
-    parkingBay: 'Bay P-01',
-    host: 'marcus.vance@buildcorp.com',
-    hostDept: 'EHS & Operations',
-    location: 'Gate 1 Gatehouse & Welcome Center',
-    rfidTag: `HH-TEMP-${Math.floor(Math.random() * 8990) + 1000}`,
+    vehicleType: 'Standard',
+    parkingBay: 'Bay 01',
+    host: '',
+    hostDept: 'Operations',
+    location: 'Gate 1 Gatehouse',
+    rfidTag: '',
     validHours: 8,
   });
 
@@ -196,14 +196,14 @@ export default function VisitorCheckInForm({ onCheckInComplete, securityListProp
       phone: '',
       idDocType: 'Driver License',
       idDocNumber: '',
-      purpose: 'Site Inspection & Engineering Audit',
+      purpose: 'Facility Inspection & Audit',
       vehiclePlate: '',
-      vehicleType: 'Sedan',
-      parkingBay: 'Bay P-01',
-      host: 'marcus.vance@buildcorp.com',
-      hostDept: 'EHS & Operations',
-      location: 'Gate 1 Gatehouse & Welcome Center',
-      rfidTag: `HH-TEMP-${Math.floor(Math.random() * 8990) + 1000}`,
+      vehicleType: 'Standard',
+      parkingBay: 'Bay 01',
+      host: '',
+      hostDept: 'Operations',
+      location: 'Gate 1 Gatehouse',
+      rfidTag: '',
       validHours: 8,
     });
   };
@@ -501,7 +501,7 @@ export default function VisitorCheckInForm({ onCheckInComplete, securityListProp
               <input
                 type="text"
                 required
-                placeholder="marcus.vance@buildcorp.com"
+                placeholder="host.officer@facility.com"
                 value={formData.host}
                 onChange={e => setFormData({...formData, host: e.target.value})}
                 className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-medium outline-none focus:ring-2 focus:ring-[#007BC4]"

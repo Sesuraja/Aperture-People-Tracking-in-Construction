@@ -6,6 +6,7 @@ coverage/
 !.env.example
 server-data-store.json
 mongodb-config.json
+.mongo_runtime.json
 
 # Playwright
 /test-results/

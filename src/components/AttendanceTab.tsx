@@ -312,8 +312,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           personId: p.id,
           name: p.name,
           role: p.role,
-          company: (p as any).tradeCompany || (p as any).company || 'Prime Construction Partner',
-          department: (p as any).department || p.role || 'Civil Engineering',
+          company: (p as any).tradeCompany || (p as any).company || organizationType || 'Operations Partner',
+          department: (p as any).department || p.role || 'Operations',
           siteZone: liveZone,
           shift: idx % 3 === 0 ? 'Night Shift (19:00-03:30)' : (idx % 4 === 0 ? 'Swing OT (15:00-23:30)' : 'Day Shift (07:00-15:30)'),
           firstIn: '07:15',
@@ -424,8 +424,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           personId: selectedPersonForPunch.id,
           name: selectedPersonForPunch.name,
           role: selectedPersonForPunch.role,
-          company: selectedPersonForPunch.tradeCompany || 'BuildCorp Partner',
-          department: (selectedPersonForPunch as any).department || selectedPersonForPunch.role || 'Civil Engineering',
+          company: selectedPersonForPunch.tradeCompany || organizationType || 'Operations Partner',
+          department: (selectedPersonForPunch as any).department || selectedPersonForPunch.role || 'Operations',
           siteZone: selectedPersonForPunch.currentZone || 'Main Gate 1',
           shift: 'Day Shift (07:00-15:30)',
           firstIn: manualPunchType === 'IN' ? timeStr : '08:00',
@@ -492,7 +492,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
       const updatedObj = {
         ...(target || { id: leaveId, name: 'Worker' }),
         status: newStatus,
-        approvedBy: 'Marcus Vance (EHS Lead)',
+        approvedBy: 'Operations Lead',
         updatedAt: new Date().toISOString()
       };
       await setDoc(doc(db, 'leave_requests', leaveId), updatedObj);
@@ -667,7 +667,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   };
 
   return (
-    <div className="w-full flex flex-col p-4 md:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="w-full flex flex-col p-4 sm:p-6 max-w-[1760px] mx-auto space-y-6 min-w-0">
       
       {/* Header Bar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1620,24 +1620,38 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           </div>
 
           <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-5 shadow-sm space-y-3">
-            <h3 className="font-bold text-slate-900 dark:text-white text-base">Trade Subcontractor Roster</h3>
+            <h3 className="font-bold text-slate-900 dark:text-white text-base">{organizationType || 'Organization'} Distribution</h3>
             <div className="space-y-3 text-xs">
-              {[
-                { name: 'BuildCorp General Contractor', count: 18, pct: 45, color: 'bg-[#007BC4]' },
-                { name: 'Apex Structural Solutions', count: 10, pct: 25, color: 'bg-emerald-500' },
-                { name: 'VoltCraft Electrical', count: 7, pct: 18, color: 'bg-indigo-500' },
-                { name: 'Titan Heavy Machinery', count: 5, pct: 12, color: 'bg-rose-500' }
-              ].map(c => (
-                <div key={c.name} className="space-y-1">
-                  <div className="flex justify-between font-bold text-slate-800 dark:text-slate-200">
-                    <span>{c.name}</span>
-                    <span>{c.count} On-Site ({c.pct}%)</span>
-                  </div>
-                  <div className="w-full bg-slate-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
-                    <div className={`${c.color} h-full rounded-full`} style={{ width: `${c.pct}%` }} />
-                  </div>
-                </div>
-              ))}
+              {(() => {
+                if (!attendanceLogs.length) {
+                  return (
+                    <div className="text-slate-400 dark:text-slate-500 py-3 text-center italic">
+                      No active {organizationType?.toLowerCase() || 'organization'} records recorded today.
+                    </div>
+                  );
+                }
+                const counts: Record<string, number> = {};
+                attendanceLogs.forEach(l => {
+                  const comp = l.company || organizationType || 'General Operations';
+                  counts[comp] = (counts[comp] || 0) + 1;
+                });
+                const colors = ['bg-[#007BC4]', 'bg-emerald-500', 'bg-indigo-500', 'bg-amber-500', 'bg-rose-500'];
+                return Object.entries(counts).map(([compName, count], idx) => {
+                  const pct = Math.round((count / attendanceLogs.length) * 100);
+                  const color = colors[idx % colors.length];
+                  return (
+                    <div key={compName} className="space-y-1">
+                      <div className="flex justify-between font-bold text-slate-800 dark:text-slate-200">
+                        <span>{compName}</span>
+                        <span>{count} On-Site ({pct}%)</span>
+                      </div>
+                      <div className="w-full bg-slate-100 dark:bg-slate-700 h-2.5 rounded-full overflow-hidden">
+                        <div className={`${color} h-full rounded-full`} style={{ width: `${pct}%` }} />
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
         </div>

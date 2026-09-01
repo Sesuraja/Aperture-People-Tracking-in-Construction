@@ -35,11 +35,50 @@ export interface ProjectProperties {
   hardwareDevices?: HardwareDevice[];
 }
 
+const DEFAULT_3X3_COORDS = [
+  { x: 6.5, y: 8.0, width: 23.5, height: 21.5 },
+  { x: 36.5, y: 8.0, width: 26.0, height: 21.5 },
+  { x: 69.0, y: 8.0, width: 24.5, height: 21.5 },
+  { x: 6.5, y: 38.0, width: 23.5, height: 21.5 },
+  { x: 36.5, y: 38.0, width: 26.0, height: 21.5 },
+  { x: 69.0, y: 38.0, width: 24.5, height: 21.5 },
+  { x: 6.5, y: 68.0, width: 23.5, height: 21.5 },
+  { x: 36.5, y: 68.0, width: 26.0, height: 21.5 },
+  { x: 69.0, y: 68.0, width: 24.5, height: 21.5 }
+];
+
+function buildDynamicZones(configuredZones?: Array<{ id: string; name: string; category?: string; hazardLevel?: string }>) {
+  const result: Record<string, any> = {};
+  if (configuredZones && configuredZones.length > 0) {
+    configuredZones.slice(0, 9).forEach((z, i) => {
+      const coords = DEFAULT_3X3_COORDS[i] || DEFAULT_3X3_COORDS[0];
+      result[z.name] = {
+        ...coords,
+        category: z.category || 'ZONE',
+        hazardLevel: z.hazardLevel || 'normal',
+        maxCapacity: z.hazardLevel === 'critical' ? 4 : z.hazardLevel === 'warning' ? 8 : 20
+      };
+    });
+    return result;
+  }
+  return {
+    'Zone A - Main Entrance': { x: 6.5, y: 8.0, width: 23.5, height: 21.5, category: 'ACCESS', hazardLevel: 'normal', maxCapacity: 15 },
+    'Zone B - Operations Floor': { x: 36.5, y: 8.0, width: 26.0, height: 21.5, category: 'OPERATIONS', hazardLevel: 'normal', maxCapacity: 25 },
+    'Zone C - High Hazard Unit': { x: 69.0, y: 8.0, width: 24.5, height: 21.5, category: 'RESTRICTED', hazardLevel: 'critical', maxCapacity: 4 },
+    'Zone D - Staging Bay': { x: 6.5, y: 38.0, width: 23.5, height: 21.5, category: 'LOGISTICS', hazardLevel: 'warning', maxCapacity: 8 },
+    'Zone E - Central Command': { x: 36.5, y: 38.0, width: 26.0, height: 21.5, category: 'MANAGEMENT', hazardLevel: 'normal', maxCapacity: 12 },
+    'Zone F - Machinery Bay': { x: 69.0, y: 38.0, width: 24.5, height: 21.5, category: 'MACHINERY', hazardLevel: 'warning', maxCapacity: 6 },
+    'Zone G - Perimeter Buffer': { x: 6.5, y: 68.0, width: 23.5, height: 21.5, category: 'SECURITY', hazardLevel: 'normal', maxCapacity: 10 },
+    'Zone H - Emergency Muster Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5, category: 'SAFETY', hazardLevel: 'normal', maxCapacity: 50 },
+    'Zone I - Utilities & Power': { x: 69.0, y: 68.0, width: 24.5, height: 21.5, category: 'UTILITIES', hazardLevel: 'critical', maxCapacity: 4 }
+  };
+}
+
 const INITIAL_PROJECT_PROPERTIES: Record<string, ProjectProperties> = {
   'metro-tower': {
     id: 'metro-tower',
-    name: 'Metro Commercial Tower Site',
-    contractor: 'Apex Construction JV',
+    name: 'Primary Monitored Facility',
+    contractor: 'Prime Operations Group',
     sizeSqFt: 350000,
     dimensions: '250m x 180m',
     floorplanUrl: '',
@@ -234,30 +273,30 @@ export default function LiveTrackingTab({
 
   // Custom Geofences & Capacity Thresholds (3x3 Layout matching design)
   const [customZonesState, setCustomZonesState] = useState<Record<string, any>>(() => {
-    return defaultZones && Object.keys(defaultZones).length > 0 ? defaultZones : {
-      'Material Storage': { x: 6.5, y: 8.0, width: 23.5, height: 21.5, category: 'MATERIAL STORAGE', hazardLevel: 'warning', maxCapacity: 4 },
-      'Structure Work Area': { x: 36.5, y: 8.0, width: 26.0, height: 21.5, category: 'STRUCTURAL WORK', hazardLevel: 'normal', maxCapacity: 10 },
-      'Crane Operating Zone': { x: 69.0, y: 8.0, width: 24.5, height: 21.5, category: 'CRANE SWING RADIUS', hazardLevel: 'critical', maxCapacity: 3 },
-      'Site Office': { x: 6.5, y: 38.0, width: 23.5, height: 21.5, category: 'SITE OPERATIONS', hazardLevel: 'normal', maxCapacity: 8 },
-      'Open Work Area': { x: 36.5, y: 38.0, width: 26.0, height: 21.5, category: 'GENERAL CONTRACTING', hazardLevel: 'normal', maxCapacity: 12 },
-      'Equipment Parking': { x: 69.0, y: 38.0, width: 24.5, height: 21.5, category: 'HEAVY MACHINERY', hazardLevel: 'warning', maxCapacity: 5 },
-      'Excavation Area': { x: 6.5, y: 68.0, width: 23.5, height: 21.5, category: 'EXCAVATION & SHORING', hazardLevel: 'critical', maxCapacity: 4 },
-      'Assembly Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5, category: 'MUSTER POINT', hazardLevel: 'normal', maxCapacity: 30 },
-      'High Voltage Area': { x: 69.0, y: 68.0, width: 24.5, height: 21.5, category: 'HIGH VOLTAGE', hazardLevel: 'critical', maxCapacity: 3 }
-    };
+    if (defaultZones && Object.keys(defaultZones).length > 0) return defaultZones;
+    return buildDynamicZones(trackingCtx?.industryConfig?.defaultZones);
   });
 
-  const [zoneCapacities, setZoneCapacities] = useState<Record<string, number>>({
-    'Material Storage': 4,
-    'Structure Work Area': 10,
-    'Crane Operating Zone': 3,
-    'Site Office': 8,
-    'Open Work Area': 12,
-    'Equipment Parking': 5,
-    'Excavation Area': 4,
-    'Assembly Point': 30,
-    'High Voltage Area': 3
+  const [zoneCapacities, setZoneCapacities] = useState<Record<string, number>>(() => {
+    const initial = buildDynamicZones(trackingCtx?.industryConfig?.defaultZones);
+    const caps: Record<string, number> = {};
+    Object.entries(initial).forEach(([name, b]: [string, any]) => {
+      caps[name] = b.maxCapacity || 10;
+    });
+    return caps;
   });
+
+  useEffect(() => {
+    if (!defaultZones || Object.keys(defaultZones).length === 0) {
+      const dynamic = buildDynamicZones(trackingCtx?.industryConfig?.defaultZones);
+      setCustomZonesState(dynamic);
+      const caps: Record<string, number> = {};
+      Object.entries(dynamic).forEach(([name, b]: [string, any]) => {
+        caps[name] = b.maxCapacity || 10;
+      });
+      setZoneCapacities(caps);
+    }
+  }, [trackingCtx?.industryConfig?.defaultZones, defaultZones]);
 
   // Geofence Drawing State
   const [isDrawingGeofence, setIsDrawingGeofence] = useState(false);
@@ -332,7 +371,7 @@ export default function LiveTrackingTab({
   const overCapacityZones = useMemo(() => {
     return Object.entries(activeZones).filter(([zName, bounds]: [string, any]) => {
       const count = people.filter(p => p.currentZone && (p.currentZone || "").toLowerCase() === (zName || "").toLowerCase()).length;
-      const cap = zoneCapacities[zName] || bounds.maxCapacity || 8;
+      const cap = zoneCapacities[zName] || bounds.capacity || bounds.maxCapacity || 8;
       return count > cap;
     });
   }, [activeZones, people, zoneCapacities]);
@@ -605,43 +644,49 @@ export default function LiveTrackingTab({
   const graphLegendStats = useMemo(() => {
     const totalWorkers = Math.max(1, people.length);
     
-    // 1. Trade Distribution
-    const tradeCounts: Record<string, { label: string; icon: string; count: number; color: string }> = {
-      'Electrician': { label: 'Electricians', icon: '⚡', count: 0, color: 'bg-amber-500' },
-      'Steelworker': { label: 'Steelworkers', icon: '🏗️', count: 0, color: 'bg-sky-500' },
-      'Scaffolder': { label: 'Scaffolders', icon: '🪜', count: 0, color: 'bg-purple-500' },
-      'Concrete': { label: 'Concrete Crew', icon: '🧱', count: 0, color: 'bg-stone-500' },
-      'Operator': { label: 'Heavy Operators', icon: '🚜', count: 0, color: 'bg-orange-500' },
-      'EHS': { label: 'EHS / Safety', icon: '🛡️', count: 0, color: 'bg-emerald-500' },
-      'Visitor': { label: 'Visitors', icon: '🎫', count: 0, color: 'bg-indigo-500' },
-      'General': { label: 'General Workforce', icon: '👷', count: 0, color: 'bg-blue-500' },
-    };
+    // 1. Dynamic Role / Specialty Distribution
+    const tradeCounts: Record<string, { label: string; icon: string; count: number; color: string }> = {};
+    const colorPalette = ['bg-sky-500', 'bg-indigo-500', 'bg-emerald-500', 'bg-amber-500', 'bg-purple-500', 'bg-rose-500', 'bg-teal-500', 'bg-blue-500'];
+    const iconPalette = ['👤', '🛡️', '⚡', '🔧', '📋', '🔬', '⛏️', '🚜'];
+
+    const configuredRoles = trackingCtx?.industryConfig?.defaultRoles || [];
+    configuredRoles.slice(0, 6).forEach((role, i) => {
+      tradeCounts[role] = {
+        label: role,
+        icon: iconPalette[i % iconPalette.length],
+        count: 0,
+        color: colorPalette[i % colorPalette.length]
+      };
+    });
+    tradeCounts['General'] = { label: `General ${personnelPlural}`, icon: '👥', count: 0, color: 'bg-slate-500' };
 
     people.forEach(p => {
       const r = (p.role || '').toLowerCase();
-      const n = (p.name || '').toLowerCase();
-      if (r.includes('electric')) tradeCounts['Electrician'].count++;
-      else if (r.includes('steel') || r.includes('iron')) tradeCounts['Steelworker'].count++;
-      else if (r.includes('scaffold')) tradeCounts['Scaffolder'].count++;
-      else if (r.includes('concrete') || r.includes('rebar') || r.includes('mason')) tradeCounts['Concrete'].count++;
-      else if (r.includes('operator') || r.includes('driver')) tradeCounts['Operator'].count++;
-      else if (r.includes('ehs') || r.includes('safety') || r.includes('officer')) tradeCounts['EHS'].count++;
-      else if (r.includes('visitor') || n.includes('(visitor)')) tradeCounts['Visitor'].count++;
-      else tradeCounts['General'].count++;
+      let matched = false;
+      for (const roleKey of Object.keys(tradeCounts)) {
+        if (roleKey !== 'General' && r.includes(roleKey.toLowerCase())) {
+          tradeCounts[roleKey].count++;
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        tradeCounts['General'].count++;
+      }
     });
 
     const tradeDistribution = Object.entries(tradeCounts)
       .map(([key, data]) => ({
         key,
         ...data,
-        percentage: Math.round((data.count / totalWorkers) * 100)
+        percentage: people.length > 0 ? Math.round((data.count / totalWorkers) * 100) : 0
       }))
-      .filter(t => t.count > 0 || t.key === 'General' || t.key === 'Electrician');
+      .filter(t => t.count > 0 || t.key === 'General');
 
     // 2. Zone Occupancy & Capacity Utilization
     const zoneDistribution = Object.entries(activeZones).map(([zName, bounds]: [string, any]) => {
       const occupants = people.filter(p => (p.currentZone || '').toLowerCase() === zName.toLowerCase()).length;
-      const capacity = zoneCapacities[zName] || bounds.maxCapacity || 8;
+      const capacity = zoneCapacities[zName] || bounds.capacity || bounds.maxCapacity || 8;
       const utilization = Math.min(100, Math.round((occupants / Math.max(1, capacity)) * 100));
       const isCritical = occupants > capacity || bounds.hazardLevel === 'critical';
       const isWarning = occupants >= capacity * 0.8 || bounds.hazardLevel === 'warning';
@@ -660,12 +705,12 @@ export default function LiveTrackingTab({
     const compliant = people.filter(p => p.ppeStatus === 'COMPLIANT' || !p.ppeStatus).length;
     const warning = people.filter(p => p.ppeStatus === 'WARNING').length;
     const nonCompliant = people.filter(p => p.ppeStatus === 'NON_COMPLIANT').length;
-    const complianceRate = Math.round((compliant / totalWorkers) * 100);
+    const complianceRate = people.length > 0 ? Math.round((compliant / totalWorkers) * 100) : 100;
 
-    // 4. RSSI / Signal Strength Stats
-    const strongSignals = Math.max(1, Math.round(totalWorkers * 0.7));
-    const nominalSignals = Math.max(0, Math.round(totalWorkers * 0.25));
-    const weakSignals = Math.max(0, totalWorkers - strongSignals - nominalSignals);
+    // 4. RSSI / Signal Strength Stats (Zero synthetic counts when empty)
+    const strongSignals = people.length > 0 ? Math.round(people.length * 0.7) : 0;
+    const nominalSignals = people.length > 0 ? Math.round(people.length * 0.25) : 0;
+    const weakSignals = people.length > 0 ? Math.max(0, people.length - strongSignals - nominalSignals) : 0;
 
     return {
       tradeDistribution,
@@ -678,7 +723,7 @@ export default function LiveTrackingTab({
       nominalSignals,
       weakSignals
     };
-  }, [people, activeZones, zoneCapacities]);
+  }, [people, activeZones, zoneCapacities, trackingCtx?.industryConfig?.defaultRoles, personnelPlural]);
 
   const displayedPeople = useMemo(() => {
     let result = filteredPeople;
@@ -703,24 +748,28 @@ export default function LiveTrackingTab({
   }, [people, FLOOR_OPTIONS, getWorkerFloor]);
 
   const TRADE_OPTIONS = useMemo(() => {
-    const list = [
-      { id: 'ALL', label: 'All Personnel', icon: '👷' },
-      { id: 'Visitor', label: 'Site Visitors', icon: '🎫' },
-      { id: 'Electrician', label: 'Electricians', icon: '⚡' },
-      { id: 'Steelworker', label: 'Steelworkers', icon: '🏗️' },
-      { id: 'Scaffolder', label: 'Scaffolders', icon: '🪜' },
-      { id: 'Inspector', label: 'Inspectors', icon: '📋' },
-      { id: 'Concrete', label: 'Concrete Crew', icon: '🧱' },
-      { id: 'EHS', label: 'EHS Officers', icon: '🛡️' },
-      { id: 'Operator', label: 'Heavy Operators', icon: '🚜' },
+    const rolesFromConfig = trackingCtx?.industryConfig?.defaultRoles || [];
+    const rolesInPeople = Array.from(new Set(people.map(p => p.role).filter(Boolean)));
+    const allRoles = Array.from(new Set([...rolesFromConfig, ...rolesInPeople]));
+    
+    const roleIcons = ['⚡', '🛡️', '🔧', '📋', '🔬', '🏥', '⛏️', '📦', '✈️', '🚜'];
+    const items = [
+      { id: 'ALL', label: `All ${personnelPlural}`, icon: '👥' },
+      ...allRoles.slice(0, 7).map((role, i) => ({
+        id: role,
+        label: role,
+        icon: roleIcons[i % roleIcons.length]
+      })),
+      { id: 'Visitor', label: 'Visitors', icon: '🎫' }
     ];
-    return list.map(t => {
+
+    return items.map(t => {
       const count = t.id === 'ALL' 
         ? people.length 
         : people.filter(p => (p.role || "").toLowerCase().includes((t.id || "").toLowerCase()) || (t.id === 'Visitor' && ((p.role || '').toLowerCase().includes('visitor') || (p.name || '').includes('(Visitor)')))).length;
       return { ...t, count };
     });
-  }, [people]);
+  }, [people, trackingCtx?.industryConfig?.defaultRoles, personnelPlural]);
 
   const dynamicHeavyEquipmentCount = useMemo(() => {
     const vCount = (vehicles || []).length;
@@ -880,9 +929,8 @@ export default function LiveTrackingTab({
       </div>
 
       {/* 2. KPI STATUS DASHBOARD - Dynamic Database Powered */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {[
-          { label: 'Personnel Onsite', val: people.length, icon: Users, color: 'text-[#007BC4]', bg: 'bg-blue-50', sub: `${people.filter(p => p.presenceState === 'MOVING').length} Active in Motion` },
           { label: 'Tracked Geofences', val: trackedGeofencesCount, icon: Layout, color: 'text-emerald-600', bg: 'bg-emerald-50', sub: overCapacityZones.length > 0 ? `${overCapacityZones.length} Over Capacity` : 'All Geofences Monitored' },
           { label: 'Hazard Breaches', val: dynamicHazardBreachesCount, icon: AlertTriangle, color: dynamicHazardBreachesCount > 0 ? 'text-rose-600' : 'text-slate-400', bg: dynamicHazardBreachesCount > 0 ? 'bg-rose-50 animate-pulse' : 'bg-slate-50', sub: dynamicHazardBreachesCount > 0 ? `${dynamicHazardBreachesCount} Active Breaches` : 'Zero Active Hazards' },
           { label: 'System Health', val: `${systemHealthRate}%`, icon: Zap, color: systemHealthRate >= 90 ? 'text-emerald-600' : systemHealthRate >= 70 ? 'text-amber-600' : 'text-rose-600', bg: systemHealthRate >= 90 ? 'bg-emerald-50' : systemHealthRate >= 70 ? 'bg-amber-50' : 'bg-rose-50', sub: mongoDbStatus.connected ? 'MongoDB Live' : 'Local DB Active' }
@@ -905,7 +953,7 @@ export default function LiveTrackingTab({
         <div className={`${isMapFullScreen ? 'hidden' : 'w-full xl:w-80'} bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-md flex flex-col overflow-hidden shrink-0`}>
           <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between">
              <div className="flex items-center gap-2">
-               <h2 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">Live Personnel</h2>
+               <h2 className="text-sm font-black text-slate-900 dark:text-white uppercase tracking-tight">Live {personnelPlural}</h2>
                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#007BC4]/10 text-[#007BC4]">
                  {filteredPeople.length}
                </span>
@@ -1110,14 +1158,14 @@ export default function LiveTrackingTab({
 
                       <div className="space-y-1">
                         {[
-                          { key: 'workers', label: 'Personnel & Workers', icon: Users, color: 'text-sky-600 bg-sky-50 border-sky-200', count: people.length },
+                          { key: 'workers', label: personnelPlural, icon: Users, color: 'text-sky-600 bg-sky-50 border-sky-200', count: people.length },
                           { key: 'assets', label: 'Equipment & Materials', icon: Box, color: 'text-emerald-600 bg-emerald-50 border-emerald-200', count: assets.length },
                           { key: 'vehicles', label: 'Heavy Machinery', icon: Truck, color: 'text-amber-600 bg-amber-50 border-amber-200', count: vehicles.length },
                           { key: 'readers', label: 'RFID Readers & Gates', icon: Radio, color: 'text-indigo-600 bg-indigo-50 border-indigo-200', count: readers.length },
                           { key: 'zones', label: 'Geofenced Safety Zones', icon: Layout, color: 'text-sky-700 bg-sky-50 border-sky-200', count: Object.keys(defaultZones).length },
                           { key: 'cameras', label: 'AI CCTV Cameras', icon: Camera, color: 'text-purple-600 bg-purple-50 border-purple-200', count: cameras.length },
                           { key: 'sensors', label: 'EHS Environmental Sensors', icon: Thermometer, color: 'text-rose-600 bg-rose-50 border-rose-200', count: sensors.length },
-                          { key: 'heatmapOverlay', label: 'Worker Density Heatmap', icon: Flame, color: 'text-rose-600 bg-rose-50 border-rose-200', count: `${people.length} density points` },
+                          { key: 'heatmapOverlay', label: `${personnelSingular} Density Heatmap`, icon: Flame, color: 'text-rose-600 bg-rose-50 border-rose-200', count: `${people.length} density points` },
                         ].map((layer) => {
                           const isVisible = visibleLayers[layer.key as keyof VisibleLayers] ?? true;
                           const LayerIcon = layer.icon;

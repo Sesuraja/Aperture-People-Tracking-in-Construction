@@ -304,7 +304,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
           name: d.data().name || 'Scheduled Report',
           format: d.data().format || 'PDF',
           frequency: d.data().frequency || 'Daily',
-          recipients: d.data().recipients || 'admin@buildcorp.com',
+          recipients: d.data().recipients || 'operations-dispatch@aperture.io',
           status: d.data().status === 'Paused' ? 'Paused' : 'Active',
           lastRun: d.data().lastRun || 'Today, 06:00 AM'
         }));
@@ -368,7 +368,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       name: newReportName,
       format: newReportFormat,
       frequency: newReportFreq,
-      recipients: newReportRecipients || 'ehs-team@buildcorp.com',
+      recipients: newReportRecipients || 'operations-dispatch@aperture.io',
       status: 'Active' as const,
       lastRun: 'Pending First Run',
       createdAt: new Date().toISOString()
@@ -554,11 +554,11 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   }, [dbRegisteredPeople, people]);
 
   const executiveKPIs = useMemo(() => {
-    const totalWorkers = activeWorkers.length > 0 ? activeWorkers.length : 12;
+    const totalWorkers = activeWorkers.length;
     const movingCount = activeWorkers.filter(p => p.presenceState === 'MOVING').length;
-    const toolTimePct = totalWorkers > 0 ? Math.min(94, Math.max(68, Math.round((movingCount / Math.max(1, totalWorkers)) * 100 + 65))) : 84;
+    const toolTimePct = totalWorkers > 0 ? Math.min(98, Math.max(50, Math.round((movingCount / Math.max(1, totalWorkers)) * 100))) : 0;
     const compliantCount = activeWorkers.filter(p => p.ppeStatus !== 'NON_COMPLIANT').length;
-    const safetyScore = totalWorkers > 0 ? Math.min(99, Math.max(78, Math.round((compliantCount / Math.max(1, totalWorkers)) * 100))) : 96;
+    const safetyScore = totalWorkers > 0 ? Math.min(100, Math.max(60, Math.round((compliantCount / Math.max(1, totalWorkers)) * 100))) : 100;
 
     return {
       safetyScore,
@@ -573,71 +573,52 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   }, [activeWorkers, dateRange]);
 
   const attendanceTrendData = useMemo(() => {
-    if (dbAttendanceData.length > 0) return dbAttendanceData;
-    return [
-      { time: '06:00', onTime: 4, late: 0, overtime: 0 },
-      { time: '07:00', onTime: 18, late: 1, overtime: 0 },
-      { time: '08:00', onTime: 32, late: 2, overtime: 0 },
-      { time: '09:00', onTime: 35, late: 0, overtime: 0 },
-      { time: '12:00', onTime: 34, late: 0, overtime: 0 },
-      { time: '15:00', onTime: 33, late: 0, overtime: 4 },
-      { time: '18:00', onTime: 12, late: 0, overtime: 6 }
-    ];
+    return dbAttendanceData;
   }, [dbAttendanceData]);
 
   const movementFlowData = useMemo(() => {
     const byZone: Record<string, number> = {};
     activeWorkers.forEach(p => {
-      const zone = p.currentZone || p.zone || 'Site Operations';
+      const zone = p.currentZone || p.zone || `${siteLabel || 'Facility'} Operations`;
       byZone[zone] = (byZone[zone] || 0) + 1;
     });
-    if (Object.keys(byZone).length === 0) {
-      byZone['Structure Work Area'] = 6;
-      byZone['Material Storage'] = 3;
-      byZone['Site Office'] = 4;
-      byZone['Assembly Point'] = 2;
-    }
     return Object.entries(byZone).map(([name, count]) => ({
       zone: name,
       hourlyFlow: count * 4,
       avgDwellMin: 45,
       congestionRisk: count > 8 ? 'High' : count > 4 ? 'Moderate' : 'Low'
     }));
-  }, [activeWorkers]);
+  }, [activeWorkers, siteLabel]);
 
   const productivityData = useMemo(() => {
     const hours = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00'];
+    const baseTotal = activeWorkers.length;
     return hours.map((hour, idx) => {
-      const baseTotal = Math.max(6, activeWorkers.length);
-      const activeCount = Math.max(3, Math.round(baseTotal * (0.65 + Math.sin(idx * 0.8) * 0.2)));
-      const idleCount = Math.max(1, Math.round(baseTotal * 0.15));
-      const inTransit = Math.max(1, Math.round(baseTotal * 0.12));
+      const activeCount = Math.round(baseTotal * (0.65 + Math.sin(idx * 0.8) * 0.2));
+      const idleCount = Math.round(baseTotal * 0.15);
+      const inTransit = Math.max(0, baseTotal - activeCount - idleCount);
       return {
         time: hour,
         toolTime: activeCount,
         idle: idleCount,
         transit: inTransit,
-        efficiencyPct: Math.round((activeCount / Math.max(1, activeCount + idleCount + inTransit)) * 100)
+        efficiencyPct: baseTotal > 0 ? Math.round((activeCount / baseTotal) * 100) : 0
       };
     });
   }, [activeWorkers]);
 
   const zoneOccupancyData = useMemo(() => {
-    const defaultZonesConfig = [
-      { name: 'Material Storage', capacity: 6, risk: 'Moderate' },
-      { name: 'Structure Work Area', capacity: 12, risk: 'Normal' },
-      { name: 'Crane Operating Zone', capacity: 4, risk: 'High' },
-      { name: 'Site Office', capacity: 10, risk: 'Normal' },
-      { name: 'Open Work Area', capacity: 15, risk: 'Normal' },
-      { name: 'Equipment Parking', capacity: 6, risk: 'Moderate' },
-      { name: 'Excavation Area', capacity: 5, risk: 'High' },
-      { name: 'Assembly Point', capacity: 35, risk: 'Normal' },
-      { name: 'High Voltage Area', capacity: 4, risk: 'High' }
-    ];
+    const defaultZonesConfig = (config?.defaultZones && config.defaultZones.length > 0)
+      ? config.defaultZones.map(z => ({ name: z.name, capacity: 15, risk: 'Normal' }))
+      : [
+          { name: 'Primary Portal', capacity: 10, risk: 'Normal' },
+          { name: 'Core Operations Area', capacity: 25, risk: 'Normal' },
+          { name: 'Secured Perimeter', capacity: 8, risk: 'High' }
+        ];
 
     return defaultZonesConfig.map(z => {
       const current = activeWorkers.filter(p => (p.currentZone || p.zone || '').toLowerCase().includes(z.name.toLowerCase().split(' ')[0])).length;
-      const effectiveCurrent = current > 0 ? current : (z.name === 'Structure Work Area' ? 3 : z.name === 'Site Office' ? 2 : 1);
+      const effectiveCurrent = current;
       const loadPct = Math.round((effectiveCurrent / z.capacity) * 100);
       return {
         zone: z.name,
@@ -647,50 +628,47 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         risk: loadPct >= 90 ? 'High' : loadPct >= 70 ? 'Moderate' : 'Normal'
       };
     });
-  }, [activeWorkers]);
+  }, [activeWorkers, config?.defaultZones]);
 
   const incidentTrendData = useMemo(() => {
     if (dbIncidents.length > 0) {
       const nearMissCount = dbIncidents.filter(i => String(i.severity || '').toUpperCase().includes('LOW') || String(i.title || '').toLowerCase().includes('near')).length;
-      const zoneBreachCount = dbIncidents.filter(i => String(i.title || '').toLowerCase().includes('breach') || String(i.zone || '').toLowerCase().includes('crane')).length;
-      const ppeViolationCount = dbIncidents.filter(i => String(i.title || '').toLowerCase().includes('ppe') || String(i.title || '').toLowerCase().includes('helmet')).length;
+      const zoneBreachCount = dbIncidents.filter(i => String(i.title || '').toLowerCase().includes('breach') || String(i.zone || '').toLowerCase().includes('exclusion') || String(i.zone || '').toLowerCase().includes('blast')).length;
+      const ppeViolationCount = dbIncidents.filter(i => String(i.title || '').toLowerCase().includes('ppe') || String(i.title || '').toLowerCase().includes('compliance')).length;
 
       return [
         { month: new Date().toLocaleString('default', { month: 'short' }) + ' ' + new Date().getFullYear(), nearMiss: nearMissCount, zoneBreach: zoneBreachCount, ppeViolation: ppeViolationCount, slipFall: 0 }
       ];
     }
-    return [
-      { month: 'Jul 2026', nearMiss: 2, zoneBreach: 1, ppeViolation: 3, slipFall: 0 },
-      { month: 'Aug 2026', nearMiss: 1, zoneBreach: 0, ppeViolation: 1, slipFall: 0 }
-    ];
+    return [];
   }, [dbIncidents]);
 
   const ppeComplianceData = useMemo(() => {
-    const baseCount = Math.max(6, activeWorkers.length);
+    const compliantCount = activeWorkers.filter(p => p.ppeStatus !== 'NON_COMPLIANT').length;
+    const nonCompliantCount = activeWorkers.length - compliantCount;
     return [
-      { name: 'Hardhat & Vest (100% Compliant)', value: Math.max(12, baseCount * 3), color: '#10B981' },
-      { name: 'Goggles Warning', value: 2, color: '#F59E0B' },
-      { name: 'Audited & Verified', value: Math.max(20, baseCount * 5), color: '#007BC4' }
+      { name: `${safetyComplianceLabel || 'Safety'} Compliant`, value: compliantCount, color: '#10B981' },
+      { name: `${safetyComplianceLabel || 'Safety'} Attention Required`, value: nonCompliantCount, color: '#F59E0B' }
     ];
-  }, [activeWorkers]);
+  }, [activeWorkers, safetyComplianceLabel]);
 
   // EXPORT HANDLERS
   const handleExportFullBI = () => {
     const rows = activeWorkers.map(p => ({
       ID: p.id || p.rfidTag || 'P-101',
-      Name: p.name || 'Worker',
-      Role: p.role || p.trade || 'Tradesperson',
-      Zone: p.currentZone || p.zone || 'Site Zone',
+      Name: p.name || personnelSingular,
+      Role: p.role || p.trade || roleLabel,
+      Zone: p.currentZone || p.zone || `${siteLabel || 'Site'} Zone`,
       DwellSeconds: p.dwellTime || 30,
       LastSeen: p.lastSeen ? new Date(p.lastSeen).toISOString() : new Date().toISOString(),
       State: p.presenceState || 'ACTIVE'
     }));
 
     exportToCSV('Enterprise_BI_Analytics_Master_Dump', rows, [
-      { key: 'ID', label: 'WORKER ID' },
+      { key: 'ID', label: `${personnelSingular.toUpperCase()} ${idBadgeLabel.toUpperCase()}` },
       { key: 'Name', label: 'FULL NAME' },
-      { key: 'Role', label: 'ROLE / TRADE' },
-      { key: 'Zone', label: 'CURRENT ZONE' },
+      { key: 'Role', label: `${roleLabel.toUpperCase()}` },
+      { key: 'Zone', label: `${zoneLabel.toUpperCase()}` },
       { key: 'DwellSeconds', label: 'DWELL TIME (SEC)' },
       { key: 'State', label: 'PRESENCE STATE' },
       { key: 'LastSeen', label: 'LAST SEEN TIMESTAMP' }
@@ -700,20 +678,20 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   const handleGeneratePDFReport = () => {
     const rows = activeWorkers.map(p => ({
       ID: p.id || p.rfidTag || 'P-101',
-      Name: p.name || 'Worker',
-      Role: p.role || p.trade || 'Tradesperson',
-      Zone: p.currentZone || p.zone || 'Site Zone',
+      Name: p.name || personnelSingular,
+      Role: p.role || p.trade || roleLabel,
+      Zone: p.currentZone || p.zone || `${siteLabel || 'Site'} Zone`,
       Status: p.presenceState || 'ACTIVE'
     }));
 
     generatePDFReport(
       'Enterprise BI Executive Site Analytics Report',
-      'Comprehensive Workforce, Equipment, PPE, and Safety Intelligence Audit',
+      `Comprehensive ${personnelPlural}, Equipment, ${safetyComplianceLabel}, and Operational Intelligence Audit`,
       [
         { key: 'ID', label: 'ID' },
         { key: 'Name', label: 'Personnel Name' },
-        { key: 'Role', label: 'Role' },
-        { key: 'Zone', label: 'Active Zone' },
+        { key: 'Role', label: roleLabel },
+        { key: 'Zone', label: zoneLabel },
         { key: 'Status', label: 'State' }
       ],
       rows,
@@ -738,7 +716,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   }
 
   return (
-    <div className="flex flex-col w-full min-h-full p-4 md:p-6 space-y-6 max-w-7xl mx-auto font-sans">
+    <div className="flex flex-col w-full min-h-full p-4 sm:p-6 space-y-6 max-w-[1760px] mx-auto font-sans min-w-0">
       
       {/* 1. ENTERPRISE BI HEADER & GLOBAL CONTROLS */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-800/90 p-5 rounded-2xl border border-slate-200 dark:border-slate-700/80 shadow-xs">
@@ -966,7 +944,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
               <CardHeader className="pb-2 flex flex-row items-center justify-between border-b border-slate-100 dark:border-slate-700/60">
                 <div>
                   <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">Daily On-Site Headcount & Shift Attendance</CardTitle>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">On-time arrivals, late arrivals, and overtime worker counts</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">On-time arrivals, late arrivals, and overtime {personnelSingular} counts</p>
                 </div>
                 <Badge variant="outline" className="text-[10px] font-bold text-[#007BC4] border-blue-200 dark:border-blue-800">MongoDB Atlas Synced</Badge>
               </CardHeader>
@@ -978,9 +956,9 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                     <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
                     <Tooltip contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
                     <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                    <Bar dataKey="onTime" name="On-Time Workers" fill="#007BC4" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="onTime" name={`On-Time ${personnelPlural}`} fill="#007BC4" radius={[4, 4, 0, 0]} />
                     <Bar dataKey="late" name="Late Arrivals" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="overtime" name="Overtime Crew" fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="overtime" name={`Overtime ${personnelPlural}`} fill="#8B5CF6" radius={[4, 4, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </CardContent>
@@ -988,8 +966,8 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
 
             <Card className="lg:col-span-4 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
               <CardHeader className="pb-2 border-b border-slate-100 dark:border-slate-700/60">
-                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">PPE Safety Radar Compliance</CardTitle>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Real-time computer vision & EHS inspection rates</p>
+                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">{safetyComplianceLabel} Safety Radar Compliance</CardTitle>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Real-time inspection & safety adherence rates</p>
               </CardHeader>
               <CardContent className="p-4 h-72 flex items-center justify-center">
                 <ResponsiveContainer width="100%" height="100%">

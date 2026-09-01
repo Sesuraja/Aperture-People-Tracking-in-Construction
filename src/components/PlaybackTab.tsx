@@ -10,76 +10,17 @@ import {
 } from 'lucide-react';
 import { Slider } from '@/components/ui/slider';
 import { useGaoHistory } from '../lib/useGaoApi';
-import { collection, query, orderBy, limit, getDocs, getCountFromServer, onSnapshot, db } from '../lib/db';
+import { collection, getDocs, onSnapshot, db } from '../lib/db';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 import { getBlueprintSvg, InteractiveSiteMap, MapMode } from './LiveFloorMap';
+import { useTracking, useTerminology } from '../context/TrackingContext';
 
-// Available Sites & Floors for Playback Map Selection
-const PLAYBACK_SITES: Record<string, {
-  id: string;
-  name: string;
-  contractor: string;
-  dimensions: string;
-  floors: { id: string; name: string; level: number }[];
-  zones: Record<string, { x: number; y: number; width: number; height: number; category?: string; hazardLevel?: string }>;
-}> = {
-  'metro-tower': {
-    id: 'metro-tower',
-    name: 'Metro Commercial Tower Site',
-    contractor: 'Apex Construction JV',
-    dimensions: '250m x 180m',
-    floors: [
-      { id: 'fl-1', name: 'Level 1 - Ground Access & Gate Portal', level: 1 },
-      { id: 'fl-2', name: 'Level 2 - Structural Deck & Crane Operating Area', level: 2 },
-      { id: 'fl-b1', name: 'Level B1 - Underground Utility & Storage Vault', level: -1 },
-    ],
-    zones: {
-      'Material Storage': { x: 6.5, y: 8.0, width: 23.5, height: 21.5, category: 'MATERIAL STORAGE', hazardLevel: 'warning' },
-      'Structure Work Area': { x: 36.5, y: 8.0, width: 26.0, height: 21.5, category: 'STRUCTURAL WORK', hazardLevel: 'normal' },
-      'Crane Operating Zone': { x: 69.0, y: 8.0, width: 24.5, height: 21.5, category: 'CRANE SWING RADIUS', hazardLevel: 'critical' },
-      'Site Office': { x: 6.5, y: 38.0, width: 23.5, height: 21.5, category: 'SITE OPERATIONS', hazardLevel: 'normal' },
-      'Open Work Area': { x: 36.5, y: 38.0, width: 26.0, height: 21.5, category: 'GENERAL CONTRACTING', hazardLevel: 'normal' },
-      'Equipment Parking': { x: 69.0, y: 38.0, width: 24.5, height: 21.5, category: 'HEAVY MACHINERY', hazardLevel: 'warning' },
-      'Excavation Area': { x: 6.5, y: 68.0, width: 23.5, height: 21.5, category: 'EXCAVATION & SHORING', hazardLevel: 'critical' },
-      'Assembly Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5, category: 'MUSTER POINT', hazardLevel: 'normal' },
-      'High Voltage Area': { x: 69.0, y: 68.0, width: 24.5, height: 21.5, category: 'HIGH VOLTAGE', hazardLevel: 'critical' }
-    }
-  },
-  'logistics-hub': {
-    id: 'logistics-hub',
-    name: 'Apex Industrial Logistics Hub',
-    contractor: 'LogiTech Builders Ltd',
-    dimensions: '180m x 120m',
-    floors: [
-      { id: 'fl-main', name: 'Ground Warehouse & Dock Bays', level: 1 },
-      { id: 'fl-mezz', name: 'Mezzanine Inventory Office', level: 2 }
-    ],
-    zones: {
-      'Dock Loading Bay 1-4': { x: 5, y: 10, width: 40, height: 35, category: 'DOCK OPERATIONS', hazardLevel: 'warning' },
-      'High-Bay Automated Racking': { x: 50, y: 10, width: 45, height: 60, category: 'STORAGE VAULT', hazardLevel: 'normal' },
-      'Hazardous Material Depot': { x: 5, y: 55, width: 35, height: 35, category: 'HAZMAT ENCLOSURE', hazardLevel: 'critical' },
-      'Muster Point B': { x: 85, y: 80, width: 12, height: 15, category: 'SAFETY ASSEMBLY', hazardLevel: 'normal' }
-    }
-  },
-  'subsurface-shaft': {
-    id: 'subsurface-shaft',
-    name: 'Subsurface Tunnel & Shaft Operations',
-    contractor: 'GeoTunnel Infrastructure',
-    dimensions: '150m x 100m',
-    floors: [
-      { id: 'fl-shaft-1', name: 'Depth -15m Shoring Pit', level: -1 },
-      { id: 'fl-tunnel-2', name: 'Depth -30m Main Tunnel Bore', level: -2 }
-    ],
-    zones: {
-      'Tunnel Boring Machine Yard': { x: 15, y: 20, width: 40, height: 50, category: 'HEAVY MACHINERY', hazardLevel: 'critical' },
-      'Ventilation & Air Quality Hub': { x: 60, y: 15, width: 30, height: 30, category: 'LIFE SUPPORT SYSTEM', hazardLevel: 'warning' },
-      'Emergency Refuge Chamber': { x: 60, y: 55, width: 30, height: 35, category: 'SAFETY REFUGE', hazardLevel: 'normal' }
-    }
-  }
-};
 
 export default function PlaybackTab({ people, zones: initialZones }: { people: Person[], zones: any }) {
   const { mode } = useContext(AppModeContext);
+  const trackingCtx = useTracking();
+  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [timeIndex, setTimeIndex] = useState(0);
   const [speed, setSpeed] = useState(1);
@@ -87,11 +28,23 @@ export default function PlaybackTab({ people, zones: initialZones }: { people: P
   const [highlightedPersonId, setHighlightedPersonId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'map' | 'api'>('map');
 
-  // Site & Floor Selection for Playback Maps
-  const [activeSiteId, setActiveSiteId] = useState<string>('metro-tower');
-  const activeSite = PLAYBACK_SITES[activeSiteId] || PLAYBACK_SITES['metro-tower'];
-  const [activeFloorId, setActiveFloorId] = useState<string>(activeSite.floors[0]?.id || 'fl-1');
+  // Site name from real trackingCtx (not hardcoded)
+  const siteName = trackingCtx?.mapConfig?.name || 'Main Site';
+
+  const [activeSiteId] = useState<string>('site-main');
+  // activeSite is a shim for PlaybackMap compatibility - uses real zones from trackingCtx
+  const activeSite = useMemo(() => ({
+    id: 'site-main',
+    name: siteName,
+    contractor: organizationType || 'Site Operations',
+    dimensions: '',
+    floors: [{ id: 'fl-main', name: 'Main Floor', level: 1 }],
+    zones: {}
+  }), [siteName, organizationType]);
+
+
   const [mapStyleMode, setMapStyleMode] = useState<MapMode>('standard');
+
 
   // Layer Visibility Toggles
   const [showTrails, setShowTrails] = useState(true);
@@ -119,49 +72,133 @@ export default function PlaybackTab({ people, zones: initialZones }: { people: P
   // Fallback API History
   const { records: apiRecords, totalCount: apiTotalCount, isLoading: apiIsLoading, error: apiError } = useGaoHistory(skip, take);
 
-  // When active site changes, default to first floor
+  // Real MongoDB playback frames state
+  const [dbPlaybackFrames, setDbPlaybackFrames] = useState<any[]>([]);
+  const [isFetchingFrames, setIsFetchingFrames] = useState(false);
+
+  // Fetch real playback frames from MongoDB when date changes
   useEffect(() => {
-    if (activeSite.floors.length > 0) {
-      setActiveFloorId(activeSite.floors[0].id);
-    }
-  }, [activeSiteId]);
+    const fetchRealFrames = async () => {
+      setIsFetchingFrames(true);
+      try {
+        const res = await fetch(`/api/data/playback_frames?date=${selectedDate}`);
+        if (res.ok) {
+          const data = await res.json();
+          setDbPlaybackFrames(data.frames || []);
+        }
+      } catch (e) {
+        console.warn('[PlaybackTab] Could not fetch real playback frames:', e);
+      } finally {
+        setIsFetchingFrames(false);
+      }
+    };
+    fetchRealFrames();
+  }, [selectedDate]);
 
   useEffect(() => {
-    if (mode === 'real') {
-      const fetchDbHistory = async () => {
-        setIsDbLoading(true);
-        try {
-          const colRef = collection(db, 'tag_history');
-          const countSnap = await getCountFromServer(colRef);
-          setDbTotalCount(countSnap.data().count);
-          
-          const q = query(colRef, orderBy('timestamp', 'desc'), limit(take + skip));
-          const snap = await getDocs(q);
-          
-          const fetched = snap.docs.map(doc => {
+    const fetchDbHistory = async () => {
+      setIsDbLoading(true);
+      try {
+        const [historySnap, attendanceSnap, peopleSnap, eventsSnap] = await Promise.allSettled([
+          getDocs(collection(db, 'tag_history')),
+          getDocs(collection(db, 'attendance_logs')),
+          getDocs(collection(db, 'registered_people')),
+          getDocs(collection(db, 'rfid_realtime_events'))
+        ]);
+
+        const combinedRecords: any[] = [];
+
+        if (historySnap.status === 'fulfilled' && historySnap.value?.docs) {
+          historySnap.value.docs.forEach((doc: any) => {
             const data = doc.data();
-            return {
-              TagID: data.TagID,
-              FirstName: data.name?.split(' ')[0] || '',
-              LastName: data.name?.split(' ').slice(1).join(' ') || '',
-              LocationName: data.toZone || data.currentZone || 'Unknown',
-              EnterTimeStr: data.timestamp?.toDate().toLocaleString() || new Date().toLocaleString(),
-              LeaveTimeStr: 'ACTIVE',
-              Duration: 0.1,
-              role: data.role
-            };
+            if (data) {
+              const fullName = data.name || data.personName || `Personnel ${data.TagID || doc.id}`;
+              const parts = fullName.split(' ');
+              combinedRecords.push({
+                TagID: data.TagID || data.tagId || doc.id,
+                FirstName: parts[0] || 'Worker',
+                LastName: parts.slice(1).join(' ') || '',
+                LocationName: data.toZone || data.currentZone || data.Location || 'Site Area',
+                EnterTimeStr: data.timestamp?.toDate ? data.timestamp.toDate().toLocaleString() : String(data.timestamp || new Date().toLocaleString()),
+                LeaveTimeStr: data.leaveTime || 'ACTIVE',
+                Duration: data.duration || 0.5,
+                role: data.role || 'Field Personnel'
+              });
+            }
           });
-          
-          setDbRecords(fetched.slice(skip, skip + take));
-        } catch (e) {
-          console.error('Failed to fetch DB history', e);
-        } finally {
-          setIsDbLoading(false);
         }
-      };
-      fetchDbHistory();
-    }
-  }, [mode, skip, take]);
+
+        if (attendanceSnap.status === 'fulfilled' && attendanceSnap.value?.docs) {
+          attendanceSnap.value.docs.forEach((doc: any) => {
+            const data = doc.data();
+            if (data) {
+              const fullName = data.workerName || data.name || 'Personnel';
+              const parts = fullName.split(' ');
+              combinedRecords.push({
+                TagID: data.tagId || data.TagID || doc.id,
+                FirstName: parts[0] || 'Worker',
+                LastName: parts.slice(1).join(' ') || '',
+                LocationName: data.zone || data.location || 'Access Portal',
+                EnterTimeStr: data.clockInTime || data.timestamp || new Date().toLocaleString(),
+                LeaveTimeStr: data.clockOutTime || 'ACTIVE',
+                Duration: data.hoursWorked || 1.0,
+                role: data.tradeCompany || data.role || 'Contractor'
+              });
+            }
+          });
+        }
+
+        if (peopleSnap.status === 'fulfilled' && peopleSnap.value?.docs) {
+          peopleSnap.value.docs.forEach((doc: any) => {
+            const data = doc.data();
+            if (data) {
+              const fullName = data.name || data.personName || 'Personnel';
+              const parts = fullName.split(' ');
+              combinedRecords.push({
+                TagID: data.hardhatTagId || data.tagId || data.TagID || doc.id,
+                FirstName: parts[0] || 'Worker',
+                LastName: parts.slice(1).join(' ') || '',
+                LocationName: data.currentZone || data.location || 'Main Site Sector',
+                EnterTimeStr: data.lastSeen ? new Date(data.lastSeen).toLocaleString() : new Date().toLocaleString(),
+                LeaveTimeStr: data.shiftStatus === 'OFF_SITE' ? 'Completed' : 'ACTIVE',
+                Duration: typeof data.dwellTime === 'number' ? (data.dwellTime / 60).toFixed(1) : 0.8,
+                role: data.role || data.tradeCompany || 'Field Personnel'
+              });
+            }
+          });
+        }
+
+        if (eventsSnap.status === 'fulfilled' && eventsSnap.value?.docs) {
+          eventsSnap.value.docs.forEach((doc: any) => {
+            const data = doc.data();
+            if (data && data.tagId) {
+              combinedRecords.push({
+                TagID: data.tagId,
+                FirstName: data.workerName ? data.workerName.split(' ')[0] : 'Telemetry',
+                LastName: data.workerName ? data.workerName.split(' ').slice(1).join(' ') : 'Tag',
+                LocationName: data.zoneName || data.readerName || 'Portal Antenna',
+                EnterTimeStr: data.timestamp ? new Date(data.timestamp).toLocaleString() : new Date().toLocaleString(),
+                LeaveTimeStr: 'ACTIVE',
+                Duration: 0.1,
+                role: 'RFID Tag'
+              });
+            }
+          });
+        }
+
+        // Sort by timestamp descending
+        combinedRecords.sort((a, b) => new Date(b.EnterTimeStr).getTime() - new Date(a.EnterTimeStr).getTime());
+
+        setDbTotalCount(combinedRecords.length);
+        setDbRecords(combinedRecords.slice(skip, skip + take));
+      } catch (e) {
+        console.error('Failed to fetch DB history', e);
+      } finally {
+        setIsDbLoading(false);
+      }
+    };
+    fetchDbHistory();
+  }, [skip, take]);
 
   // Combine DB History and GAO API History seamlessly
   const records = useMemo(() => {
@@ -215,23 +252,39 @@ export default function PlaybackTab({ people, zones: initialZones }: { people: P
     return (people && people.length > 0) ? people : rosterPeople;
   }, [people, rosterPeople]);
 
-  // Build telemetry playback timeline with natural waypoint motion paths
+  // Build telemetry playback timeline from real MongoDB frames if available,
+  // otherwise interpolate from live effectivePeople positions
   const playbackHistoryFrames = useMemo(() => {
+    // Use real MongoDB playback snapshots if we have them for selected date
+    if (dbPlaybackFrames.length > 0) {
+      return dbPlaybackFrames.map(snapshot => {
+        return (snapshot.tags || []).map((t: any, idx: number) => ({
+          id: t.tagId || `tag-${idx}`,
+          name: t.name || 'Unknown Tag',
+          role: t.role || 'Personnel',
+          currentZone: t.location || 'Unknown Zone',
+          presenceState: t.status === 'Active' ? 'MOVING' : 'IDLE',
+          dwellTime: 60,
+          x: t.x !== undefined ? t.x : Math.max(8, Math.min(92, 10 + (idx * 13) % 75)),
+          y: t.y !== undefined ? t.y : Math.max(8, Math.min(92, 15 + (idx * 17) % 70)),
+          lastSeen: new Date(snapshot.timestamp),
+          trail: []
+        }));
+      });
+    }
+
+    // Fallback: interpolate motion from live people
     const historyFrames: Person[][] = [];
     const frameCount = 120;
-    
     for (let i = 0; i < frameCount; i++) {
        const progress = i / frameCount;
        const frame = effectivePeople.map((p, idx) => {
-          // Calculate realistic waypoint traversal based on time index
           const phaseOffset = (idx * 0.25) % 1;
           const motionT = (progress + phaseOffset) % 1;
           const wobbleX = Math.sin(motionT * Math.PI * 2 + idx) * 12;
           const wobbleY = Math.cos(motionT * Math.PI * 2 + idx) * 8;
-          
           const baseX = p.x || (25 + (idx * 15) % 55);
           const baseY = p.y || (25 + (idx * 12) % 50);
-
           return {
              ...p,
              x: Math.max(8, Math.min(92, baseX + (p.presenceState === 'MOVING' ? wobbleX : wobbleX * 0.15))),
@@ -242,7 +295,8 @@ export default function PlaybackTab({ people, zones: initialZones }: { people: P
        historyFrames.push(frame);
     }
     return historyFrames;
-  }, [effectivePeople]);
+  }, [effectivePeople, dbPlaybackFrames]);
+
 
   const [dbAlerts, setDbAlerts] = useState<any[]>([]);
 
@@ -376,10 +430,29 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
     );
   };
 
-  const activeZones = activeSite.zones || initialZones;
+  // realZones uses zones from Custom Map Editor / live tracking (set below)
+  const customFloorplan = trackingCtx?.customFloorplan || (typeof window !== 'undefined' ? localStorage.getItem('gao_custom_floorplan') : null) || null;
+
+  const realZones = useMemo(() => {
+    if (trackingCtx?.zones && trackingCtx.zones.length > 0) {
+      const zMap: Record<string, any> = {};
+      trackingCtx.zones.forEach(z => {
+        zMap[z.name] = {
+          x: z.x,
+          y: z.y,
+          width: z.width,
+          height: z.height,
+          category: z.category || 'ZONE',
+          hazardLevel: z.hazardLevel || 'normal'
+        };
+      });
+      return zMap;
+    }
+    return activeSite.zones || initialZones || {};
+  }, [trackingCtx?.zones, activeSite.zones, initialZones]);
 
   return (
-    <div className="w-full flex flex-col p-6 gap-6 max-w-7xl mx-auto">
+    <div className="w-full flex flex-col p-4 sm:p-6 gap-6 max-w-[1760px] mx-auto min-w-0">
       {/* Header Bar */}
       <div className="flex flex-col md:flex-row justify-between shrink-0 gap-4 items-start md:items-center">
         <div>
@@ -389,7 +462,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                Live Replay Engine
              </span>
            </div>
-           <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mt-1">Review historical worker trails, CAD site blueprints, geofence breaches & RFID reader logs</p>
+           <p className="text-slate-500 dark:text-slate-400 text-sm font-medium mt-1">Review historical {personnelSingular.toLowerCase()} trails, facility telemetry maps, geofence breaches & RFID reader logs</p>
         </div>
         
         <div className="flex items-center gap-3 flex-wrap">
@@ -494,10 +567,10 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
             <Layers size={20} />
           </div>
           <div className="min-w-0">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Monitored Sectors</div>
-            <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{Object.keys(activeZones).length}</div>
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Monitored Zones</div>
+            <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{Object.keys(realZones).length}</div>
             <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 truncate">
-              CAD Vector Blueprint Synchronized
+              {customFloorplan ? 'Custom Floorplan Active' : 'Default Blueprint Active'}
             </div>
           </div>
         </div>
@@ -505,59 +578,53 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
 
       {viewMode === 'map' && (
          <>
-            {/* Site, Floor & Layer Selection Bar */}
+            {/* Map Controls Bar */}
             <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
               <div className="flex items-center justify-between flex-wrap gap-3">
-                {/* Site Selection Dropdown */}
+                {/* Site Info Badge (real from MongoDB/TrackingContext) */}
                 <div className="flex items-center gap-2">
                   <Building2 size={16} className="text-[#007BC4]" />
-                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Site Map:</span>
-                  <select
-                    value={activeSiteId}
-                    onChange={e => setActiveSiteId(e.target.value)}
-                    className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 dark:text-white outline-none focus:border-[#007BC4]"
-                  >
-                    {Object.values(PLAYBACK_SITES).map(s => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.dimensions})</option>
-                    ))}
-                  </select>
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Site:</span>
+                  <span className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 dark:text-white">
+                    {siteName}
+                  </span>
+                  {isFetchingFrames && (
+                    <span className="text-[10px] text-[#007BC4] font-bold animate-pulse flex items-center gap-1">
+                      <RefreshCw size={10} className="animate-spin" /> Loading frames…
+                    </span>
+                  )}
+                  {!isFetchingFrames && dbPlaybackFrames.length > 0 && (
+                    <span className="text-[10px] text-emerald-600 font-bold flex items-center gap-1">
+                      <Database size={10} /> {dbPlaybackFrames.length} real frames
+                    </span>
+                  )}
+                  {!isFetchingFrames && dbPlaybackFrames.length === 0 && (
+                    <span className="text-[10px] text-slate-400 font-bold">No history for this date — showing live interpolation</span>
+                  )}
                 </div>
 
-                {/* Floor Level Dropdown */}
-                <div className="flex items-center gap-2">
-                  <Layers size={16} className="text-indigo-500" />
-                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Level:</span>
-                  <select
-                    value={activeFloorId}
-                    onChange={e => setActiveFloorId(e.target.value)}
-                    className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-1.5 text-xs font-bold text-slate-800 dark:text-white outline-none focus:border-[#007BC4]"
-                  >
-                    {activeSite.floors.map(f => (
-                      <option key={f.id} value={f.id}>{f.name}</option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Blueprint Render Mode Selector */}
-                <div className="flex items-center gap-2">
-                  <MapIcon size={16} className="text-teal-500" />
-                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Blueprint Mode:</span>
-                  <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl">
-                    {[
-                      { id: 'standard', label: 'CAD Vector' },
-                      { id: 'bim', label: 'BIM 3D' },
-                      { id: 'satellite', label: 'Satellite' }
-                    ].map(m => (
-                      <button
-                        key={m.id}
-                        onClick={() => setMapStyleMode(m.id as MapMode)}
-                        className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition ${mapStyleMode === m.id ? 'bg-[#007BC4] text-white shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'}`}
-                      >
-                        {m.label}
-                      </button>
-                    ))}
+                {/* Blueprint Render Mode Selector — only shown if no custom floorplan */}
+                {!customFloorplan && (
+                  <div className="flex items-center gap-2">
+                    <MapIcon size={16} className="text-teal-500" />
+                    <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Blueprint:</span>
+                    <div className="flex bg-slate-100 dark:bg-slate-900 p-1 rounded-xl">
+                      {[
+                        { id: 'standard', label: 'CAD Vector' },
+                        { id: 'bim', label: 'BIM 3D' },
+                        { id: 'satellite', label: 'Satellite' }
+                      ].map(m => (
+                        <button
+                          key={m.id}
+                          onClick={() => setMapStyleMode(m.id as MapMode)}
+                          className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition ${mapStyleMode === m.id ? 'bg-[#007BC4] text-white shadow-sm' : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'}`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* Map Layer Controls */}
                 <div className="flex items-center gap-2">
@@ -573,18 +640,19 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                     className={`px-2.5 py-1.5 text-xs font-bold rounded-xl border transition flex items-center gap-1 ${showZones ? 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 border-indigo-500/30' : 'bg-slate-50 dark:bg-slate-900 text-slate-400 border-slate-200 dark:border-slate-700'}`}
                     title="Toggle Zone Boundaries"
                   >
-                    <Layers size={13} /> Zones
+                    <Layers size={13} /> Zones ({Object.keys(realZones).length})
                   </button>
                   <button
                     onClick={() => setShowGateways(!showGateways)}
                     className={`px-2.5 py-1.5 text-xs font-bold rounded-xl border transition flex items-center gap-1 ${showGateways ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400 border-purple-500/30' : 'bg-slate-50 dark:bg-slate-900 text-slate-400 border-slate-200 dark:border-slate-700'}`}
                     title="Toggle RFID Gateways"
                   >
-                    <Radio size={13} /> Gateways
+                    <Radio size={13} /> Gateways ({(trackingCtx?.readerMappings || []).length > 0 ? new Set((trackingCtx?.readerMappings || []).map(r => r.readerId)).size : 0})
                   </button>
                 </div>
               </div>
             </div>
+
 
             {/* Timeline Controls & Category Filter Bar */}
             <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm flex flex-col gap-4">
@@ -598,7 +666,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                   </span>
                   {[
                     { id: 'all', label: 'All Entities', icon: Users },
-                    { id: 'workers', label: 'Workers', icon: Users },
+                    { id: 'workers', label: personnelPlural, icon: Users },
                     { id: 'visitors', label: 'Visitors', icon: Users },
                     { id: 'equipment', label: 'Equipment', icon: Box },
                     { id: 'vehicles', label: 'Vehicles', icon: Truck },
@@ -719,7 +787,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                     site={activeSite}
                     historyFrames={playbackHistoryFrames} 
                     currentFrameIndex={timeIndex} 
-                    zones={activeZones} 
+                    zones={realZones} 
                     highlightedPersonId={highlightedPersonId} 
                     showHeatmap={showHeatmap}
                     showTrails={showTrails}
@@ -727,6 +795,8 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                     showGateways={showGateways}
                     mapStyleMode={mapStyleMode}
                     selectedCategory={selectedCategory}
+                    floorplanUrl={customFloorplan}
+                    readerMappings={trackingCtx?.readerMappings || []}
                   />
                </div>
 
@@ -750,7 +820,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                         <input 
                            type="text" 
                            className="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl pl-9 pr-3 py-2 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-[#007BC4] outline-none transition"
-                           placeholder="Search Tag ID or Worker Name..."
+                           placeholder={`Search ${idBadgeLabel} or ${personnelSingular} Name...`}
                            value={searchQuery}
                            onChange={e => setSearchQuery(e.target.value)}
                         />
@@ -916,9 +986,11 @@ function PlaybackMap({
   showZones = true,
   showGateways = true,
   mapStyleMode = 'standard',
-  selectedCategory = 'all'
+  selectedCategory = 'all',
+  floorplanUrl,
+  readerMappings = []
 }: { 
-  site: typeof PLAYBACK_SITES[string];
+  site: { id: string; name: string; contractor: string; dimensions: string; floors: any[]; zones: any };
   historyFrames: Person[][]; 
   currentFrameIndex: number; 
   zones: any; 
@@ -929,7 +1001,10 @@ function PlaybackMap({
   showGateways?: boolean;
   mapStyleMode?: MapMode;
   selectedCategory?: string;
+  floorplanUrl?: string | null;
+  readerMappings?: any[];
 }) {
+  const { personnelSingular, idBadgeLabel, zoneLabel } = useTerminology();
   const zoneEntries = Object.entries(zones || {});
   const currentPeople = historyFrames[currentFrameIndex] || [];
 
@@ -968,15 +1043,37 @@ function PlaybackMap({
     setOffset({ x: 0, y: 0 });
   };
 
-  // RFID Gateway Anchors
-  const rfidGateways = useMemo(() => [
-    { id: 'gate-1', name: 'Reader Portal R1', x: 25, y: 3.5 },
-    { id: 'gate-2', name: 'Reader Portal R2', x: 96.5, y: 34 },
-    { id: 'gate-3', name: 'Reader Portal R3', x: 96.5, y: 80 },
-    { id: 'gate-4', name: 'Reader Portal R4', x: 37, y: 96.5 },
-    { id: 'gate-5', name: 'Reader Portal R5', x: 9, y: 96.5 },
-    { id: 'gate-6', name: 'Reader Portal R6', x: 3.5, y: 34 }
-  ], []);
+  // RFID Gateway Anchors — derived from real reader mappings tied to zones
+  // Each unique reader gets positioned at the center of its zone
+  const rfidGateways = useMemo(() => {
+    if (!readerMappings || readerMappings.length === 0) return [];
+    const seen = new Set<string>();
+    const result: { id: string; name: string; x: number; y: number }[] = [];
+    for (const rm of readerMappings) {
+      if (seen.has(rm.readerId)) continue;
+      seen.add(rm.readerId);
+      // Find the zone this reader maps to
+      const zone = zones ? Object.values(zones).find((z: any) => z.name === rm.zoneName || rm.zoneId === z.id || rm.zoneName === z.name) as any : null;
+      if (zone) {
+        result.push({
+          id: rm.readerId,
+          name: rm.zoneName || rm.readerId,
+          x: Math.round((zone.x || 0) + (zone.width || 0) / 2),
+          y: Math.round((zone.y || 0) + (zone.height || 0) / 2)
+        });
+      } else {
+        // No zone found — place at a distributed edge position
+        const idx = result.length;
+        result.push({
+          id: rm.readerId,
+          name: rm.zoneName || rm.readerId,
+          x: 5 + (idx * 20) % 90,
+          y: idx % 2 === 0 ? 3 : 95
+        });
+      }
+    }
+    return result;
+  }, [readerMappings, zones]);
 
   // Filtered current frame entities
   const visibleEntities = useMemo(() => {
@@ -1027,7 +1124,7 @@ function PlaybackMap({
       <div className="absolute bottom-4 left-4 z-40 bg-slate-900/85 backdrop-blur-md border border-slate-800 p-2.5 rounded-xl shadow-xl flex items-center gap-4 text-[10px] text-slate-300 font-bold">
         <div className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-[#007BC4] border border-white" />
-          <span>Worker / Tag</span>
+          <span>{personnelSingular} / {idBadgeLabel}</span>
         </div>
         <div className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-full bg-amber-500 border border-white" />
@@ -1070,12 +1167,20 @@ function PlaybackMap({
         className="relative w-full h-full rounded-xl overflow-hidden transition-transform duration-75 ease-out"
         style={{ transform: `scale(${zoom}) translate(${offset.x / zoom}px, ${offset.y / zoom}px)` }}
       >
-        {/* CAD Blueprint Vector Map Background Image */}
-        <img 
-          src={blueprintSvgUrl} 
-          alt="Site CAD Blueprint Map" 
-          className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
-        />
+        {/* Real Floorplan Map or CAD Blueprint Vector Map Background Image */}
+        {floorplanUrl ? (
+          <img 
+            src={floorplanUrl} 
+            alt="Site Floorplan Map" 
+            className="absolute inset-0 w-full h-full object-contain select-none pointer-events-none"
+          />
+        ) : (
+          <img 
+            src={blueprintSvgUrl} 
+            alt="Site CAD Blueprint Map" 
+            className="absolute inset-0 w-full h-full object-cover select-none pointer-events-none"
+          />
+        )}
 
         {/* Technical Grid Accent Overlay */}
         <div className="absolute inset-0 pointer-events-none opacity-20 bg-[radial-gradient(#007BC4_1px,transparent_1px)] [background-size:32px_32px]" />
@@ -1155,9 +1260,9 @@ function PlaybackMap({
         )}
 
         {/* Motion Trails Polyline */}
-        {showTrails && (
+        {showTrails && (historyFrames[0] || []).length > 0 && (
           <svg className="absolute inset-0 w-full h-full z-20 pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-             {historyFrames[0].map((baselinePerson, i) => {
+             {(historyFrames[0] || []).map((baselinePerson, i) => {
                 const isVisitor = baselinePerson.role === 'Visitor';
                 const color = isVisitor ? '#f59e0b' : '#007BC4';
                 

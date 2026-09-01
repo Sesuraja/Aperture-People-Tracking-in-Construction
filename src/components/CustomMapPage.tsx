@@ -13,7 +13,7 @@ import ManageAssetsModal, { GenericAsset, AssetCategoryType } from './ManageAsse
 import { INITIAL_DEVICES, getBlueprintSvg, InteractiveSiteMap } from './LiveFloorMap';
 import { AssetItem, VehicleItem, CCTVCameraItem, EnvironmentalSensorItem, INITIAL_ASSETS, INITIAL_VEHICLES, INITIAL_INFRASTRUCTURE, INITIAL_CCTVS, INITIAL_ENV_SENSORS } from '../lib/trackingLayers';
 import { doc, setDoc, deleteDoc, collection, onSnapshot, db } from '../lib/db';
-import { useTracking } from '../context/TrackingContext';
+import { useTracking, useTerminology } from '../context/TrackingContext';
 import { safeStorage } from '../lib/safeStorage';
 import { optimizeFloorMapFile } from '../lib/imageOptimizer';
 
@@ -236,6 +236,7 @@ export function getSafetyStatusBadge(status: string) {
 
 export default function CustomMapPage({ activeProject, setActiveProject }: CustomMapPageProps) {
   const trackingCtx = useTracking();
+  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, organizationType } = useTerminology();
   // Sites, Buildings, Floors State
   const [sites, setSites] = useState<Record<string, SiteData>>(() => {
     try {
@@ -249,8 +250,8 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
 
   const currentSite = sites[activeProject] || sites['metro-tower'] || DEFAULT_SITES['metro-tower'] || {
     id: activeProject,
-    name: 'Active Project Site',
-    contractor: 'Enterprise Site Operations',
+    name: trackingCtx?.industryConfig?.primarySiteName || 'Active Enterprise Facility',
+    contractor: organizationType || 'Enterprise Operations',
     dimensions: '200m x 150m',
     buildings: [{ id: 'bldg-main', name: 'Main Complex', floors: [{ id: 'fl-1', name: 'Level 1 - Main Site', levelNumber: 1, activeVersionId: 'ver-1.0', versions: [{ id: 'ver-1.0', versionNumber: 'v1.0', status: 'published', createdAt: new Date().toISOString(), author: 'System', notes: 'Master map', zones: {}, floorplanUrl: null }] }] }]
   };
@@ -312,6 +313,15 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     return activeVersion?.zones || {};
   });
 
+  useEffect(() => {
+    if (trackingCtx?.customFloorplan && trackingCtx.customFloorplan !== customFloorplan) {
+      setCustomFloorplan(trackingCtx.customFloorplan);
+    }
+    if (trackingCtx?.customSvgSource && trackingCtx.customSvgSource !== customSvgSource) {
+      setCustomSvgSource(trackingCtx.customSvgSource);
+    }
+  }, [trackingCtx?.customFloorplan, trackingCtx?.customSvgSource]);
+
   const [activeSidebarTab, setActiveSidebarTab] = useState<'layers' | 'readers' | 'inventory' | 'assets' | 'zones' | 'sites'>('layers');
   const [layerConfigs, setLayerConfigs] = useState<Record<string, MapLayerConfig>>(DEFAULT_LAYER_CONFIGS);
   const [mapSearchQuery, setMapSearchQuery] = useState('');
@@ -320,13 +330,13 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
   const dynamicLayerConfigs = useMemo(() => {
     return {
       ...layerConfigs,
-      workers: { ...layerConfigs.workers, count: activeWorkers.length },
+      workers: { ...layerConfigs.workers, name: personnelPlural, count: activeWorkers.length },
       visitors: { ...layerConfigs.visitors, count: activeWorkers.filter(w => (w.role || '').toLowerCase().includes('visitor') || (w.name || '').toLowerCase().includes('visitor')).length },
-      contractors: { ...layerConfigs.contractors, count: activeWorkers.filter(w => (w.role || '').toLowerCase().includes('contractor') || (w.company || '').toLowerCase().includes('contractor')).length },
+      contractors: { ...layerConfigs.contractors, name: `External ${organizationType}`, count: activeWorkers.filter(w => (w.role || '').toLowerCase().includes('contractor') || (w.company || '').toLowerCase().includes('contractor')).length },
       equipment: { ...layerConfigs.equipment, count: assets.length },
       vehicles: { ...layerConfigs.vehicles, count: vehicles.length },
       rfidReaders: { ...layerConfigs.rfidReaders, count: hardwareDevices.length },
-      gpsDevices: { ...layerConfigs.gpsDevices, count: activeWorkers.filter(w => w.hardhatTagId).length },
+      gpsDevices: { ...layerConfigs.gpsDevices, name: `${idBadgeLabel}s`, count: activeWorkers.filter(w => w.hardhatTagId).length },
       cctvCameras: { ...layerConfigs.cctvCameras, count: cameras.length },
       hazardZones: { ...layerConfigs.hazardZones, count: Object.values(customZones).filter(z => z.hazardLevel === 'critical').length },
       restrictedZones: { ...layerConfigs.restrictedZones, count: Object.values(customZones).filter(z => z.hazardLevel === 'warning' || (z.category || '').includes('RESTRICTED')).length },
@@ -338,7 +348,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
       buildings: { ...layerConfigs.buildings, count: currentSite.buildings.length },
       roads: { ...layerConfigs.roads, count: 0 },
     };
-  }, [layerConfigs, activeWorkers, assets, vehicles, hardwareDevices, cameras, customZones, currentSite]);
+  }, [layerConfigs, activeWorkers, assets, vehicles, hardwareDevices, cameras, customZones, currentSite, personnelPlural, organizationType, idBadgeLabel]);
 
   // Overlays State
   const [showDensityHeatmap, setShowDensityHeatmap] = useState(false);
@@ -506,16 +516,16 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
           });
 
           const mappedWorkers: MapWorkerItem[] = Array.from(uniquePeopleMap.values()).map((p: any, idx: number) => ({
-            id: p.id || `W-${idx + 101}`,
-            name: p.name || `Personnel ${idx + 1}`,
-            role: p.role || 'Personnel',
-            company: p.company || p.tradeCompany || 'Operations',
+            id: p.id || `P-${idx + 101}`,
+            name: p.name || `${personnelSingular} ${idx + 1}`,
+            role: p.role || roleLabel || 'Staff',
+            company: p.company || p.tradeCompany || organizationType || 'Operations',
             x: typeof p.x === 'number' ? p.x : 20 + ((idx * 15) % 65),
             y: typeof p.y === 'number' ? p.y : 20 + ((idx * 19) % 60),
             safetyStatus: p.safetyStatus || (p.ppeStatus === 'NON_COMPLIANT' ? 'NON_COMPLIANT' : 'COMPLIANT'),
             ppeStatus: p.ppeStatus || 'COMPLIANT',
             currentZone: p.currentZone || p.location || 'General Facility',
-            hardhatTagId: p.hardhatTagId || p.tagId || `TAG-${idx + 1000}`,
+            hardhatTagId: p.hardhatTagId || p.tagId || (p.id?.length > 10 ? p.id : ''),
             certifications: p.certifications || ['Facility Access Pass', 'Safety Clearance']
           }));
           setMapWorkers(mappedWorkers);
@@ -1501,93 +1511,58 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
   }, [activeWorkers, enableClustering]);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      {/* Header Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 border border-slate-700/80 rounded-2xl p-6 text-white shadow-xl relative overflow-hidden">
-        <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <div className="flex items-center gap-2 text-[#38bdf8] text-xs font-black uppercase tracking-wider mb-1">
-              <MapIcon size={16} /> Interactive Facility & Spatial Map Engine
-            </div>
-            <div className="flex items-center gap-3 flex-wrap">
-              <h1 className="text-2xl font-black tracking-tight text-white flex items-center gap-2">
-                {currentSite.name}
-              </h1>
-              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-sm bg-emerald-500/20 text-emerald-300 border-emerald-500/40">
-                <Database size={13} className="text-emerald-400" />
-                <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
-              </span>
-            </div>
-            <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-              Real-time spatial tracking, interactive vector drawing, toggleable overlays, marker clustering, and Safety Status indicators synchronized with MongoDB Atlas.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <button
-              onClick={() => setIsManageAssetsOpen(true)}
-              className="px-3.5 py-2 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 transition shadow-md"
-            >
-              <Box size={14} /> Manage Assets & Fleet
-            </button>
-            <button
-              onClick={() => {
-                if (drawToolMode === 'place_reader') {
-                  setDrawToolMode('select');
-                } else {
-                  setDrawToolMode('place_reader');
-                  setDrawnPoints([]);
-                  setLayerConfigs(prev => ({ ...prev, rfidReaders: { ...prev.rfidReaders, visible: true } }));
-                }
-              }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-md ${
-                drawToolMode === 'place_reader' 
-                  ? 'bg-purple-500 text-white ring-2 ring-purple-300 animate-pulse' 
-                  : 'bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/40'
-              }`}
-              title="Click on the floor map to drop and position an RFID Reader antenna"
-            >
-              <Radio size={14} className={drawToolMode === 'place_reader' ? 'animate-spin' : ''} />
-              {drawToolMode === 'place_reader' ? 'Active: Click Map to Drop Reader' : '📍 Place / Move RFID Reader'}
-            </button>
-            <button
-              onClick={() => {
-                setDrawToolMode('polygon');
-                setDrawnPoints([]);
-              }}
-              className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-md ${
-                drawToolMode === 'polygon' 
-                  ? 'bg-amber-500 text-slate-950 ring-2 ring-amber-300' 
-                  : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40'
-              }`}
-            >
-              <PenTool size={14} /> Draw Geofence Polygon
-            </button>
-            <button
-              onClick={() => setIsMapEditorOpen(true)}
-              className="px-3.5 py-2 bg-[#007BC4] hover:bg-[#0062a0] text-white rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-md"
-            >
-              <Edit3 size={14} /> Open Vector Zone Editor
-            </button>
-          </div>
-        </div>
+    <div className="p-4 sm:p-6 w-full max-w-[1760px] mx-auto space-y-6 min-w-0">
+      {/* Top Controls Toolbar */}
+      <div className="flex items-center justify-end gap-2.5 flex-wrap">
+        <button
+          onClick={() => setIsManageAssetsOpen(true)}
+          className="px-3.5 py-2 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-black rounded-xl text-xs flex items-center gap-2 transition shadow-md"
+        >
+          <Box size={14} /> Manage Assets & Fleet
+        </button>
+        <button
+          onClick={() => {
+            if (drawToolMode === 'place_reader') {
+              setDrawToolMode('select');
+            } else {
+              setDrawToolMode('place_reader');
+              setDrawnPoints([]);
+              setLayerConfigs(prev => ({ ...prev, rfidReaders: { ...prev.rfidReaders, visible: true } }));
+            }
+          }}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-md ${
+            drawToolMode === 'place_reader' 
+              ? 'bg-purple-500 text-white ring-2 ring-purple-300 animate-pulse' 
+              : 'bg-slate-800 hover:bg-slate-700 text-purple-300 border border-purple-500/40'
+          }`}
+          title="Click on the floor map to drop and position an RFID Reader antenna"
+        >
+          <Radio size={14} className={drawToolMode === 'place_reader' ? 'animate-spin' : ''} />
+          {drawToolMode === 'place_reader' ? 'Active: Click Map to Drop Reader' : '📍 Place / Move RFID Reader'}
+        </button>
+        <button
+          onClick={() => {
+            setDrawToolMode('polygon');
+            setDrawnPoints([]);
+          }}
+          className={`px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-md ${
+            drawToolMode === 'polygon' 
+              ? 'bg-amber-500 text-slate-950 ring-2 ring-amber-300' 
+              : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/40'
+          }`}
+        >
+          <PenTool size={14} /> Draw Geofence Polygon
+        </button>
+        <button
+          onClick={() => setIsMapEditorOpen(true)}
+          className="px-3.5 py-2 bg-[#007BC4] hover:bg-[#0062a0] text-white rounded-xl text-xs font-bold flex items-center gap-2 transition shadow-md"
+        >
+          <Edit3 size={14} /> Open Vector Zone Editor
+        </button>
       </div>
 
       {/* Status KPI Metrics Summary Row */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xs flex items-center gap-3.5">
-          <div className="w-11 h-11 rounded-xl bg-blue-50 dark:bg-blue-950/50 text-[#007BC4] flex items-center justify-center font-bold shrink-0">
-            <Users size={20} />
-          </div>
-          <div className="min-w-0">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-wider truncate">Personnel Onsite</div>
-            <div className="text-xl font-black text-slate-900 dark:text-white mt-0.5">{activeWorkers.length}</div>
-            <div className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 truncate">
-              {activeWorkers.filter(w => w.ppeStatus === 'COMPLIANT').length} PPE Verified
-            </div>
-          </div>
-        </div>
-
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xs flex items-center gap-3.5">
           <div className="w-11 h-11 rounded-xl bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 flex items-center justify-center font-bold shrink-0">
             <Layers size={20} />
@@ -1656,7 +1631,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             }`}
           >
             <Flame size={14} className={showDensityHeatmap ? 'text-orange-400 animate-pulse' : ''} />
-            Worker Density Heatmap
+            {personnelSingular} Density Heatmap
           </button>
 
           <button
@@ -2002,10 +1977,10 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
             {/* TAB 5: Staff */}
             {activeSidebarTab === 'inventory' && (
               <div className="space-y-2 max-h-[400px] overflow-y-auto pr-1">
-                <span className="text-xs font-bold text-slate-800 dark:text-white">Active Personnel ({mapWorkers.length})</span>
+                <span className="text-xs font-bold text-slate-800 dark:text-white">Active {personnelPlural} ({mapWorkers.length})</span>
                 {mapWorkers.length === 0 ? (
                   <div className="p-4 bg-slate-50 dark:bg-slate-900/50 rounded-xl border border-dashed border-slate-300 dark:border-slate-700 text-center">
-                    <p className="text-xs text-slate-400">No personnel tags active on this floor yet.</p>
+                    <p className="text-xs text-slate-400">No {personnelPlural.toLowerCase()} active on this floor yet.</p>
                   </div>
                 ) : (
                   mapWorkers.map(w => {
@@ -2234,14 +2209,14 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               drawToolMode === 'place_reader' ? 'cursor-crosshair' : drawToolMode !== 'select' ? 'cursor-crosshair' : draggingDeviceId ? 'cursor-grabbing' : ''
             }`}
           >
-            {/* SVG Source, Custom Blueprint Image, or Enterprise CAD Digital Twin */}
-            {customSvgSource ? (
+            {/* Blueprint Image, SVG Source, or Enterprise CAD Digital Twin */}
+            {customFloorplan && typeof customFloorplan === 'string' && customFloorplan.trim().length > 5 ? (
+              <img src={customFloorplan} alt="Custom Blueprint" className="absolute inset-0 w-full h-full object-contain opacity-95 pointer-events-none" />
+            ) : customSvgSource ? (
               <div 
                 className="absolute inset-0 opacity-80 pointer-events-none overflow-hidden" 
                 dangerouslySetInnerHTML={{ __html: customSvgSource }} 
               />
-            ) : customFloorplan && typeof customFloorplan === 'string' && customFloorplan.trim().length > 5 ? (
-              <img src={customFloorplan} alt="Custom Blueprint" className="absolute inset-0 w-full h-full object-cover opacity-90 pointer-events-none" />
             ) : (
               <InteractiveSiteMap 
                 mode="standard"
@@ -2984,7 +2959,7 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               </div>
 
               <div className="p-3 bg-slate-800/80 rounded-xl border border-slate-700 space-y-1">
-                <div className="text-xs font-bold text-slate-300">Personnel RFID Tag ID</div>
+                <div className="text-xs font-bold text-slate-300">{idBadgeLabel} Telemetry ID</div>
                 <div className="text-sm font-mono text-emerald-400 font-bold">{selectedWorker.hardhatTagId || selectedWorker.id}</div>
               </div>
 

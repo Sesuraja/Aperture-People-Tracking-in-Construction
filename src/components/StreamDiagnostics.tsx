@@ -15,6 +15,7 @@ import {
   ConnectionStatus
 } from '../lib/realtimeClients';
 import mqttStreamService, { MqttMetrics } from '../lib/mqttService';
+import { useTerminology } from '../context/TrackingContext';
 
 export interface DiagnosticMetrics {
   wsLatencyMs: number;
@@ -28,18 +29,19 @@ export interface DiagnosticMetrics {
 }
 
 export default function StreamDiagnostics() {
+  const { siteLabel, zoneLabel, idBadgeLabel } = useTerminology();
   const [wsStatus, setWsStatus] = useState<ConnectionStatus>('Disconnected');
   const [mqttStatus, setMqttStatus] = useState<ConnectionStatus>('Disconnected');
 
   const [metrics, setMetrics] = useState<DiagnosticMetrics>({
-    wsLatencyMs: 12,
-    mqttLatencyMs: 16,
-    wsPackets: 184,
-    mqttPackets: 242,
+    wsLatencyMs: 0,
+    mqttLatencyMs: 0,
+    wsPackets: 0,
+    mqttPackets: 0,
     wsErrors: 0,
     mqttErrors: 0,
-    wsStatus: 'Connected',
-    mqttStatus: 'Connected'
+    wsStatus: 'Disconnected',
+    mqttStatus: 'Disconnected'
   });
 
   const [mqttServiceMetrics, setMqttServiceMetrics] = useState<MqttMetrics>(mqttStreamService.getMetrics());
@@ -143,7 +145,7 @@ export default function StreamDiagnostics() {
         body: JSON.stringify({
           protocol: 'WebSocket/MQTT Diagnostic Suite',
           events: [
-            { TagID: 'TAG_DIAG_WS_MQTT', Timestamp: new Date().toISOString(), Location: 'Zone A - Main Entrance Gate' }
+            { TagID: 'TAG_DIAG_WS_MQTT', Timestamp: new Date().toISOString(), Location: `${zoneLabel || 'Operational Zone'} - ${siteLabel || 'Main'} Portal Gateway` }
           ]
         })
       });
@@ -182,7 +184,7 @@ export default function StreamDiagnostics() {
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto text-slate-800 dark:text-slate-200">
+    <div className="space-y-6 w-full max-w-[1760px] mx-auto text-slate-800 dark:text-slate-200 min-w-0">
       {/* HEADER BAR */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-white dark:bg-slate-800 p-6 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm">
         <div>

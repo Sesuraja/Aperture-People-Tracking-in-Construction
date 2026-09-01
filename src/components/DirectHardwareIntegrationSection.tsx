@@ -493,12 +493,48 @@ export default function DirectHardwareIntegrationSection() {
           </div>
 
           <div className="space-y-3">
+            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-blue-200 dark:border-blue-900/50">
+              <div className="flex items-center justify-between mb-1">
+                <h5 className="text-xs font-bold text-blue-600 dark:text-blue-400">
+                  1. GAO Native Reader Ingestion (GAO 216031A HTTP JSON Push)
+                </h5>
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-blue-500 text-white">
+                  PRODUCTION ENDPOINT
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
+                Configure reader firmware to HTTP POST event arrays or single scan JSON objects to:
+              </p>
+              <div className="space-y-2">
+                <div className="p-2 bg-slate-900 rounded font-mono text-[11px] text-slate-300">
+                  <span className="text-emerald-400 font-bold">Cloud Endpoint:</span> <span className="select-all">https://aperture-people-tracking-construction.vercel.app/api/hardware/gao-native</span>
+                </div>
+                <div className="p-2 bg-slate-900 rounded font-mono text-[11px] text-slate-300">
+                  <span className="text-emerald-400 font-bold">Local Endpoint:</span> <span className="select-all">http://localhost:3000/api/hardware/gao-native</span>
+                </div>
+              </div>
+              <pre className="mt-2 p-2.5 bg-slate-950 text-emerald-400 font-mono text-[11px] rounded overflow-x-auto">
+{`POST /api/hardware/gao-native
+Content-Type: application/json
+
+[
+  {
+    "epc": "E28011700000020A382A1B01",
+    "ant": 1,
+    "rssi": -58.5,
+    "timestamp": "2026-09-01 15:45:00.000",
+    "serialno": "100EHH8325020026"
+  }
+]`}
+              </pre>
+            </div>
+
             <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700">
               <h5 className="text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1">
-                1. HTTP JSON Push (Recommended for Fixed Readers & Gateways)
+                2. Generic Hardware Scan Push
               </h5>
               <p className="text-[11px] text-slate-500 dark:text-slate-400 mb-2">
-                Configure reader firmware to HTTP POST event arrays or single scans to:
+                Direct format for gateways and generic controllers:
               </p>
               <pre className="p-2.5 bg-slate-950 text-emerald-400 font-mono text-[11px] rounded overflow-x-auto">
 {`POST /api/hardware/scan
@@ -509,18 +545,9 @@ Content-Type: application/json
   "antennaId": 1,
   "tagId": "E28011606000020788842D31",
   "rssi": -55,
-  "timestamp": "2026-08-17T12:00:00Z"
+  "timestamp": "2026-09-01T12:00:00Z"
 }`}
               </pre>
-            </div>
-
-            <div className="p-3.5 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700">
-              <h5 className="text-xs font-semibold text-slate-800 dark:text-slate-200 mb-1">
-                2. LLRP (Low Level Reader Protocol) & GAO Socket Relay
-              </h5>
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                Supports Impinj Speedway, Zebra FX, and GAO UHF fixed readers over port 5084 / 8080.
-              </p>
             </div>
           </div>
         </div>

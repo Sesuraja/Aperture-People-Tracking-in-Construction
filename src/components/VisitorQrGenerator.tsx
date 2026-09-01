@@ -47,7 +47,7 @@ export default function VisitorQrGenerator({ visitorsList = [], securityListProp
   const [customGuest, setCustomGuest] = useState({
     name: '',
     company: '',
-    host: 'marcus.vance@buildcorp.com'
+    host: ''
   });
   const [durationHours, setDurationHours] = useState<number>(8);
   const [selectedZones, setSelectedZones] = useState<string[]>(['Gate 1 Gatehouse', 'Site Office']);
@@ -140,7 +140,7 @@ export default function VisitorQrGenerator({ visitorsList = [], securityListProp
         visitorId: selectedVisitorId || `GUEST-${Date.now()}`,
         visitorName: customGuest.name,
         company: customGuest.company || 'External Guest',
-        host: customGuest.host || 'marcus.vance@buildcorp.com',
+        host: customGuest.host || 'Security Dispatch',
         status: 'ACTIVE',
         createdAt: now.toISOString(),
         expiresAt,

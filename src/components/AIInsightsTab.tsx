@@ -240,22 +240,22 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     ? mongoPeople.map(p => ({
         TagID: p.rfidTag || p.tagId || p.id || 'E200001A89',
         Timestamp: new Date().toISOString(),
-        Location: p.currentZone || p.zone || 'Tower Core Structure',
-        LocationName: p.currentZone || p.zone || 'Tower Core Structure',
-        personName: p.name || 'Worker',
+        Location: p.currentZone || p.zone || `${siteLabel || 'Facility'} Area`,
+        LocationName: p.currentZone || p.zone || `${siteLabel || 'Facility'} Area`,
+        personName: p.name || personnelSingular,
         personId: p.id,
-        zoneName: p.currentZone || p.zone || 'Tower Core Structure',
+        zoneName: p.currentZone || p.zone || `${siteLabel || 'Facility'} Area`,
         rssi: p.rssi || -52,
         readerId: p.lastReader || 'GAO-UHF-PORTAL-01'
       }))
     : people.map(p => ({
         TagID: p.id,
         Timestamp: new Date().toISOString(),
-        Location: p.currentZone || 'Tower Core Structure',
-        LocationName: p.currentZone || 'Tower Core Structure',
-        personName: p.name,
+        Location: p.currentZone || `${siteLabel || 'Facility'} Area`,
+        LocationName: p.currentZone || `${siteLabel || 'Facility'} Area`,
+        personName: p.name || personnelSingular,
         personId: p.id,
-        zoneName: p.currentZone || 'Tower Core Structure',
+        zoneName: p.currentZone || `${siteLabel || 'Facility'} Area`,
         rssi: p.rssi || -58,
         readerId: p.lastReader || 'Aperture-Reader-01'
       }));
@@ -276,12 +276,12 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     {
       id: 'init-1',
       sender: 'assistant',
-      text: "🏗️ **Aperture Real-Time EHS Construction AI Safety Copilot Active**\n\nI am connected live to your **MongoDB Atlas** database (\`Lat-Aperture-People-Tracking\`) and real-time UHF hardhat RFID tag stream.\n\nTry asking me:\n- 🏷️ **Tag IDs**: *\"What is the tag ID of Marcus Vance?\"*\n- 🛠️ **Worker Activities**: *\"What is Bob Johnson doing?\"*\n- 🗄️ **Database Telemetry**: *\"Show MongoDB database status\"*\n- 📍 **Worker Locations**: *\"Where is Sarah Connor?\"*",
+      text: `🤖 **Aperture Real-Time AI Safety Copilot Active**\n\nI am connected live to your **MongoDB Atlas** database (\`Lat-Aperture-People-Tracking\`) and real-time ${idBadgeLabel} telemetry stream.\n\nTry asking me:\n- 🏷️ **${idBadgeLabel}s**: *"List all active ${personnelPlural}"*\n- 🛠️ **${roleLabel} Presence**: *"Who is currently in the active ${zoneLabel}?"*\n- 🗄️ **Database Telemetry**: *"Show MongoDB database status"*`,
       suggestedActions: [
-        "What is the tag ID of Marcus Vance?",
-        "What is Bob Johnson doing?",
+        `List all active ${personnelPlural}`,
+        `Who is currently in the primary ${zoneLabel}?`,
         "Show MongoDB database status",
-        "Where is Sarah Connor?"
+        `Show ${safetyComplianceLabel} summary`
       ],
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
@@ -296,20 +296,20 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
   }, [chatHistory, isCopilotThinking]);
 
   // 5. Root Cause Analysis (RCA) State
-  const [rcaTitle, setRcaTitle] = useState('Heavy Crane Swing Radius Incursion - Tower Core');
+  const [rcaTitle, setRcaTitle] = useState('High-Risk Operational Zone Incursion');
   const [rcaCategory, setRcaCategory] = useState('Exclusion Zone Breach');
   const [rcaSeverity, setRcaSeverity] = useState('High');
-  const [rcaLocation, setRcaLocation] = useState('Heavy Crane Swing Radius (Tower Core L2)');
-  const [rcaEquipment, setRcaEquipment] = useState('Tower Crane TC-01 / Steel Truss Rigging');
-  const [rcaDescription, setRcaDescription] = useState('Two subcontractor ironworkers wearing hardhat RFID tags entered the active 12m crane swing perimeter without active high-risk lift permit sign-off during 5-ton truss hoisting.');
+  const [rcaLocation, setRcaLocation] = useState('Primary Restricted Section');
+  const [rcaEquipment, setRcaEquipment] = useState('Heavy Machinery & Power Haulage Rigging');
+  const [rcaDescription, setRcaDescription] = useState('Active personnel transponders registered inside the restricted exclusion zone perimeter without prior authorization clearance.');
   const [isAnalyzingRca, setIsAnalyzingRca] = useState(false);
   const [currentRcaResult, setCurrentRcaResult] = useState<RcaResult | null>(null);
   const [savedRcaReports, setSavedRcaReports] = useState<RcaResult[]>([]);
 
   // 7. BI Synthesis State
-  const [biPrompt, setBiPrompt] = useState('Synthesize workforce trade attendance, crane zone safety compliance, and portal gateway uptime for today\'s shift.');
+  const [biPrompt, setBiPrompt] = useState('Synthesize workforce shift attendance, perimeter zone safety compliance, and portal gateway uptime for today\'s shift.');
   const [biDateRange, setBiDateRange] = useState<'24h' | '7d' | '30d'>('24h');
-  const [biSelectedSite, setBiSelectedSite] = useState('Metro Commercial Tower (Site A)');
+  const [biSelectedSite, setBiSelectedSite] = useState('Primary Operations Facility');
   const [isSynthesizing, setIsSynthesizing] = useState(false);
   const [currentBiResult, setCurrentBiResult] = useState<BiSynthesisResult | null>(null);
   const [savedBiSyntheses, setSavedBiSyntheses] = useState<BiSynthesisResult[]>([]);
@@ -475,16 +475,16 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
           context: {
             workers: liveTags.map(t => ({
               id: t.TagID || t.personId || t.id,
-              name: t.personName || t.name || 'Marcus Vance',
-              trade: t.trade || t.role || 'Construction Trade',
-              currentZone: t.LocationName || t.zoneName || t.Location || 'Tower Core Structure',
+              name: t.personName || t.name || personnelSingular,
+              trade: t.trade || t.role || roleLabel,
+              currentZone: t.LocationName || t.zoneName || t.Location || `${siteLabel || 'Facility'} Area`,
               presenceState: t.presenceState || 'MOVING',
               tagId: t.TagID || t.id,
               rssi: t.rssi || -58
             })),
             activeWorkerTags: liveTags.length,
             recentScans: historyRecords.slice(0, 8),
-            siteLocation: 'Metro Commercial Tower Site',
+            siteLocation: siteLabel || 'Primary Facility Site',
             safetyComplianceScore: report?.safetyComplianceScore || 94
           }
         })
@@ -496,7 +496,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
       const botMsg: CopilotMessage = {
         id: `msg-${Date.now()}-a`,
         sender: 'assistant',
-        text: data.answer || "Analysis of construction site telemetry completed successfully.",
+        text: data.answer || "Analysis of site telemetry completed successfully.",
         suggestedActions: data.suggestedActions || ['View active zone counts', 'Review hazard predictions'],
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
@@ -508,8 +508,8 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
         {
           id: `msg-${Date.now()}-err`,
           sender: 'assistant',
-          text: `⚠️ **AI Ingestion Note**: Site hardware readers are streaming live scans. For query *"${q}"*, 5 active construction zones remain fully compliant.`,
-          suggestedActions: ["Audit reader portals", "Check worker headcounts"],
+          text: `⚠️ **AI Ingestion Note**: Site hardware readers are streaming live scans. For query *"${q}"*, active facility zones remain fully compliant.`,
+          suggestedActions: ["Audit reader portals", `Check ${personnelSingular} headcounts`],
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -521,7 +521,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
   // Save Copilot Chat Session to MongoDB
   const handleSaveCopilotSession = async () => {
     try {
-      const title = `Construction Safety Consultation - ${new Date().toLocaleDateString()} (${chatHistory.length} msgs)`;
+      const title = `${intelligenceProfile?.industryName || 'Operational'} Safety Consultation - ${new Date().toLocaleDateString()} (${chatHistory.length} msgs)`;
       await addDoc(collection(db, 'ai_copilot_chats'), {
         sessionTitle: title,
         messages: chatHistory,
@@ -556,10 +556,10 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
       await addDoc(collection(db, 'incidents'), {
         title: anomaly.title,
         severity: anomaly.severity,
-        zone: anomaly.zone || 'Construction Site',
+        zone: anomaly.zone || siteLabel || 'Operational Area',
         description: anomaly.description,
         tagId: anomaly.tagId,
-        personName: anomaly.name || 'Unassigned Worker',
+        personName: anomaly.name || `Unassigned ${personnelSingular}`,
         timestamp: new Date().toISOString(),
         status: 'OPEN'
       });
@@ -592,18 +592,18 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
         severity: rcaSeverity,
         locationZone: rcaLocation,
         severityScore: data.severityScore || 82,
-        probableRootCause: data.probableRootCause || 'Turnstile barrier interlock delay during active crane swing.',
+        probableRootCause: data.probableRootCause || 'Access threshold interlock delay during active operational cycle.',
         contributingFactors: data.contributingFactors || [
-          'High ambient acoustic noise on tower floor 2 masking hoist horn.',
-          'Subcontractor shift handover overlap without zone isolation.',
-          'Antenna RSSI gate calibration needed at entrance portal.'
+          'High ambient operational acoustic noise masking alarm siren.',
+          `${organizationType} shift handover overlap without zone isolation.`,
+          'Antenna portal RSSI sensitivity calibration required.'
         ],
         capaRecommendations: data.capaRecommendations || [
-          'Enable automatic strobe light and siren interlock at Crane Zone threshold.',
-          'Conduct mandatory 5-minute pre-lift toolbox talk with ironworker trade crew.',
-          'Re-verify hardhat RFID tag positioning to prevent body shielding.'
+          `Enable automatic strobe light and siren interlock at ${zoneLabel} threshold.`,
+          `Conduct mandatory 5-minute pre-shift safety briefing with ${organizationType} crew.`,
+          `Re-verify ${idBadgeLabel} positioning to ensure optimal antenna telemetry.`
         ],
-        regulatoryImpact: data.regulatoryImpact || 'OSHA 1926.1424 (Crane Swing Radius Protection) Mandatory CAPA Sign-off.',
+        regulatoryImpact: data.regulatoryImpact || (intelligenceProfile?.complianceFramework ? `${intelligenceProfile.complianceFramework} Standard CAPA Compliance Required.` : 'Regulatory Safety Standard Compliance Required.'),
         createdAt: new Date().toISOString()
       });
     } catch (e) {
@@ -702,7 +702,7 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
   };
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto pb-16">
+    <div className="space-y-6 w-full max-w-[1760px] mx-auto pb-16 min-w-0 p-4 sm:p-6">
       
       {/* 1. TOP API KEY & LIVE HARDWARE TELEMETRY DIAGNOSTICS CARD */}
       <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 lg:p-6 shadow-sm">

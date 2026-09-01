@@ -72,164 +72,20 @@ export interface ComplianceReport {
   findingsCount: number;
 }
 
-// Initial Standard Data (All data is real database data with rich enterprise defaults)
-const SEED_FRAMEWORKS: ComplianceFramework[] = [
-  {
-    id: 'FRAMEWORK-OSHA-1926',
-    title: 'OSHA 1926 Construction Safety Standard',
-    authority: 'Occupational Safety and Health Administration (US DOL)',
-    category: 'Occupational Safety',
-    complianceScore: 96,
-    status: 'Compliant',
-    mandatoryRequirement: 'Mandatory continuous real-time personnel tracking in high-hazard crane and trenching zones.',
-    lastAuditDate: '2026-08-01',
-    nextAuditDue: '2026-11-01',
-    assignedAuditor: 'Marcus Vance (EHS Director)',
-    evidenceCount: 142,
-    requirements: [
-      { id: 'REQ-1926.1424', code: '1926.1424', description: 'Work area control around crane swing radius with audible proximity warning', status: 'Pass', lastChecked: '2026-08-25' },
-      { id: 'REQ-1926.651', code: '1926.651', description: 'Specific excavation requirements & shoring continuous barrier verification', status: 'Pass', lastChecked: '2026-08-24' },
-      { id: 'REQ-1926.95', code: '1926.95', description: 'Personal protective equipment criteria and AI vision verified compliance', status: 'Pass', lastChecked: '2026-08-26' }
-    ]
-  },
-  {
-    id: 'FRAMEWORK-ISO-45001',
-    title: 'ISO 45001:2018 OHS Management System',
-    authority: 'International Organization for Standardization',
-    category: 'Enterprise OHS',
-    complianceScore: 94,
-    status: 'Compliant',
-    mandatoryRequirement: 'Continuous hazard identification, incident root cause tracking, and emergency muster accountability.',
-    lastAuditDate: '2026-07-15',
-    nextAuditDue: '2026-10-15',
-    assignedAuditor: 'Elena Rostova (Field Safety Lead)',
-    evidenceCount: 98,
-    requirements: [
-      { id: 'REQ-ISO-8.2', code: 'Clause 8.2', description: 'Emergency preparedness, RFID muster headcounts, and response readiness', status: 'Pass', lastChecked: '2026-08-20' },
-      { id: 'REQ-ISO-9.1', code: 'Clause 9.1', description: 'Monitoring, measurement, analysis and performance evaluation of worker dwell times', status: 'Pass', lastChecked: '2026-08-22' }
-    ]
-  },
-  {
-    id: 'FRAMEWORK-NFPA-70E',
-    title: 'NFPA 70E Standard for Electrical Safety in the Workplace',
-    authority: 'National Fire Protection Association',
-    category: 'Electrical & Arc Flash',
-    complianceScore: 98,
-    status: 'Compliant',
-    mandatoryRequirement: 'Restricted approach boundary monitoring around high-voltage substations and transformers.',
-    lastAuditDate: '2026-08-10',
-    nextAuditDue: '2026-11-10',
-    assignedAuditor: 'Frank Reynolds (Equipment Manager)',
-    evidenceCount: 56,
-    requirements: [
-      { id: 'REQ-NFPA-130.4', code: 'Article 130.4', description: 'Arc flash boundary access control and restricted space badge enforcement', status: 'Pass', lastChecked: '2026-08-25' }
-    ]
-  }
-];
-
-const SEED_RETENTION_POLICIES: RetentionPolicy[] = [
-  {
-    id: 'POL-RAW-TELEMETRY',
-    dataType: 'Raw RFID UHF Signal Packets & RSSI',
-    retentionPeriodDays: 90,
-    autoPurge: true,
-    encryptionType: 'AES-256 GCM',
-    lastPurgeDate: '2026-08-20',
-    storageLocation: 'MongoDB Atlas Time-Series Bucket'
-  },
-  {
-    id: 'POL-SAFETY-INCIDENTS',
-    dataType: 'EHS Safety Incidents & CAPA Records',
-    retentionPeriodDays: 2555,
-    autoPurge: false,
-    encryptionType: 'AES-256 Immutable Ledger',
-    lastPurgeDate: 'Never (Permanent Audit)',
-    storageLocation: 'Encrypted Enterprise Compliance Vault'
-  },
-  {
-    id: 'POL-WORKER-ATTENDANCE',
-    dataType: 'Shift Attendance & Portal Access Logs',
-    retentionPeriodDays: 1095,
-    autoPurge: true,
-    encryptionType: 'AES-256 at Rest',
-    lastPurgeDate: '2026-08-01',
-    storageLocation: 'MongoDB Atlas Production DB'
-  }
-];
-
-const SEED_REPORTS: ComplianceReport[] = [
-  {
-    id: 'REP-2026-Q3-01',
-    title: 'Q3 2026 OSHA Construction Site Safety & RFID Telemetry Audit',
-    type: 'Comprehensive Safety Audit',
-    createdDate: '2026-08-25',
-    generatedBy: 'Marcus Vance (EHS Director)',
-    summary: '100% headcount accountability maintained across active workers. Zero exclusion zone breach injuries recorded.',
-    status: 'Approved',
-    findingsCount: 0
-  },
-  {
-    id: 'REP-2026-Q2-02',
-    title: 'Q2 2026 ISO 45001 Occupational Health & Safety Review',
-    type: 'Periodic Management Review',
-    createdDate: '2026-06-30',
-    generatedBy: 'Elena Rostova (Field Safety Lead)',
-    summary: 'Emergency evacuation drill conducted. 100% muster point verification completed within 2 minutes 14 seconds.',
-    status: 'Approved',
-    findingsCount: 1
-  }
-];
-
-const SEED_AUDIT_LOGS: AuditLogItem[] = [
-  {
-    id: 'LOG-8841',
-    timestamp: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
-    actor: 'Admin User',
-    actorRole: 'System Administrator',
-    action: 'RFID Hardware Gateway Telemetry Stream Polled',
-    category: 'Hardware Node',
-    severity: 'Info',
-    details: 'GAO UHF 216031A Reader live sweep executed successfully (Status: Healthy, Ping: 8ms).',
-    ipAddress: '192.168.1.100',
-    hash: 'a7c938f4e2b01d98a14b5c7e8f01a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0',
-    status: 'Verified'
-  },
-  {
-    id: 'LOG-8840',
-    timestamp: new Date(Date.now() - 25 * 60 * 1000).toISOString(),
-    actor: 'Marcus Vance',
-    actorRole: 'EHS Director',
-    action: 'Safety Zone Boundary Calibration Verified',
-    category: 'System Config',
-    severity: 'Info',
-    details: 'Crane swing radius exclusion zone boundary calibrated for Level 1 structural deck.',
-    ipAddress: '192.168.1.105',
-    hash: 'b8d049e5f3c12ea9b25c6d8f901b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1',
-    status: 'Verified'
-  },
-  {
-    id: 'LOG-8839',
-    timestamp: new Date(Date.now() - 95 * 60 * 1000).toISOString(),
-    actor: 'GAO Auto-Engine',
-    actorRole: 'Automated Daemon',
-    action: 'Stale Real-Time UHF Tag Sweep Completed',
-    category: 'Access Control',
-    severity: 'Info',
-    details: 'Cleaned up inactive tags from cache memory; 0 duplicates detected.',
-    ipAddress: '127.0.0.1',
-    hash: 'c9e15af604d23fb0c36d7e00a12c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2',
-    status: 'Verified'
-  }
-];
+// Initial Standard Data (Synchronized directly with MongoDB Atlas)
+const SEED_FRAMEWORKS: ComplianceFramework[] = [];
+const SEED_RETENTION_POLICIES: RetentionPolicy[] = [];
+const SEED_REPORTS: ComplianceReport[] = [];
+const SEED_AUDIT_LOGS: AuditLogItem[] = [];
 
 export default function AuditTab() {
   const { config, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
 
   // Main Data States synced to MongoDB
-  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>(SEED_AUDIT_LOGS);
-  const [frameworks, setFrameworks] = useState<ComplianceFramework[]>(SEED_FRAMEWORKS);
-  const [retentionPolicies, setRetentionPolicies] = useState<RetentionPolicy[]>(SEED_RETENTION_POLICIES);
-  const [reports, setReports] = useState<ComplianceReport[]>(SEED_REPORTS);
+  const [auditLogs, setAuditLogs] = useState<AuditLogItem[]>([]);
+  const [frameworks, setFrameworks] = useState<ComplianceFramework[]>([]);
+  const [retentionPolicies, setRetentionPolicies] = useState<RetentionPolicy[]>([]);
+  const [reports, setReports] = useState<ComplianceReport[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [dbSynced, setDbSynced] = useState(false);
@@ -328,16 +184,12 @@ export default function AuditTab() {
         });
       });
 
-      if (list.length > 0) {
-        list.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
-        setAuditLogs(list);
-      } else {
-        setAuditLogs(SEED_AUDIT_LOGS);
-      }
+      list.sort((a, b) => String(b.timestamp || '').localeCompare(String(a.timestamp || '')));
+      setAuditLogs(list);
       setLoading(false);
       setDbSynced(true);
     }, () => {
-      setAuditLogs(SEED_AUDIT_LOGS);
+      setAuditLogs([]);
       setLoading(false);
     });
 
@@ -345,23 +197,23 @@ export default function AuditTab() {
     const unsubFrameworks = onSnapshot(collection(db, 'compliance_frameworks'), async (snapshot) => {
       const list: ComplianceFramework[] = [];
       snapshot.forEach(d => list.push(d.data() as ComplianceFramework));
-      setFrameworks(list.length > 0 ? list : SEED_FRAMEWORKS);
-    }, () => { setFrameworks(SEED_FRAMEWORKS); });
+      setFrameworks(list);
+    }, () => { setFrameworks([]); });
 
     // Sync Retention Policies
     const unsubRetention = onSnapshot(collection(db, 'retention_policies'), async (snapshot) => {
       const list: RetentionPolicy[] = [];
       snapshot.forEach(d => list.push(d.data() as RetentionPolicy));
-      setRetentionPolicies(list.length > 0 ? list : SEED_RETENTION_POLICIES);
-    }, () => { setRetentionPolicies(SEED_RETENTION_POLICIES); });
+      setRetentionPolicies(list);
+    }, () => { setRetentionPolicies([]); });
 
     // Sync Reports
     const unsubReports = onSnapshot(collection(db, 'compliance_reports'), async (snapshot) => {
       const list: ComplianceReport[] = [];
       snapshot.forEach(d => list.push(d.data() as ComplianceReport));
       list.sort((a, b) => String(b.createdDate || '').localeCompare(String(a.createdDate || '')));
-      setReports(list.length > 0 ? list : SEED_REPORTS);
-    }, () => { setReports(SEED_REPORTS); });
+      setReports(list);
+    }, () => { setReports([]); });
 
     return () => {
       unsubLogs();
@@ -530,7 +382,7 @@ export default function AuditTab() {
       title: reportForm.title,
       type: reportForm.type,
       createdDate: new Date().toISOString().slice(0, 10),
-      generatedBy: reportForm.generatedBy || 'Sarah Jenkins, Senior EHS Lead',
+      generatedBy: reportForm.generatedBy || 'Operations Safety Lead',
       summary: reportForm.summary || 'Formal compliance report generated and verified against live MongoDB site logs.',
       status: 'Approved',
       findingsCount: reportForm.findingsCount !== undefined ? Number(reportForm.findingsCount) : 0
@@ -716,7 +568,7 @@ export default function AuditTab() {
   }
 
   return (
-    <div className="flex flex-col w-full min-h-full p-4 md:p-6 space-y-6 max-w-7xl mx-auto font-sans">
+    <div className="flex flex-col w-full min-h-full p-4 sm:p-6 space-y-6 max-w-[1760px] mx-auto font-sans min-w-0">
       
       {/* 1. ENTERPRISE HEADER STRIP */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-800/90 p-5 rounded-2xl border border-slate-200 dark:border-slate-700/80 shadow-xs">
@@ -1240,8 +1092,8 @@ export default function AuditTab() {
               onClick={() => {
                 setReportForm({
                   title: '',
-                  type: 'OSHA 1926 Formal Audit',
-                  generatedBy: 'Sarah Jenkins, Senior EHS Lead',
+                  type: config?.complianceFramework || 'Operational Safety Audit',
+                  generatedBy: 'Operations Safety Lead',
                   summary: '',
                   status: 'Approved',
                   findingsCount: 0
@@ -1553,10 +1405,10 @@ export default function AuditTab() {
               </div>
 
               <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Filed By (EHS Auditor)</label>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Filed By (Safety Auditor)</label>
                 <input
                   type="text"
-                  placeholder="e.g. Sarah Jenkins, Senior EHS Lead"
+                  placeholder="e.g. Operations Safety Lead"
                   value={reportForm.generatedBy || ''}
                   onChange={e => setReportForm({ ...reportForm, generatedBy: e.target.value })}
                   className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none text-slate-800 dark:text-slate-200"

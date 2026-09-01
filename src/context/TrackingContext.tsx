@@ -828,8 +828,16 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         safeStorage.setItem('gao_db_zones', JSON.stringify(zonesRes.value));
       }
 
-      if (mapRes.status === 'fulfilled') {
-        setMapConfig(mapRes.value || null);
+      if (mapRes.status === 'fulfilled' && mapRes.value) {
+        setMapConfig(mapRes.value);
+        if (mapRes.value.floorplanUrl) {
+          setCustomFloorplanState(mapRes.value.floorplanUrl);
+          safeStorage.setItem('gao_custom_floorplan', mapRes.value.floorplanUrl);
+        }
+        if (mapRes.value.svgSource) {
+          setCustomSvgSourceState(mapRes.value.svgSource);
+          safeStorage.setItem('gao_custom_svg_source', mapRes.value.svgSource);
+        }
       }
 
       if (readersRes.status === 'fulfilled' && Array.isArray(readersRes.value)) {
@@ -1131,7 +1139,22 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     }
   }, [handleNormalizedTagUpdate]);
 
-  // Central WebSocket connection management
+  const handleTagUpdateRef = useRef(handleNormalizedTagUpdate);
+  useEffect(() => {
+    handleTagUpdateRef.current = handleNormalizedTagUpdate;
+  }, [handleNormalizedTagUpdate]);
+
+  const refreshLiveStateRef = useRef(refreshLiveState);
+  useEffect(() => {
+    refreshLiveStateRef.current = refreshLiveState;
+  }, [refreshLiveState]);
+
+  // Initial load of database entities (runs on mount and when activeProject changes)
+  useEffect(() => {
+    loadDatabaseConfig();
+  }, [loadDatabaseConfig]);
+
+  // Central WebSocket connection management (mounted once, auto-reconnects on drop)
   useEffect(() => {
     let ws: WebSocket | null = null;
     let isCleanedUp = false;
@@ -1157,11 +1180,11 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
             const msgType = (data.type || '').toLowerCase();
 
             if (msgType === 'tag_update' || msgType === 'rfid_scan' || msgType === 'tag_location_update') {
-              handleNormalizedTagUpdate(data.payload || data);
+              handleTagUpdateRef.current(data.payload || data);
             } else if (msgType === 'GetTagsInRealtime_response') {
               if (Array.isArray(data.payload)) {
                 for (const item of data.payload) {
-                  handleNormalizedTagUpdate(item);
+                  handleTagUpdateRef.current(item);
                 }
               }
             }
@@ -1171,7 +1194,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         ws.onclose = () => {
           setWsConnected(false);
           if (!isCleanedUp) {
-            reconnectTimeoutRef.current = setTimeout(connectWebSocket, 3000);
+            reconnectTimeoutRef.current = setTimeout(connectWebSocket, 4000);
           }
         };
 
@@ -1185,7 +1208,17 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    // Real-time MongoDB Atlas listeners for site assets & infrastructure
+    connectWebSocket();
+
+    return () => {
+      isCleanedUp = true;
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+      if (ws) ws.close();
+    };
+  }, []);
+
+  // Real-time MongoDB Atlas listeners for site assets & infrastructure (mounted once)
+  useEffect(() => {
     const unsubAssets = onSnapshot(collection(db, 'assets'), (snap) => {
       const items: any[] = snap.docs.map(docSnap => docSnap.data());
       if (items.length > 0) {
@@ -1212,31 +1245,24 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       if (items.length > 0) setEnvSensors(items);
     });
 
-    connectWebSocket();
-    loadDatabaseConfig();
-
     return () => {
-      isCleanedUp = true;
-      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
-      if (ws) ws.close();
       unsubAssets();
       unsubVehicles();
       unsubCameras();
       unsubSensors();
     };
-  }, [loadDatabaseConfig, handleNormalizedTagUpdate]);
+  }, []);
 
   // Periodic fallback polling in real mode (only when WebSocket is NOT connected)
   useEffect(() => {
-    // When WebSocket is streaming, avoid redundant GET requests
     if (wsConnected) return;
 
     const pollInterval = setInterval(() => {
-      refreshLiveState();
-    }, 15000);
+      refreshLiveStateRef.current();
+    }, 30000);
 
     return () => clearInterval(pollInterval);
-  }, [refreshLiveState, wsConnected]);
+  }, [wsConnected]);
 
   // No automatic movement simulation: positions & events are exclusively driven by real MongoDB records / real RFID & GPS hardware feeds.
 

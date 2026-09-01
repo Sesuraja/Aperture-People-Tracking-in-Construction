@@ -48,133 +48,7 @@ export interface DeviceItem {
   presenceState?: string;
 }
 
-const DEFAULT_SITE_DEVICES: DeviceItem[] = [
-  {
-    id: 'GAO-RD-216031A-01',
-    name: 'GAO UHF 216031A Long-Range Reader',
-    category: 'rfid',
-    type: '4-Port UHF Fixed RFID Gateway',
-    location: 'Main Gate 1 Portal',
-    zoneId: 'main-gate-1',
-    status: 'online',
-    ip: '192.168.1.120',
-    mac: '00:1A:2B:3C:4D:01',
-    firmware: 'v4.19.2',
-    latestFirmware: 'v4.19.2',
-    signalRssi: -52,
-    coverageRadiusMeters: 35,
-    temperatureC: 38.4,
-    cpuUsagePct: 24,
-    memoryUsagePct: 42,
-    pingMs: 8,
-    uptime: '14d 6h',
-    lastPing: 'Just now',
-    calibrationStatus: 'Calibrated',
-    otaStatus: 'Up to Date',
-    powerSource: 'PoE',
-    notes: 'Primary worker entry/exit RFID portal with dual circular polarized antennas.'
-  },
-  {
-    id: 'GAO-RD-216031A-02',
-    name: 'Tower Crane Mast Reader Gateway',
-    category: 'rfid',
-    type: 'Heavy-Duty UHF RFID Node',
-    location: 'Crane Operating Zone',
-    zoneId: 'crane-operating-zone',
-    status: 'online',
-    ip: '192.168.1.121',
-    mac: '00:1A:2B:3C:4D:02',
-    firmware: 'v4.19.2',
-    latestFirmware: 'v4.19.2',
-    signalRssi: -58,
-    coverageRadiusMeters: 45,
-    temperatureC: 41.2,
-    cpuUsagePct: 31,
-    memoryUsagePct: 48,
-    pingMs: 12,
-    uptime: '12d 2h',
-    lastPing: 'Just now',
-    calibrationStatus: 'Calibrated',
-    otaStatus: 'Up to Date',
-    powerSource: 'Solar + Battery',
-    notes: 'Exclusion zone boundary sensor monitoring crane radius compliance.'
-  },
-  {
-    id: 'GAO-RD-216031A-03',
-    name: 'Excavation Perimeter Reader',
-    category: 'rfid',
-    type: 'UHF Ruggedized Outdoor Anchor',
-    location: 'Excavation Area',
-    zoneId: 'excavation-area',
-    status: 'online',
-    ip: '192.168.1.122',
-    mac: '00:1A:2B:3C:4D:03',
-    firmware: 'v4.19.0',
-    latestFirmware: 'v4.19.2',
-    signalRssi: -64,
-    coverageRadiusMeters: 30,
-    temperatureC: 36.8,
-    cpuUsagePct: 18,
-    memoryUsagePct: 38,
-    pingMs: 15,
-    uptime: '8d 14h',
-    lastPing: 'Just now',
-    calibrationStatus: 'Calibrated',
-    otaStatus: 'Update Available',
-    powerSource: 'PoE',
-    notes: 'Shoring pit and trenching zone real-time tracking gateway.'
-  },
-  {
-    id: 'CCTV-AI-CAM-01',
-    name: 'Main Gate AI PPE Verification Cam',
-    category: 'ai_camera',
-    type: '4K AI Vision Edge Camera',
-    location: 'Main Gate 1',
-    zoneId: 'main-gate-1',
-    status: 'online',
-    ip: '192.168.1.140',
-    mac: '00:1A:2B:3C:4D:04',
-    firmware: 'v3.2.1',
-    latestFirmware: 'v3.2.1',
-    signalRssi: -45,
-    coverageRadiusMeters: 25,
-    temperatureC: 44.0,
-    cpuUsagePct: 62,
-    memoryUsagePct: 71,
-    pingMs: 6,
-    uptime: '28d 4h',
-    lastPing: 'Just now',
-    calibrationStatus: 'Calibrated',
-    otaStatus: 'Up to Date',
-    powerSource: 'PoE',
-    notes: 'Real-time hardhat, hi-vis vest, and safety goggles computer vision model.'
-  },
-  {
-    id: 'IOT-ENV-SENSOR-01',
-    name: 'Hazardous Vault Air Quality & Gas Sensor',
-    category: 'iot',
-    type: 'Multi-Gas & Particulate IoT Node',
-    location: 'High Voltage Area',
-    zoneId: 'high-voltage-area',
-    status: 'online',
-    ip: '192.168.1.160',
-    mac: '00:1A:2B:3C:4D:05',
-    firmware: 'v1.8.0',
-    latestFirmware: 'v1.8.0',
-    signalRssi: -68,
-    coverageRadiusMeters: 20,
-    temperatureC: 29.5,
-    cpuUsagePct: 12,
-    memoryUsagePct: 22,
-    pingMs: 24,
-    uptime: '45d 1h',
-    lastPing: 'Just now',
-    calibrationStatus: 'Calibrated',
-    otaStatus: 'Up to Date',
-    powerSource: 'Li-Ion Battery',
-    notes: 'CO, H2S, and VOC air quality monitor for confined subsurface utility vaults.'
-  }
-];
+const DEFAULT_SITE_DEVICES: DeviceItem[] = [];
 
 export default function DevicesTab() {
   const navigate = useNavigate();
@@ -291,11 +165,12 @@ export default function DevicesTab() {
   useEffect(() => {
     setLoading(true);
     let devList: DeviceItem[] = [];
+    let hardwareReadersList: DeviceItem[] = [];
     let workerTagsList: DeviceItem[] = [];
 
     const mergeAndSet = () => {
-      const activeDevs = devList.length > 0 ? devList : DEFAULT_SITE_DEVICES;
-      const combined = [...activeDevs, ...workerTagsList];
+      const activeDevs = devList;
+      const combined = [...activeDevs, ...hardwareReadersList, ...workerTagsList];
       setDevices(combined);
       setLoading(false);
       setDbSynced(true);
@@ -338,6 +213,41 @@ export default function DevicesTab() {
       mergeAndSet();
     });
 
+    const unsubHwReaders = onSnapshot(collection(db, 'hardware_readers'), (snapshot) => {
+      hardwareReadersList = [];
+      snapshot.forEach(d => {
+        const data = d.data();
+        hardwareReadersList.push({
+          id: d.id || data.serialno || data.readerId,
+          name: data.model ? `GAO ${data.model} Reader (${data.serialno || d.id})` : `Hardware Reader Gateway (${data.serialno || d.id})`,
+          category: 'rfid',
+          type: 'GAO Fixed Multi-Antenna Reader Gateway',
+          location: data.location || 'Facility Portal / Access Point',
+          zoneId: (data.location || 'portal-1').toLowerCase().replace(/\s+/g, '-'),
+          status: 'online',
+          ip: data.ip || '192.168.1.120',
+          mac: data.mac || '00:1A:2B:3C:4D:01',
+          firmware: data.firmware || 'v4.19.2',
+          latestFirmware: 'v4.19.2',
+          signalRssi: data.rssi !== undefined ? Number(data.rssi) : -50,
+          coverageRadiusMeters: 35,
+          temperatureC: 38,
+          cpuUsagePct: 24,
+          memoryUsagePct: 40,
+          pingMs: 8,
+          uptime: 'Active',
+          lastPing: 'Just now',
+          calibrationStatus: 'Calibrated',
+          otaStatus: 'Up to Date',
+          powerSource: 'PoE',
+          notes: `Hardware Reader Serial: ${data.serialno || d.id}. Antennas: ${(data.antennas || []).length || 1}.`
+        });
+      });
+      mergeAndSet();
+    }, (err) => {
+      console.warn('hardware_readers listener notice:', err);
+    });
+
     let regPeopleMap = new Map<string, any>();
     let peopleMap = new Map<string, any>();
 
@@ -353,18 +263,18 @@ export default function DevicesTab() {
         const tagId = p.hardhatTagId || p.tagId || dId || p.id;
         workerTagsList.push({
           id: tagId,
-          name: `${p.name || 'Worker'} (Hardhat Tag)`,
-          workerName: p.name || 'Site Personnel',
-          workerRole: p.role || p.tradeCompany || 'Field Personnel',
+          name: `${p.name || personnelSingular} (${idBadgeLabel})`,
+          workerName: p.name || `Active ${personnelSingular}`,
+          workerRole: p.role || p.tradeCompany || roleLabel,
           ppeStatus: p.ppeStatus || 'COMPLIANT',
           presenceState: p.presenceState || 'IDLE',
           battery: p.battery !== undefined ? Number(p.battery) : 88,
           category: 'rfid_tag',
-          type: 'UHF Worker Smart Badge / Hardhat RFID',
+          type: `${personnelSingular} Smart Badge / UHF ${idBadgeLabel}`,
           location: p.currentZone || 'Site Area',
           zoneId: (p.currentZone || 'zone-a').toLowerCase().replace(/\s+/g, '-'),
           status: p.shiftStatus === 'OFF_SITE' ? 'offline' : (p.battery !== undefined && Number(p.battery) < 20 ? 'warning' : 'online'),
-          ip: p.tradeCompany || 'Subcontractor Crew',
+          ip: p.tradeCompany || organizationType || 'Operations',
           mac: tagId,
           firmware: 'v2.4.0',
           latestFirmware: 'v2.4.0',
@@ -379,7 +289,7 @@ export default function DevicesTab() {
           calibrationStatus: 'Calibrated',
           otaStatus: 'Up to Date',
           powerSource: 'Li-Ion Battery',
-          notes: `Assigned Personnel: ${p.name || 'Unknown'} | Trade: ${p.role || 'Operator'} | Subcontractor: ${p.tradeCompany || 'Prime Construction'}`
+          notes: `Assigned Personnel: ${p.name || 'Unknown'} | ${roleLabel}: ${p.role || 'Operator'} | ${organizationType}: ${p.tradeCompany || 'Internal'}`
         });
       });
       mergeAndSet();
@@ -407,6 +317,7 @@ export default function DevicesTab() {
 
     return () => {
       unsubDevices();
+      unsubHwReaders();
       unsubRegPeople();
       unsubPeople();
     };
@@ -872,7 +783,7 @@ export default function DevicesTab() {
   };
 
   return (
-    <div className="flex flex-col w-full h-full p-4 md:p-6 space-y-6 max-w-7xl mx-auto overflow-y-auto">
+    <div className="flex flex-col w-full h-full p-4 sm:p-6 space-y-6 max-w-[1760px] mx-auto overflow-y-auto min-w-0">
 
       {/* 1. PAGE HEADER */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -1113,7 +1024,7 @@ export default function DevicesTab() {
         <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto">
           {[
             { id: 'inventory', label: 'Device Inventory & Health', icon: Cpu },
-            { id: 'worker_tags', label: 'Worker Wearable RFID Badges', icon: HardHat },
+            { id: 'worker_tags', label: `${personnelSingular} Wearable ${idBadgeLabel}s`, icon: HardHat },
             { id: 'heatmap', label: 'Coverage Heatmap', icon: Radar },
             { id: 'deadzones', label: 'Dead Zone Analyzer', icon: ScanEye },
             { id: 'ota', label: 'Mass OTA Firmware Hub', icon: Zap },
@@ -1561,7 +1472,7 @@ export default function DevicesTab() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-3.5 shadow-sm">
               <div className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5">
-                <HardHat size={13} className="text-amber-500" /> Active Worker Badges
+                <HardHat size={13} className="text-amber-500" /> Active {personnelSingular} Badges
               </div>
               <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">
                 {devices.filter(d => d.category === 'rfid_tag').length}

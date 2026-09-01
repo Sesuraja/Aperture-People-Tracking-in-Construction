@@ -12,6 +12,7 @@ import QRCode from 'react-qr-code';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 import VisitorCheckInForm from './VisitorCheckInForm';
 import VisitorQrGenerator from './VisitorQrGenerator';
+import { useTracking, useTerminology } from '../context/TrackingContext';
 
 export interface VisitorRecord {
   id: string;
@@ -53,6 +54,9 @@ export interface SecurityListItem {
 
 
 export default function VisitorsTab() {
+  const trackingCtx = useTracking();
+  const { personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+
   const [activeTab, setActiveTab] = useState<'roster' | 'checkin' | 'qr_generator' | 'approval' | 'vehicles' | 'security_list' | 'analytics'>('roster');
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('All');
@@ -94,16 +98,16 @@ export default function VisitorsTab() {
   const [newVisitor, setNewVisitor] = useState({
     name: '',
     company: '',
-    host: 'marcus.vance@buildcorp.com',
+    host: '',
     email: '',
     phone: '',
     date: 'Today',
     time: '10:00 AM',
-    purpose: 'Site Inspection & Engineering Audit',
+    purpose: 'Facility Inspection & Audit',
     vehiclePlate: '',
-    vehicleType: 'Sedan',
-    parkingBay: 'Bay P-01',
-    idDocType: 'Driver License',
+    vehicleType: 'Standard',
+    parkingBay: 'Bay 01',
+    idDocType: 'Government ID',
     idDocNumber: ''
   });
 
@@ -198,9 +202,9 @@ export default function VisitorsTab() {
       id: newId,
       name: newVisitor.name,
       company: newVisitor.company,
-      host: newVisitor.host || 'marcus.vance@buildcorp.com',
+      host: newVisitor.host || 'Security Dispatch',
       email: newVisitor.email,
-      phone: newVisitor.phone || '+1 (555) 019-2831',
+      phone: newVisitor.phone || '',
       status: isBlacklisted ? 'Denied' : 'Pending Approval',
       time: `${newVisitor.time} (${newVisitor.date})`,
       tag: 'Not Assigned',
@@ -241,16 +245,16 @@ export default function VisitorsTab() {
       setNewVisitor({
         name: '',
         company: '',
-        host: 'marcus.vance@buildcorp.com',
+        host: '',
         email: '',
         phone: '',
         date: 'Today',
         time: '10:00 AM',
-        purpose: 'Site Inspection & Engineering Audit',
+        purpose: 'Facility Inspection & Audit',
         vehiclePlate: '',
-        vehicleType: 'Sedan',
-        parkingBay: 'Bay P-01',
-        idDocType: 'Driver License',
+        vehicleType: 'Standard',
+        parkingBay: 'Bay 01',
+        idDocType: 'Government ID',
         idDocNumber: ''
       });
     } catch (err) {
@@ -397,7 +401,7 @@ export default function VisitorsTab() {
       company: newSecurityEntry.company || 'General Contractor',
       type: newSecurityEntry.type,
       reason: newSecurityEntry.reason,
-      addedBy: 'Marcus Vance (EHS Director)',
+      addedBy: 'Security Lead',
       addedDate: new Date().toISOString().split('T')[0],
       riskLevel: newSecurityEntry.type === 'BLACKLIST' ? newSecurityEntry.riskLevel : 'LOW'
     };
@@ -476,7 +480,7 @@ export default function VisitorsTab() {
 
 
   return (
-    <div className="w-full flex flex-col p-4 md:p-6 max-w-7xl mx-auto space-y-6">
+    <div className="w-full flex flex-col p-4 sm:p-6 max-w-[1760px] mx-auto space-y-6 min-w-0">
       
       {/* Header & Main Control Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 shrink-0">
@@ -1413,7 +1417,7 @@ export default function VisitorsTab() {
 
             <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-xl space-y-2 text-xs text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700">
               <div><strong>To:</strong> {invitationVisitor.email} ({invitationVisitor.name})</div>
-              <div><strong>Subject:</strong> Aperture Construction Gatehouse Access Pass - {invitationVisitor.id}</div>
+              <div><strong>Subject:</strong> Aperture {siteLabel || 'Facility'} Gatehouse Access Pass - {invitationVisitor.id}</div>
               <div className="pt-2 border-t border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-400 italic">
                 "Dear {invitationVisitor.name}, your visit with host {invitationVisitor.host} has been scheduled. Please present the attached QR pass upon arrival at Gate 1."
               </div>

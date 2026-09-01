@@ -12,6 +12,7 @@ export interface IndustryTerminology {
 export interface IndustryConfig {
   industryId: 'construction' | 'healthcare' | 'mining' | 'manufacturing' | 'logistics' | 'corporate' | 'aviation' | 'oil_gas' | 'custom';
   industryName: string;
+  subIndustry?: string;
   appTitle: string;
   appSubtitle: string;
   primarySiteName: string;
@@ -30,6 +31,7 @@ export const INDUSTRY_PRESETS: Record<string, IndustryConfig> = {
   construction: {
     industryId: 'construction',
     industryName: 'Construction & Heavy Infrastructure',
+    subIndustry: 'Commercial & High-Rise Construction',
     appTitle: 'Aperture People Tracking',
     appSubtitle: 'Industrial RFID Personnel & Workforce Safety Telemetry',
     primarySiteName: 'Tower 1 - Metro Commercial Build',
@@ -88,6 +90,7 @@ export const INDUSTRY_PRESETS: Record<string, IndustryConfig> = {
   healthcare: {
     industryId: 'healthcare',
     industryName: 'Healthcare, Hospitals & Clinical Facilities',
+    subIndustry: 'Inpatient Care & Surgical Centers',
     appTitle: 'Aperture Clinical Flow & People Tracking',
     appSubtitle: 'Real-Time Patient, Surgeon, Nurse & Medical Asset Telemetry',
     primarySiteName: 'Metro General Hospital & Trauma Center',
@@ -146,6 +149,7 @@ export const INDUSTRY_PRESETS: Record<string, IndustryConfig> = {
   mining: {
     industryId: 'mining',
     industryName: 'Mining, Tunnels & Underground Extraction',
+    subIndustry: 'Deep Underground & Hard Rock Mining',
     appTitle: 'Aperture Underground Personnel Tracking',
     appSubtitle: 'Deep Shaft Telemetry, Lone Worker Safety & Gas Hazard Monitoring',
     primarySiteName: 'Apex Silver-Lead Deep Mine (Shaft 4)',
@@ -204,6 +208,7 @@ export const INDUSTRY_PRESETS: Record<string, IndustryConfig> = {
   manufacturing: {
     industryId: 'manufacturing',
     industryName: 'Manufacturing, Assembly Plants & Factories',
+    subIndustry: 'Automotive & Precision Discrete Assembly',
     appTitle: 'Aperture Industrial Plant People Tracking',
     appSubtitle: 'Robotics Cell Safety, Operator Floor Tracking & Line Efficiency',
     primarySiteName: 'Advanced Automotive Assembly Facility (Plant 3)',
@@ -262,6 +267,7 @@ export const INDUSTRY_PRESETS: Record<string, IndustryConfig> = {
   logistics: {
     industryId: 'logistics',
     industryName: 'Warehouse, Distribution & Fulfillment Centers',
+    subIndustry: 'E-Commerce Fulfillment & High-Bay Logistics',
     appTitle: 'Aperture Logistics & People Tracking',
     appSubtitle: 'Material Handlers, Forklift Fleets & High-Bay Fulfillment Safety',
     primarySiteName: 'Global Mega-Hub Distribution Center (Bldg B)',
@@ -320,6 +326,7 @@ export const INDUSTRY_PRESETS: Record<string, IndustryConfig> = {
   corporate: {
     industryId: 'corporate',
     industryName: 'Corporate Campus, Tech Headquarters & Smart Offices',
+    subIndustry: 'Enterprise Technology Campus & Smart Workplace',
     appTitle: 'Aperture Enterprise Workspace Tracking',
     appSubtitle: 'Workplace Density, Visitor Experience & Smart Office Security',
     primarySiteName: 'One Silicon Gateway - Global HQ Campus',
@@ -378,6 +385,7 @@ export const INDUSTRY_PRESETS: Record<string, IndustryConfig> = {
   aviation: {
     industryId: 'aviation',
     industryName: 'Aviation, Airport Ramp & Airfield Operations',
+    subIndustry: 'Commercial Airport Airside & Ground Handling',
     appTitle: 'Aperture Airfield Personnel Tracking',
     appSubtitle: 'Flight Line Safety, Baggage Handlers & Jet Bridge Operations',
     primarySiteName: 'Terminal 2 International Airfield & Apron',
@@ -436,6 +444,7 @@ export const INDUSTRY_PRESETS: Record<string, IndustryConfig> = {
   oil_gas: {
     industryId: 'oil_gas',
     industryName: 'Oil & Gas, Petrochemical & Refinery Plants',
+    subIndustry: 'Hydrocarbon Refinery & Petrochemical Processing',
     appTitle: 'Aperture Refinery Personnel Tracking',
     appSubtitle: 'ATEX Intrinsically Safe Telemetry, Zone 0 Gas Safety & Permitting',
     primarySiteName: 'Coastal Petrochemical Complex (Unit 7 Distillation)',
@@ -494,6 +503,7 @@ export const INDUSTRY_PRESETS: Record<string, IndustryConfig> = {
   custom: {
     industryId: 'custom',
     industryName: 'Custom / Multi-Facility Enterprise',
+    subIndustry: 'Multi-Site Facility Operations',
     appTitle: 'Aperture Multi-Facility People Tracking',
     appSubtitle: 'Unified Real-Time Personnel, Device & Asset Intelligence',
     primarySiteName: 'Enterprise Main Facility',

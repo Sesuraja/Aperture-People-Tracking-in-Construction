@@ -313,12 +313,17 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
           ) : (
             <div className="flex flex-col">
               <ApertureLogo variant="horizontal" size="sm" />
-              <div className="flex items-center gap-1.5 mt-2 px-0.5">
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 tracking-tight leading-tight">
+              <div className="flex flex-col gap-0.5 mt-2 px-0.5">
+                <span className="text-[11px] font-bold text-slate-800 dark:text-slate-100 tracking-tight leading-tight">
                   {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config')
                     ? JSON.parse(localStorage.getItem('gao_industry_config') || '{}').appTitle || 'Aperture People Tracking'
                     : 'Aperture People Tracking'}
                 </span>
+                {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config') && JSON.parse(localStorage.getItem('gao_industry_config') || '{}').subIndustry && (
+                  <span className="text-[9px] font-semibold text-[#007BC4] tracking-tight">
+                    {JSON.parse(localStorage.getItem('gao_industry_config') || '{}').subIndustry}
+                  </span>
+                )}
               </div>
             </div>
           )}
@@ -598,7 +603,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
               } />
               <Route path="/stream-diagnostics" element={
                  <ProtectedRoute 
-                   element={<div className="p-6 max-w-7xl mx-auto"><StreamDiagnostics /></div>}
+                    element={<div className="p-4 sm:p-6 w-full max-w-[1760px] mx-auto min-w-0"><StreamDiagnostics /></div>}
                    userRole={userRole}
                    userUid="default"
                    permissionKey="devices"

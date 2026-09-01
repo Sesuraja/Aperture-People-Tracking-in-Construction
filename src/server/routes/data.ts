@@ -5,7 +5,8 @@ import {
   upsertDoc,
   deleteDocById,
   isMongoConnected,
-  logAuditEvent
+  logAuditEvent,
+  getPlaybackFrames
 } from '../services/db.js';
 import { requireAuth, AuthRequest } from '../middleware/auth.js';
 
@@ -13,6 +14,21 @@ export const dataRouter = Router();
 
 // Require authenticated session for all /api/data/* endpoints
 dataRouter.use(requireAuth);
+
+// GET /api/data/playback_frames?date=YYYY-MM-DD
+// Returns all chronological tag position snapshots for the given date (used by PlaybackTab)
+dataRouter.get('/playback_frames', async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'default';
+  const date = (req.query.date as string) || new Date().toISOString().split('T')[0];
+  try {
+    const frames = await getPlaybackFrames(date, orgId);
+    return res.json({ date, organizationId: orgId, frames, count: frames.length });
+  } catch (err: any) {
+    console.error('[Data Route] getPlaybackFrames error:', err);
+    return res.status(500).json({ error: 'Failed to fetch playback frames' });
+  }
+});
+
 
 // GET /api/data/stats
 dataRouter.get('/stats', async (req: AuthRequest, res: Response) => {
@@ -75,6 +91,53 @@ dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
   }
 });
 
+// GET /api/data/floorplan_image/:id - streams floorplan image directly from MongoDB
+dataRouter.get('/floorplan_image/:id', async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const orgId = req.user?.organizationId || 'default';
+
+  try {
+    const config = (await getDocById('map_configurations', id, orgId)) || 
+                   (await getDocById('floorplans', id, orgId)) || 
+                   (await getDocById('floorplans', `fp_${id}`, orgId));
+    if (!config) {
+      return res.status(404).send('Floorplan not found');
+    }
+
+    const raw = config.floorplanData || config.imageData || config.floorplanUrl || config.url;
+    if (!raw) {
+      return res.status(404).send('No image data in floorplan');
+    }
+
+    if (typeof raw === 'string' && raw.startsWith('data:image/')) {
+      const match = raw.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+      if (match) {
+        const mimeType = match[1] === 'svg+xml' ? 'image/svg+xml' : `image/${match[1]}`;
+        const buffer = Buffer.from(match[2], 'base64');
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Content-Length', buffer.length);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.send(buffer);
+      }
+    }
+
+    if (typeof raw === 'string' && raw.startsWith('<svg')) {
+      res.setHeader('Content-Type', 'image/svg+xml');
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.send(raw);
+    }
+
+    if (typeof raw === 'string' && (raw.startsWith('/') || raw.startsWith('http'))) {
+      return res.redirect(raw);
+    }
+
+    return res.status(400).send('Invalid image format');
+  } catch (err: any) {
+    console.error('[Data Route] Error serving floorplan image from MongoDB:', err);
+    return res.status(500).send('Error serving image');
+  }
+});
+
 // GET /api/data/:collection/:id
 dataRouter.get('/:collection/:id', async (req: AuthRequest, res: Response) => {
   const { collection, id } = req.params;
@@ -82,12 +145,55 @@ dataRouter.get('/:collection/:id', async (req: AuthRequest, res: Response) => {
   try {
     const doc = await getDocById(collection, id, orgId);
     if (!doc) {
+      if (collection === 'map_configurations') {
+        return res.json({ id, siteId: id });
+      }
       return res.status(404).json({ error: 'Document not found' });
     }
     return res.json(doc);
   } catch (err: any) {
     console.error(`[Data Route] Error fetching doc ${id} in ${collection}:`, err);
     return res.status(500).json({ error: 'Failed to fetch document' });
+  }
+});
+
+// POST /api/data/zones/batch - handles saving custom zones & floorplan configuration cleanly
+dataRouter.post('/zones/batch', async (req: AuthRequest, res: Response) => {
+  const orgId = req.user?.organizationId || 'default';
+  const { zones, floorplanUrl, svgSource, activeProject } = req.body || {};
+
+  try {
+    const savedZones = [];
+    if (Array.isArray(zones)) {
+      for (const z of zones) {
+        if (z && (z.id || z.zoneId || z.name)) {
+          const zoneId = z.id || z.zoneId || `zone_${(z.name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+          const cleanZone = { ...z, id: zoneId, zoneId };
+          const saved = await upsertDoc('zones', cleanZone, orgId);
+          savedZones.push(saved);
+        }
+      }
+    }
+
+    // If floorplanUrl or svgSource provided, update map_configurations without polluting zones collection
+    if (floorplanUrl || svgSource) {
+      const projId = activeProject || 'metro-tower';
+      const existingConfig = (await getDocById('map_configurations', projId, orgId)) || {};
+      const updatedConfig = {
+        ...existingConfig,
+        id: projId,
+        siteId: projId,
+        ...(floorplanUrl ? { floorplanUrl } : {}),
+        ...(svgSource ? { svgSource } : {}),
+        updatedAt: new Date().toISOString()
+      };
+      await upsertDoc('map_configurations', updatedConfig, orgId);
+    }
+
+    return res.json({ success: true, count: savedZones.length, zones: savedZones });
+  } catch (err: any) {
+    console.error('[Data Route] Error saving zones batch:', err);
+    return res.status(500).json({ error: 'Failed to save zones batch' });
   }
 });
 
@@ -129,10 +235,13 @@ dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
   const orgId = user?.organizationId || 'default';
 
   // IDOR check: if updating existing doc, ensure it belongs to the tenant
-  const existingDoc = await getDocById(collection, id, orgId);
-  const allExisting = await getDocById(collection, id, 'ALL');
-  if (allExisting && (!existingDoc || (allExisting.organizationId && allExisting.organizationId !== orgId))) {
-    return res.status(404).json({ error: 'Document not found or belongs to another organization' });
+  const isSpatialConfig = ['map_configurations', 'zones', 'projects', 'sites', 'floorplans'].includes(collection);
+  if (!isSpatialConfig) {
+    const existingDoc = await getDocById(collection, id, orgId);
+    const allExisting = await getDocById(collection, id, 'ALL');
+    if (allExisting && (!existingDoc || (allExisting.organizationId && allExisting.organizationId !== orgId && !(allExisting.organizationId === 'default' && orgId === 'demo')))) {
+      return res.status(404).json({ error: 'Document not found or belongs to another organization' });
+    }
   }
 
   const body = req.body || {};

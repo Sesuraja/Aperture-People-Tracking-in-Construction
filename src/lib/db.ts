@@ -9,7 +9,7 @@ let _mongoConnectedState = true;
 if (typeof window !== 'undefined') {
   const checkMongoStatus = async () => {
     try {
-      const res = await fetch('/api/mongodb/status');
+      const res = await fetch('/api/mongodb/status?quick=true');
       if (res.ok) {
         const data = await res.json();
         _mongoConnectedState = Boolean(data.connected);
@@ -107,10 +107,17 @@ function getAuthHeaders(): Record<string, string> {
 
 // In-flight GET request deduplication cache to prevent identical parallel backend queries
 const inFlightGetRequests = new Map<string, Promise<any>>();
+// Client-side response cache (2.5 seconds) to prevent redundant queries across sibling components
+const clientResponseCache = new Map<string, { data: any; cachedAt: number }>();
+const CLIENT_CACHE_TTL_MS = 2500;
 
 async function safeJsonFetch(url: string, options?: RequestInit): Promise<any> {
   const method = (options?.method || 'GET').toUpperCase();
   if (method === 'GET') {
+    const cached = clientResponseCache.get(url);
+    if (cached && (Date.now() - cached.cachedAt < CLIENT_CACHE_TTL_MS)) {
+      return cached.data;
+    }
     const existing = inFlightGetRequests.get(url);
     if (existing) return existing;
   }
@@ -127,7 +134,11 @@ async function safeJsonFetch(url: string, options?: RequestInit): Promise<any> {
       if (!response.ok) return null;
       const text = await response.text();
       try {
-        return JSON.parse(text);
+        const parsed = JSON.parse(text);
+        if (method === 'GET') {
+          clientResponseCache.set(url, { data: parsed, cachedAt: Date.now() });
+        }
+        return parsed;
       } catch {
         return null;
       }
@@ -135,7 +146,7 @@ async function safeJsonFetch(url: string, options?: RequestInit): Promise<any> {
       return null;
     } finally {
       if (method === 'GET') {
-        setTimeout(() => inFlightGetRequests.delete(url), 1500);
+        setTimeout(() => inFlightGetRequests.delete(url), 1000);
       }
     }
   })();
@@ -149,6 +160,11 @@ async function safeJsonFetch(url: string, options?: RequestInit): Promise<any> {
 
 function notifyDataUpdated(colName: string) {
   if (typeof window !== 'undefined') {
+    for (const key of Array.from(clientResponseCache.keys())) {
+      if (key.includes(`/api/data/${colName}`)) {
+        clientResponseCache.delete(key);
+      }
+    }
     window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName } }));
   }
 }
@@ -263,8 +279,8 @@ export function onSnapshot(ref: any, callback: (snapshot: any) => void, _errorCa
   };
 
   poll();
-  // Relaxed polling interval (15s instead of aggressive 4s)
-  const interval = setInterval(poll, 15000);
+  // Efficient 30s background sync (immediate push updates occur via WebSocket and gao_data_updated events)
+  const interval = setInterval(poll, 30000);
 
   // Listen to mutations for immediate event-driven update with 0 delay
   const handleDataUpdate = (e: any) => {

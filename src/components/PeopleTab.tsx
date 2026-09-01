@@ -208,12 +208,12 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
   // Contractor Mobile Check-In QR Modal State
   const [isContractorQrModalOpen, setIsContractorQrModalOpen] = useState(false);
-  const [selectedContractorCompany, setSelectedContractorCompany] = useState<string>('Apex Structural');
+  const [selectedContractorCompany, setSelectedContractorCompany] = useState<string>(organizationType || 'Operations Partner');
   const [mobileCheckInTab, setMobileCheckInTab] = useState<'qr' | 'simulate'>('qr');
   const [simCheckInForm, setSimCheckInForm] = useState({
-    workerName: 'Marcus Vance',
-    hardhatTagId: 'HH-1092',
-    tradeCompany: 'Apex Structural',
+    workerName: '',
+    hardhatTagId: '',
+    tradeCompany: '',
     gateLocation: 'Gate 1 Main Access Turnstile',
     shiftStatus: 'ON_SITE',
     ppeStatus: 'COMPLIANT'
@@ -229,9 +229,33 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   // MongoDB Atlas Connection Status
   const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
     connected: true,
-    engine: 'MongoDB Atlas',
+    engine: 'MongoDB Atlas v8.0',
     database: 'Lat-Aperture-People-Tracking',
     totalRecords: 0
+  });
+
+  // Modals state
+  const [isAddingModalOpen, setIsAddingModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  const [formData, setFormData] = useState<DBWorker>({
+    id: '',
+    hardhatTagId: '',
+    name: '',
+    role: roles[0] || roleLabel || '',
+    tradeCompany: subcontractors[0] || organizationType || '',
+    phone: '',
+    email: '',
+    emergencyContact: '',
+    certifications: '',
+    ppeStatus: 'COMPLIANT',
+    shiftStatus: 'ON_SITE',
+    trainingStatus: 'COMPLIANT',
+    lastTrainingDate: '',
+    trainingCourse: '',
+    department: '',
+    supervisor: '',
+    notes: ''
   });
 
   useEffect(() => {
@@ -259,30 +283,6 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   // Worker Movement History state
   const [workerHistory, setWorkerHistory] = useState<TagHistoryEntry[]>([]);
   const [isHistoryLoading, setIsHistoryLoading] = useState(false);
-
-  // Add / Edit Modal States
-  const [isAddingModalOpen, setIsAddingModalOpen] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-
-  const [formData, setFormData] = useState<DBWorker>({
-    id: '',
-    hardhatTagId: '',
-    name: '',
-    role: 'General Subcontractor',
-    tradeCompany: 'Apex Structural',
-    phone: '+1 (555) 019-2831',
-    email: '',
-    emergencyContact: 'Jane Doe (+1 555-992-1100)',
-    certifications: 'OSHA 30, Scaffolding Safety',
-    ppeStatus: 'COMPLIANT',
-    shiftStatus: 'ON_SITE',
-    trainingStatus: 'COMPLIANT',
-    lastTrainingDate: '2026-05-15',
-    trainingCourse: 'OSHA 30 Construction Safety & Site Clearance',
-    department: 'Structural Engineering',
-    supervisor: 'Marcus Vance (EHS Director)',
-    notes: 'Verified site safety compliance.'
-  });
 
   // AI Summary State
   const [aiSummary, setAiSummary] = useState<string | null>(null);
@@ -489,7 +489,13 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
     const rawMap = new Map<string, DBWorker>();
 
+    // Safety timeout: Never leave the table in loading state if network or initial query is delayed
+    const timeout = setTimeout(() => {
+      setIsDbLoading(false);
+    }, 1000);
+
     const updateCombinedDbWorkers = () => {
+      clearTimeout(timeout);
       setDbWorkers(Array.from(rawMap.values()));
       setIsDbLoading(false);
     };
@@ -523,11 +529,11 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               (data.safetyScore && data.safetyScore < 80) ? 'OVERDUE' :
               (data.safetyScore && data.safetyScore < 90) ? 'DUE_SOON' : 'COMPLIANT'
             ),
-            lastTrainingDate: data.lastTrainingDate || '2026-05-15',
-            trainingCourse: data.trainingCourse || 'OSHA 30 Construction Safety & Site Clearance',
-            trainingExpiry: data.trainingExpiry || '2027-05-15',
-            department: data.department || 'Civil Engineering',
-            supervisor: data.supervisor || 'Marcus Vance (EHS Director)',
+            lastTrainingDate: data.lastTrainingDate || '',
+            trainingCourse: data.trainingCourse || '',
+            trainingExpiry: data.trainingExpiry || '',
+            department: data.department || 'Operations',
+            supervisor: data.supervisor || 'Operations Lead',
             safetyScore: data.safetyScore || 94,
             notes: data.notes || '',
             createdAt: data.createdAt
@@ -554,19 +560,19 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               hardhatTagId: data.hardhatTagId || d.id,
               name: data.name || 'Personnel Member',
               role: role,
-              tradeCompany: data.tradeCompany || data.company || 'Apex Structural',
-              phone: data.phone || '+1 (555) 019-2831',
-              email: data.email || `${(data.name || '').toLowerCase().replace(/\s+/g, '.')}@buildcorp.com`,
-              emergencyContact: data.emergencyContact || 'Site EHS Team (+1 555-992-1100)',
-              certifications: data.certifications || 'OSHA 30, Working at Heights',
+              tradeCompany: data.tradeCompany || data.company || organizationType || 'Operations',
+              phone: data.phone || '',
+              email: data.email || '',
+              emergencyContact: data.emergencyContact || '',
+              certifications: data.certifications || '',
               ppeStatus: data.ppeStatus || 'COMPLIANT',
               shiftStatus: data.shiftStatus || 'ON_SITE',
               trainingStatus: data.trainingStatus || 'COMPLIANT',
-              lastTrainingDate: data.lastTrainingDate || '2026-05-15',
-              trainingCourse: data.trainingCourse || 'OSHA 30 Construction Safety',
-              trainingExpiry: data.trainingExpiry || '2027-05-15',
+              lastTrainingDate: data.lastTrainingDate || '',
+              trainingCourse: data.trainingCourse || '',
+              trainingExpiry: data.trainingExpiry || '',
               department: data.department || 'Operations',
-              supervisor: data.supervisor || 'Marcus Vance (EHS Director)',
+              supervisor: data.supervisor || 'Operations Lead',
               safetyScore: data.safetyScore || 95,
               notes: data.notes || '',
               createdAt: data.createdAt
@@ -581,6 +587,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     }
 
     return () => {
+      clearTimeout(timeout);
       unsubRegistered();
       unsubPeople();
     };
@@ -1351,7 +1358,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   };
 
   return (
-    <div className="flex flex-col gap-6 w-full p-4 md:p-6 max-w-7xl mx-auto relative">
+    <div className="flex flex-col gap-6 w-full p-4 sm:p-6 max-w-[1760px] mx-auto relative min-w-0">
       
       {/* Toast Notification Banner */}
       {toastMsg && (
@@ -1720,7 +1727,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               </div>
             )}
 
-            {isDbLoading ? (
+            {(isDbLoading && combinedPeople.length === 0) ? (
               <div className="py-16 text-center text-xs font-bold text-slate-400 flex flex-col items-center gap-2">
                 <Loader2 className="w-6 h-6 text-[#007BC4] animate-spin" />
                 Loading workforce roster from MongoDB database...
@@ -2159,17 +2166,17 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-700 space-y-2.5">
                     <span className="font-bold text-slate-400 uppercase text-[10px] tracking-wider block">Employment & Sector Information</span>
-                    <div className="text-slate-800 dark:text-slate-200 font-semibold">Department: {selectedPerson.department || 'Civil Engineering'}</div>
-                    <div className="text-slate-800 dark:text-slate-200 font-semibold">Subcontractor: {selectedPerson.tradeCompany || 'Apex Structural'}</div>
-                    <div className="text-slate-800 dark:text-slate-200 font-semibold">Supervisor: {selectedPerson.supervisor || 'Marcus Vance (EHS Lead)'}</div>
-                    <div className="text-slate-800 dark:text-slate-200 font-semibold">Current Zone: {selectedPerson.currentZone || 'Off-Site'}</div>
+                    <div className="text-slate-800 dark:text-slate-200 font-semibold">Department: {selectedPerson.department || 'Operations'}</div>
+                    <div className="text-slate-800 dark:text-slate-200 font-semibold">{organizationType || 'Organization'}: {selectedPerson.tradeCompany || 'Internal'}</div>
+                    <div className="text-slate-800 dark:text-slate-200 font-semibold">Supervisor: {selectedPerson.supervisor || 'Operations Lead'}</div>
+                    <div className="text-slate-800 dark:text-slate-200 font-semibold">Current {zoneLabel}: {selectedPerson.currentZone || 'Off-Site'}</div>
                   </div>
 
                   <div className="p-4 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-100 dark:border-slate-700 space-y-2.5">
                     <span className="font-bold text-slate-400 uppercase text-[10px] tracking-wider block">Contact & Emergency Directives</span>
-                    <div className="text-slate-800 dark:text-slate-200 font-semibold flex items-center gap-1.5"><Phone size={14} className="text-[#007BC4]" /> {selectedPerson.phone || '+1 (555) 019-2831'}</div>
-                    <div className="text-slate-800 dark:text-slate-200 font-semibold flex items-center gap-1.5"><Mail size={14} className="text-[#007BC4]" /> {selectedPerson.email || 'worker@buildcorp.com'}</div>
-                    <div className="text-slate-800 dark:text-slate-200 font-semibold flex items-center gap-1.5"><Heart size={14} className="text-rose-500" /> {selectedPerson.emergencyContact || 'Emergency Contact (+1 555-992-1100)'}</div>
+                    <div className="text-slate-800 dark:text-slate-200 font-semibold flex items-center gap-1.5"><Phone size={14} className="text-[#007BC4]" /> {selectedPerson.phone || 'Not recorded'}</div>
+                    <div className="text-slate-800 dark:text-slate-200 font-semibold flex items-center gap-1.5"><Mail size={14} className="text-[#007BC4]" /> {selectedPerson.email || 'Not recorded'}</div>
+                    <div className="text-slate-800 dark:text-slate-200 font-semibold flex items-center gap-1.5"><Heart size={14} className="text-rose-500" /> {selectedPerson.emergencyContact || 'Not recorded'}</div>
                   </div>
                 </div>
               )}
