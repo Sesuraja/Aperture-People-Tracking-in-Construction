@@ -810,7 +810,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     try {
       setIsLoading(true);
       const authHeaders = getAuthHeaders();
-      const [zonesRes, mapRes, readersRes, assetsRes, vehiclesRes, peopleRes, visitorsRes, camerasRes, sensorsRes, infraRes] = await Promise.allSettled([
+      const [zonesRes, mapRes, readersRes, assetsRes, vehiclesRes, peopleRes, visitorsRes, camerasRes, sensorsRes, infraRes, liveTagsRes] = await Promise.allSettled([
         fetch('/api/data/zones', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch(`/api/data/map_configurations/${activeProject}`, { headers: authHeaders }).then(r => r.ok ? r.json() : null),
         fetch('/api/data/reader_zone_mappings', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
@@ -820,7 +820,8 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         fetch('/api/data/visitors', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/cameras', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/sensors', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
-        fetch('/api/data/infrastructure', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
+        fetch('/api/data/infrastructure', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
+        fetch('/api/data/live_tags', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
       ]);
 
       if (zonesRes.status === 'fulfilled' && Array.isArray(zonesRes.value)) {
@@ -974,6 +975,12 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
           return item;
         });
       });
+
+      if (liveTagsRes.status === 'fulfilled' && Array.isArray(liveTagsRes.value)) {
+        liveTagsRes.value.forEach((tag: any) => {
+          handleNormalizedTagUpdate(tag);
+        });
+      }
     } catch (err) {
       console.warn('[TrackingContext] Initial config load error:', err);
       setPeople([]);
@@ -1181,12 +1188,16 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
             if (msgType === 'tag_update' || msgType === 'rfid_scan' || msgType === 'tag_location_update') {
               handleTagUpdateRef.current(data.payload || data);
-            } else if (msgType === 'GetTagsInRealtime_response') {
+            } else if (msgType === 'gettagsinrealtime_response') {
               if (Array.isArray(data.payload)) {
                 for (const item of data.payload) {
                   handleTagUpdateRef.current(item);
                 }
               }
+            } else if (msgType === 'data_updated' || msgType === 'tag_update_bulk' || msgType === 'analytics_updated') {
+              window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+              window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+              refreshLiveStateRef.current();
             }
           } catch {}
         };

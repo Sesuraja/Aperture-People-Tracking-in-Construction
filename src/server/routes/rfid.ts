@@ -4,6 +4,11 @@ import { getCollectionDocs, upsertDoc, logAuditEvent, bulkWriteRealtimeTags, cle
 import { broadcastSseEvent } from '../services/sse.js';
 import { broadcastWebSocketEvent } from '../services/websocket.js';
 import { processTelemetryWithAI } from '../services/aiPipeline.js';
+import { 
+  fetchHistoryTotalCount, 
+  fetchHistoryRecords, 
+  fetchTagsInRealtime 
+} from '../services/peopleTrackingApiService.js';
 
 export const rfidRouter = Router();
 
@@ -52,6 +57,20 @@ const scanSchema = z.object({
 const handleGetTotalCount = async (req: Request, res: Response) => {
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
   try {
+    // 1. Check live external cloud server first
+    try {
+      const upstream = await fetchHistoryTotalCount();
+      if (upstream && typeof upstream.totalCount === 'number' && upstream.totalCount > 0) {
+        if (req.query.format === 'object') {
+          return res.json({ totalCount: upstream.totalCount, count: upstream.totalCount, organizationId: orgId });
+        }
+        res.setHeader('Content-Type', 'application/json');
+        return res.status(200).send(String(upstream.totalCount));
+      }
+    } catch (upstreamErr) {
+      // Fall through to local DB
+    }
+
     const history = await getCollectionDocs('tag_history', undefined, orgId);
     const total = history.length;
     
@@ -78,6 +97,16 @@ const handleGetHistory = async (req: Request, res: Response) => {
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
 
   try {
+    // 1. Check live external cloud server first
+    try {
+      const liveRecords = await fetchHistoryRecords(skipCount, takeCount);
+      if (Array.isArray(liveRecords) && liveRecords.length > 0) {
+        return res.json(liveRecords);
+      }
+    } catch (upstreamErr) {
+      // Fall through to local DB
+    }
+
     const dbHistory = await getCollectionDocs('tag_history', undefined, orgId);
     const records = dbHistory;
 
@@ -133,6 +162,16 @@ const handleGetRealtime = async (req: Request, res: Response) => {
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
 
   try {
+    // 1. Check live external cloud server first
+    try {
+      const upstreamTags = await fetchTagsInRealtime();
+      if (Array.isArray(upstreamTags) && upstreamTags.length > 0) {
+        return res.json(upstreamTags);
+      }
+    } catch (upstreamErr) {
+      // Fall through to local DB
+    }
+
     const liveTags = await getCollectionDocs('live_tags', undefined, orgId);
     const tagsToProcess = liveTags;
 

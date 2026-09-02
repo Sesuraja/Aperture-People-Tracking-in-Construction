@@ -1,9 +1,11 @@
 import { getAllConnections, buildHeaders, buildUrl, saveConnection, ApiConnectionConfig } from './connectionsService.js';
 import { ingestTelemetry } from './ingestionService.js';
+import { syncPeopleTrackingData } from './peopleTrackingApiService.js';
 
 let activePollers: Map<string, NodeJS.Timeout> = new Map();
 let isPollerRunning = false;
 let globalPollerInterval: NodeJS.Timeout | null = null;
+let peopleTrackingPollerInterval: NodeJS.Timeout | null = null;
 
 /**
  * Polls a single configured API endpoint
@@ -171,5 +173,36 @@ export function stopPollingService(): void {
     clearInterval(timer);
   }
   activePollers.clear();
+  stopPeopleTrackingPolling();
   console.log('[Connection Poller] Background integration poller service stopped.');
 }
+
+/**
+ * Periodically syncs live tags and history records from the People Tracking UHF API
+ */
+export function startPeopleTrackingPolling(intervalSeconds = 20): void {
+  if (peopleTrackingPollerInterval) return;
+  const ms = Math.max(intervalSeconds * 1000, 10000);
+  console.log(`[Connection Poller] Starting periodic sync for People Tracking UHF API every ${ms / 1000}s`);
+
+  // Run initial sync after server has stabilized
+  setTimeout(() => {
+    syncPeopleTrackingData().catch(err => {
+      console.warn('[PeopleTracking Poller] Initial sync note:', err.message);
+    });
+  }, 3000);
+
+  peopleTrackingPollerInterval = setInterval(() => {
+    syncPeopleTrackingData().catch(err => {
+      console.warn('[PeopleTracking Poller] Periodic sync note:', err.message);
+    });
+  }, ms);
+}
+
+export function stopPeopleTrackingPolling(): void {
+  if (peopleTrackingPollerInterval) {
+    clearInterval(peopleTrackingPollerInterval);
+    peopleTrackingPollerInterval = null;
+  }
+}
+

@@ -104,6 +104,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
   const [scheduledReports, setScheduledReports] = useState<ScheduledReportItem[]>([]);
   const [equipmentList, setEquipmentList] = useState<EquipmentItem[]>([]);
   const [savedAiMetrics, setSavedAiMetrics] = useState<SavedAiMetric[]>([]);
+  const [latestAiMetrics, setLatestAiMetrics] = useState<any>(null);
   const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
     connected: true,
     engine: 'MongoDB Atlas',
@@ -253,10 +254,20 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       setDbIncidents(incList);
     });
 
+    const unsub4 = onSnapshot(collection(db, 'analytics_metrics'), (snap) => {
+      const metricList: any[] = [];
+      snap.forEach(d => metricList.push({ id: d.id, ...d.data() }));
+      if (metricList.length > 0) {
+        const sorted = metricList.sort((a, b) => new Date(b.timestamp || b.createdAt || 0).getTime() - new Date(a.timestamp || a.createdAt || 0).getTime());
+        setLatestAiMetrics(sorted[0]);
+      }
+    });
+
     return () => {
       unsub1();
       unsub2();
       unsub3();
+      unsub4();
     };
   }, []);
 

@@ -118,6 +118,24 @@ export function offloadBase64Images(doc: any): any {
   return doc;
 }
 
+export const DATA_RETENTION_COLLECTIONS = [
+  'alerts',
+  'incidents',
+  'ai_insights',
+  'analytics_metrics',
+  'analytics_reports',
+  'real_time_tags',
+  'live_tags',
+  'rfid_realtime_events',
+  'tag_history',
+  'playback_history',
+  'webhook_logs',
+  'audit_logs',
+  'daily_reports',
+  'notifications',
+  'system_events'
+];
+
 export async function initDatabaseIndexes(): Promise<void> {
   if (!mongoDb) return;
   const indexSpecs = [
@@ -127,8 +145,9 @@ export async function initDatabaseIndexes(): Promise<void> {
     { col: 'live_tags', spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
     { col: 'hardware_readers', spec: { readerId: 1, organizationId: 1 }, options: { unique: true, background: true } },
     { col: 'ai_insights', spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
-    // TTL index: auto-delete playback_history snapshots older than 10 days
-    { col: 'playback_history', spec: { expireAt: 1 }, options: { expireAfterSeconds: 0, background: true } }
+    { col: 'incidents', spec: { id: 1, organizationId: 1 }, options: { background: true } },
+    { col: 'alerts', spec: { id: 1, organizationId: 1 }, options: { background: true } },
+    { col: 'analytics_metrics', spec: { id: 1, organizationId: 1 }, options: { background: true } }
   ];
 
   for (const { col, spec, options } of indexSpecs) {
@@ -136,6 +155,23 @@ export async function initDatabaseIndexes(): Promise<void> {
       await mongoDb.collection(col).createIndex(spec as any, options);
     } catch (err: any) {
       console.warn(`[DB Service] Index initialization note for ${col}:`, err.message);
+    }
+  }
+
+  // 10-Day Retention TTL Indexes:
+  // 1. expireAt index (expireAfterSeconds: 0) deletes documents when expireAt <= current time
+  // 2. createdAt index (expireAfterSeconds: 864,000s = 10 days) deletes documents older than 10 days
+  const TEN_DAYS_SECONDS = 10 * 24 * 60 * 60; // 864,000 seconds
+  for (const col of DATA_RETENTION_COLLECTIONS) {
+    try {
+      await mongoDb.collection(col).createIndex({ expireAt: 1 }, { expireAfterSeconds: 0, background: true });
+    } catch (err: any) {
+      console.warn(`[DB Service] TTL index note (expireAt) for ${col}:`, err.message);
+    }
+    try {
+      await mongoDb.collection(col).createIndex({ createdAt: 1 }, { expireAfterSeconds: TEN_DAYS_SECONDS, background: true });
+    } catch (err: any) {
+      console.warn(`[DB Service] TTL index note (createdAt) for ${col}:`, err.message);
     }
   }
 
@@ -157,7 +193,7 @@ export async function initDatabaseIndexes(): Promise<void> {
     } catch {}
   }
 
-  console.log('[DB Service] MongoDB deduplication, uniqueness, and performance indexes initialized.');
+  console.log('[DB Service] MongoDB deduplication, uniqueness, and 10-day retention TTL indexes initialized.');
 }
 
 export async function initDatabase(customUri?: string): Promise<void> {
@@ -379,11 +415,12 @@ export async function getCollectionDocs(
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
         const isSpatialConfig = (colName === 'map_configurations' || colName === 'zones' || colName === 'projects' || colName === 'sites');
         if (!isSpatialConfig) {
-          if (organizationId === 'default' || organizationId === 'demo' || organizationId === 'org_main') {
+          if (organizationId === 'default' || organizationId === 'demo' || organizationId === 'org_main' || organizationId === 'org_aperture_default') {
             query.$or = [
               { organizationId: 'default' },
               { organizationId: 'demo' },
               { organizationId: 'org_main' },
+              { organizationId: 'org_aperture_default' },
               { organizationId: { $exists: false } },
               { organizationId: null },
               { organizationId: '' }
@@ -518,6 +555,19 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
     cleanDoc.organizationId = cleanDoc.id;
   } else if (organizationId) {
     cleanDoc.organizationId = organizationId;
+  }
+
+  // 10-Day Retention Enforcement for operational & telemetry collections
+  if (DATA_RETENTION_COLLECTIONS.includes(colName)) {
+    const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
+    const now = new Date();
+    if (!cleanDoc.createdAt || !(cleanDoc.createdAt instanceof Date)) {
+      const parsed = cleanDoc.createdAt ? new Date(cleanDoc.createdAt) : now;
+      cleanDoc.createdAt = isNaN(parsed.getTime()) ? now : parsed;
+    }
+    if (!cleanDoc.expireAt || !(cleanDoc.expireAt instanceof Date)) {
+      cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + TEN_DAYS_MS);
+    }
   }
 
   if (mongoDb) {
@@ -701,6 +751,7 @@ export async function bulkWriteRfidRealtimeEvents(
     const readerId = raw.readerId || raw.ReaderID || 'APERTURE-READER-01';
     const eventHash = raw.externalEventId || raw.eventId || generateEventHash(tagId, timestampMs, location, readerId, orgId);
     const docId = `evt_${tagId}_${eventHash}`;
+    const tenDaysLater = new Date(validDate.getTime() + 10 * 24 * 60 * 60 * 1000);
 
     return {
       id: docId,
@@ -714,7 +765,9 @@ export async function bulkWriteRfidRealtimeEvents(
       rssi: raw.rssi !== undefined ? Number(raw.rssi) : -60,
       readerId,
       antennaPort: raw.antennaPort || raw.antennaId || 1,
-      receivedAt: nowIso
+      receivedAt: nowIso,
+      createdAt: validDate,
+      expireAt: tenDaysLater
     };
   }).filter(Boolean) as any[];
 
@@ -781,6 +834,8 @@ export async function bulkWriteRealtimeTags(
   const normalizedTags = tags.map(rawTag => {
     const tagId = rawTag.TagID || rawTag.tagId || rawTag.epc || `TAG_${Date.now()}`;
     const orgId = rawTag.organizationId || organizationId;
+    const now = new Date();
+    const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000);
     return {
       id: tagId,
       organizationId: orgId,
@@ -792,7 +847,9 @@ export async function bulkWriteRealtimeTags(
       rssi: rawTag.rssi !== undefined ? Number(rawTag.rssi) : -60,
       status: rawTag.status || 'Active',
       lastSyncAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      expireAt: tenDaysLater
     };
   });
 
@@ -1057,4 +1114,131 @@ export function startRealTimeTagsCleanupJob(intervalMinutes: number = 15, maxAge
     cleanupStaleRealTimeTags(maxAgeMinutes).catch(err => console.error('[DB Service] Cleanup job periodic run error:', err));
   }, intervalMinutes * 60 * 1000);
 }
+
+/**
+ * Actively purges documents older than 10 days from MongoDB and in-memory store.
+ * Operates across all DATA_RETENTION_COLLECTIONS.
+ */
+export async function cleanupExpiredRetentionData(retentionDays = 10): Promise<{
+  deletedCount: number;
+  collectionsScanned: number;
+  details: Record<string, number>;
+}> {
+  const thresholdDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+  const now = new Date();
+  let totalDeleted = 0;
+  const details: Record<string, number> = {};
+
+  if (mongoDb) {
+    for (const col of DATA_RETENTION_COLLECTIONS) {
+      try {
+        const res = await mongoDb.collection(col).deleteMany({
+          $or: [
+            { expireAt: { $lte: now } },
+            { createdAt: { $lte: thresholdDate } }
+          ]
+        });
+        const deleted = res.deletedCount || 0;
+        details[col] = deleted;
+        totalDeleted += deleted;
+        if (deleted > 0) {
+          invalidateCollectionCache(col);
+        }
+      } catch (err: any) {
+        console.warn(`[DB Service] Retention cleanup error for ${col}:`, err.message);
+      }
+    }
+  }
+
+  // Also clean in-memory fallback store
+  for (const col of DATA_RETENTION_COLLECTIONS) {
+    if (inMemoryStore[col]) {
+      const initial = inMemoryStore[col].length;
+      inMemoryStore[col] = inMemoryStore[col].filter((item: any) => {
+        if (item.expireAt && new Date(item.expireAt).getTime() <= now.getTime()) return false;
+        if (item.createdAt && new Date(item.createdAt).getTime() <= thresholdDate.getTime()) return false;
+        return true;
+      });
+      const removed = initial - inMemoryStore[col].length;
+      details[col] = (details[col] || 0) + removed;
+      totalDeleted += removed;
+    }
+  }
+
+  console.log(`[DB Service] 10-day retention cleanup finished: purged ${totalDeleted} documents across ${DATA_RETENTION_COLLECTIONS.length} collections.`);
+  return {
+    deletedCount: totalDeleted,
+    collectionsScanned: DATA_RETENTION_COLLECTIONS.length,
+    details
+  };
+}
+
+let retentionCleanupTimer: NodeJS.Timeout | null = null;
+
+/**
+ * Background job runner that enforces the 10-day data retention policy.
+ * Runs on startup and periodically (e.g. every hour).
+ */
+export function startDataRetentionCleanupJob(retentionDays = 10, intervalMinutes = 60): void {
+  if (retentionCleanupTimer) clearInterval(retentionCleanupTimer);
+
+  // Run initial cleanup after 10s
+  setTimeout(() => {
+    cleanupExpiredRetentionData(retentionDays).catch(() => {});
+  }, 10000);
+
+  // Periodic cleanup
+  retentionCleanupTimer = setInterval(() => {
+    cleanupExpiredRetentionData(retentionDays).catch(() => {});
+  }, intervalMinutes * 60 * 1000);
+
+  console.log(`[DB Service] Automated 10-day MongoDB data retention cleanup job started (interval: ${intervalMinutes}m).`);
+}
+
+/**
+ * Returns diagnostic metadata and verification details for 10-day data retention.
+ */
+export async function getDataRetentionStatus(retentionDays = 10) {
+  const collectionsStatus: Record<string, { totalDocs: number; oldestDocDate: string | null; ttlIndexActive: boolean }> = {};
+
+  if (mongoDb) {
+    for (const col of DATA_RETENTION_COLLECTIONS) {
+      try {
+        const count = await mongoDb.collection(col).countDocuments();
+        const oldest = await mongoDb.collection(col).find().sort({ createdAt: 1 }).limit(1).toArray();
+        const indexes = await mongoDb.collection(col).indexes();
+        const hasTtl = indexes.some((idx: any) =>
+          idx.key?.expireAt !== undefined ||
+          (idx.key?.createdAt !== undefined && idx.expireAfterSeconds !== undefined)
+        );
+
+        collectionsStatus[col] = {
+          totalDocs: count,
+          oldestDocDate: oldest[0]?.createdAt ? new Date(oldest[0].createdAt).toISOString() : null,
+          ttlIndexActive: hasTtl
+        };
+      } catch {
+        collectionsStatus[col] = { totalDocs: 0, oldestDocDate: null, ttlIndexActive: false };
+      }
+    }
+  } else {
+    for (const col of DATA_RETENTION_COLLECTIONS) {
+      const items = inMemoryStore[col] || [];
+      collectionsStatus[col] = {
+        totalDocs: items.length,
+        oldestDocDate: items[0]?.createdAt ? new Date(items[0].createdAt).toISOString() : null,
+        ttlIndexActive: true
+      };
+    }
+  }
+
+  return {
+    retentionPolicyDays: retentionDays,
+    retentionSeconds: retentionDays * 86400,
+    policyEnforced: true,
+    engine: mongoDb ? 'MongoDB Atlas TTL Indexes + Scheduled Background Purge' : 'In-Memory Fallback Retention',
+    collections: collectionsStatus
+  };
+}
+
 

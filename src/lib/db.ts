@@ -286,12 +286,19 @@ export function onSnapshot(ref: any, callback: (snapshot: any) => void, _errorCa
   const handleDataUpdate = (e: any) => {
     if (!active) return;
     if (!e.detail || !e.detail.colName || e.detail.colName === colName) {
+      for (const key of Array.from(clientResponseCache.keys())) {
+        if (!e.detail?.colName || key.includes(`/api/data/${e.detail.colName}`)) {
+          clientResponseCache.delete(key);
+        }
+      }
       poll();
     }
   };
 
   if (typeof window !== 'undefined') {
     window.addEventListener('gao_data_updated', handleDataUpdate);
+    window.addEventListener('gao_refresh_data', handleDataUpdate);
+    window.addEventListener('gao_map_data_updated', handleDataUpdate);
   }
 
   return () => {
@@ -299,6 +306,8 @@ export function onSnapshot(ref: any, callback: (snapshot: any) => void, _errorCa
     clearInterval(interval);
     if (typeof window !== 'undefined') {
       window.removeEventListener('gao_data_updated', handleDataUpdate);
+      window.removeEventListener('gao_refresh_data', handleDataUpdate);
+      window.removeEventListener('gao_map_data_updated', handleDataUpdate);
     }
   };
 }

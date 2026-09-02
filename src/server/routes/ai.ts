@@ -14,6 +14,8 @@ import {
   saveTenantIntelligenceProfile, 
   calculateIndustryKpis 
 } from '../services/industryIntelligenceEngine.js';
+import { getAiConfigStatus, setRuntimeAiKeys, AIProviderName } from '../services/aiEngine.js';
+import { processTelemetryWithAI } from '../services/aiPipeline.js';
 
 let activeIndustryPersona = 'You are an intelligent Industrial IoT Safety & Personnel Telemetry AI Director.';
 let activeComplianceStandard = 'Enterprise Safety & Compliance Standards (OSHA / ISO 45001 / JCAHO)';
@@ -203,6 +205,47 @@ aiRouter.post('/ai/config-key', requireAuth, requireRole('admin'), (req: Request
     });
   }
   return res.status(400).json({ success: false, error: 'geminiApiKey must be a string' });
+});
+
+// GET /api/ai/provider-status - Returns status of Gemini, ChatGPT, Claude AI, and active model
+aiRouter.get(['/ai/provider-status', '/api/ai/provider-status'], (req: Request, res: Response) => {
+  const status = getAiConfigStatus();
+  return res.json({
+    success: true,
+    ...status,
+    timestamp: new Date().toISOString()
+  });
+});
+
+// POST /api/ai/select-provider - Switch active AI provider or update API keys (Gemini, ChatGPT, Claude)
+aiRouter.post(['/ai/select-provider', '/api/ai/select-provider'], requireAuth, requireRole('admin'), (req: Request, res: Response) => {
+  const { provider, geminiKey, openAiKey, claudeKey } = req.body || {};
+  setRuntimeAiKeys({
+    provider: provider as AIProviderName,
+    geminiKey,
+    openAiKey,
+    claudeKey
+  });
+  const updatedStatus = getAiConfigStatus();
+  return res.json({
+    success: true,
+    message: `AI provider configured to: ${updatedStatus.activeProvider} (model: ${updatedStatus.activeModel})`,
+    status: updatedStatus
+  });
+});
+
+// POST /api/ai/analyze-telemetry - Ingest and trigger Multi-AI analysis on telemetry batch
+aiRouter.post(['/ai/analyze-telemetry', '/api/ai/analyze-telemetry'], async (req: Request, res: Response) => {
+  const orgId = (req as any).user?.organizationId || req.body?.organizationId || 'default';
+  const payload = req.body?.telemetry || req.body?.tags || req.body?.data || (Array.isArray(req.body) ? req.body : [req.body]);
+  const source = req.body?.source || 'API Ingest';
+
+  try {
+    const result = await processTelemetryWithAI(payload, source, orgId);
+    return res.json(result);
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
 });
 
 // Rate limiter for AI analysis endpoints: 60 requests per 15 minutes

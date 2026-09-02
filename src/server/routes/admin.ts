@@ -9,7 +9,9 @@ import {
   getDocById,
   logAuditEvent,
   getAuditLogs,
-  wipeAllCollections
+  wipeAllCollections,
+  cleanupExpiredRetentionData,
+  getDataRetentionStatus
 } from '../services/db.js';
 import { requireAuth, requirePermission, AuthRequest } from '../middleware/auth.js';
 import { sanitizeUser } from './auth.js';
@@ -636,3 +638,40 @@ adminRouter.post('/purge-demo', requirePermission('settings'), async (req: AuthR
     return res.status(500).json({ success: false, error: err.message || 'Failed to purge demo data' });
   }
 });
+
+// GET /api/admin/retention-policy - Returns 10-day retention status, TTL index verification, and collection breakdowns
+adminRouter.get(['/retention-policy', '/data-retention/status'], async (req: AuthRequest, res: Response) => {
+  try {
+    const status = await getDataRetentionStatus(10);
+    return res.json({
+      success: true,
+      ...status
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/admin/retention-policy/cleanup - Manually triggers the 10-day retention cleanup
+adminRouter.post(['/retention-policy/cleanup', '/retention-policy/execute'], requirePermission('settings'), async (req: AuthRequest, res: Response) => {
+  try {
+    const result = await cleanupExpiredRetentionData(10);
+    await logAuditEvent({
+      userId: req.user?.id,
+      userEmail: req.user?.email,
+      organizationId: req.user?.organizationId || 'default',
+      action: 'ADMIN_MANUAL_10_DAY_RETENTION_CLEANUP',
+      resource: 'data_retention',
+      details: { ...result },
+      ip: req.ip
+    });
+    return res.json({
+      success: true,
+      message: `10-day retention cleanup completed: purged ${result.deletedCount} expired documents.`,
+      result
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+

@@ -8,7 +8,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import fs from 'fs';
 import { createServer as createViteServer } from 'vite';
-import { initDatabase, startRealTimeTagsCleanupJob } from './src/server/services/db.js';
+import { initDatabase, startRealTimeTagsCleanupJob, startDataRetentionCleanupJob } from './src/server/services/db.js';
 import { connectionsRouter } from './src/server/routes/connections.js';
 import { initWebSocketServer } from './src/server/services/websocket.js';
 import { authRouter, bootstrapAdminUser } from './src/server/routes/auth.js';
@@ -20,6 +20,8 @@ import { eventsRouter } from './src/server/routes/events.js';
 import { mongodbRouter } from './src/server/routes/mongodb.js';
 import { hardwareRouter } from './src/server/routes/hardware.js';
 import { realtimeRouter } from './src/server/routes/realtime.js';
+import { externalPeopleTrackingRouter } from './src/server/routes/externalPeopleTracking.js';
+import { startPeopleTrackingPolling } from './src/server/services/connectionPoller.js';
 import { errorHandler } from './src/server/middleware/errorHandler.js';
 
 export const app = express();
@@ -87,6 +89,7 @@ async function startServer() {
   app.use('/api/integrations', connectionsRouter);
   app.use('/api/hardware', hardwareRouter);
   app.use('/api/realtime', realtimeRouter);
+  app.use('/api/external-tracking', externalPeopleTrackingRouter);
 
   // Direct GAO RFID Root Aliases (allowing ${host}/GetHistoryTotalCount, ${host}/GetHistoryRecords/10/30, ${host}/GetTagsInRealtime)
   app.use('/GetHistoryTotalCount', rfidRouter);
@@ -125,6 +128,8 @@ async function startServer() {
   // Initialize DB asynchronously without blocking HTTP server startup
   initDatabase().then(async () => {
     startRealTimeTagsCleanupJob(15, 60);
+    startDataRetentionCleanupJob(10, 60);
+    startPeopleTrackingPolling(Number(process.env.PEOPLE_TRACKING_POLL_INTERVAL_SECONDS) || 20);
     await bootstrapAdminUser();
   }).catch((e) => {
     console.warn('[DB Service] Async DB initialization note:', e?.message);
