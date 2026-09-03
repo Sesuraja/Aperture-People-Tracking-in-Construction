@@ -419,14 +419,47 @@ export default function LiveTrackingTab({
     return projectMeta?.customZones || localProjectProps?.customZones || customZonesState;
   }, [trackingCtx?.zonesDict, projectMeta, localProjectProps, customZonesState]);
 
-  // Over Capacity Check
+  const uniqueTrackedGeofences = useMemo(() => {
+    if (trackingCtx?.zones && trackingCtx.zones.length > 0) {
+      return trackingCtx.zones.map((z: any) => ({
+        id: z.id || z.zoneId,
+        name: z.name,
+        category: z.category || 'GENERAL',
+        hazardLevel: z.hazardLevel || 'normal',
+        capacity: z.capacity || 10,
+        x: z.x,
+        y: z.y,
+        width: z.width,
+        height: z.height,
+        polygonPoints: z.polygonPoints,
+        proximityAlertEnabled: z.proximityAlertEnabled
+      }));
+    }
+    const seen = new Set<string>();
+    const unique: any[] = [];
+    Object.entries(activeZones || {}).forEach(([key, val]: [string, any]) => {
+      const name = val.name || key;
+      const canonical = name.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+      if (!seen.has(canonical)) {
+        seen.add(canonical);
+        unique.push({ id: val.id || key, name, ...val });
+      }
+    });
+    return unique;
+  }, [trackingCtx?.zones, activeZones]);
+
+  // Over Capacity Check (Deduplicated so each geofence is audited once)
   const overCapacityZones = useMemo(() => {
-    return Object.entries(activeZones).filter(([zName, bounds]: [string, any]) => {
-      const count = people.filter(p => p.currentZone && (p.currentZone || "").toLowerCase() === (zName || "").toLowerCase()).length;
+    return uniqueTrackedGeofences.filter((bounds: any) => {
+      const zName = bounds.name || '';
+      const count = people.filter(p => {
+        const pz = (p.currentZone || '').toLowerCase().trim();
+        return pz === zName.toLowerCase() || (bounds.id && pz === String(bounds.id).toLowerCase());
+      }).length;
       const cap = zoneCapacities[zName] || bounds.capacity || bounds.maxCapacity || 8;
       return count > cap;
     });
-  }, [activeZones, people, zoneCapacities]);
+  }, [uniqueTrackedGeofences, people, zoneCapacities]);
 
   // Toggle Emergency SOS
   const handleToggleEmergencySOS = () => {
@@ -869,9 +902,13 @@ export default function LiveTrackingTab({
       }))
       .filter(t => t.count > 0 || t.key === 'General');
 
-    // 2. Zone Occupancy & Capacity Utilization
-    const zoneDistribution = Object.entries(activeZones).map(([zName, bounds]: [string, any]) => {
-      const occupants = people.filter(p => (p.currentZone || '').toLowerCase() === zName.toLowerCase()).length;
+    // 2. Zone Occupancy & Capacity Utilization (Deduplicated)
+    const zoneDistribution = uniqueTrackedGeofences.map((bounds: any) => {
+      const zName = bounds.name || '';
+      const occupants = people.filter(p => {
+        const pz = (p.currentZone || '').toLowerCase().trim();
+        return pz === zName.toLowerCase() || (bounds.id && pz === String(bounds.id).toLowerCase());
+      }).length;
       const capacity = zoneCapacities[zName] || bounds.capacity || bounds.maxCapacity || 8;
       const utilization = Math.min(100, Math.round((occupants / Math.max(1, capacity)) * 100));
       const isCritical = occupants > capacity || bounds.hazardLevel === 'critical';
@@ -909,7 +946,7 @@ export default function LiveTrackingTab({
       nominalSignals,
       weakSignals
     };
-  }, [people, activeZones, zoneCapacities, trackingCtx?.industryConfig?.defaultRoles, personnelPlural]);
+  }, [people, uniqueTrackedGeofences, zoneCapacities, trackingCtx?.industryConfig?.defaultRoles, personnelPlural]);
 
   const displayedPeople = useMemo(() => {
     let result = filteredPeople;
@@ -968,8 +1005,8 @@ export default function LiveTrackingTab({
   }, [vehicles, dbVehicles, assets]);
 
   const trackedGeofencesCount = useMemo(() => {
-    return Object.keys(activeZones || {}).length;
-  }, [activeZones]);
+    return uniqueTrackedGeofences.length;
+  }, [uniqueTrackedGeofences]);
 
   const dynamicHazardBreachesCount = useMemo(() => {
     const dbActiveAlerts = dbAlerts.filter(a => 

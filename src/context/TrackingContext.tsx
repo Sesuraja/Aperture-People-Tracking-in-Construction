@@ -541,9 +541,6 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         polygonPoints: z.polygonPoints,
         proximityAlertEnabled: z.proximityAlertEnabled
       };
-      if (z.zoneId && z.zoneId !== z.name) {
-        dict[z.zoneId] = dict[z.name];
-      }
     }
     return dict;
   }, [zones]);
