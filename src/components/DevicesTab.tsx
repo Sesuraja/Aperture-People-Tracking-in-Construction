@@ -643,18 +643,19 @@ export default function DevicesTab() {
   // Combined master list of Hardware Readers + Worker RFID Badges + Real-time Tags
   const allDevices: DeviceItem[] = useMemo(() => {
     const devMap = new Map<string, DeviceItem>();
-    // 1. Hardware Readers & Configured Gateways
-    devices.forEach(d => {
+    // 1. Live Active Tag Telemetry (baseline)
+    liveTagDevices.forEach(d => {
       if (d.id) devMap.set(d.id.toUpperCase(), d);
     });
     // 2. Worker Wearable RFID Tags & Badges
     workerBadgeDevices.forEach(d => {
       if (d.id) devMap.set(d.id.toUpperCase(), d);
     });
-    // 3. Live Active Tag Telemetry
-    liveTagDevices.forEach(d => {
-      if (d.id && !devMap.has(d.id.toUpperCase())) {
-        devMap.set(d.id.toUpperCase(), d);
+    // 3. User configured & edited Hardware Readers and Devices in MongoDB (highest priority)
+    devices.forEach(d => {
+      if (d.id) {
+        const existing = devMap.get(d.id.toUpperCase());
+        devMap.set(d.id.toUpperCase(), existing ? { ...existing, ...d } : d);
       }
     });
     return Array.from(devMap.values());
@@ -693,34 +694,80 @@ export default function DevicesTab() {
   // Helper to save single device to MongoDB
   const saveDeviceToMongo = async (device: DeviceItem) => {
     try {
-      // 1. Direct MongoDB REST endpoints
-      await fetch('/api/data/devices', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(device)
-      }).catch(() => {});
+      const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || localStorage.getItem('auth_token') || 'demo';
+      const authHeaders: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+      const encodedId = encodeURIComponent(device.id);
+
+      // 1. Direct MongoDB REST endpoints with authentication
+      const promises: Promise<any>[] = [
+        fetch('/api/data/devices', {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify(device)
+        }),
+        fetch(`/api/data/devices/${encodedId}`, {
+          method: 'POST',
+          headers: authHeaders,
+          body: JSON.stringify(device)
+        })
+      ];
 
       if (device.category === 'rfid' || (device.type || '').toLowerCase().includes('reader') || (device.type || '').toLowerCase().includes('portal')) {
-        await fetch('/api/data/hardware_readers', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            id: device.id,
-            readerId: device.id,
-            name: device.name,
-            location: device.location,
-            zone: device.location,
-            ipAddress: device.ip,
-            macAddress: device.mac,
-            status: (device.status || 'online').toUpperCase(),
-            type: device.type,
-            range: device.coverageRadiusMeters || 25,
-            powerDbm: 30,
-            antennaGainDbi: 9,
-            frequencyBand: 'US 902-928 MHz UHF'
+        const readerPayload = {
+          id: device.id,
+          readerId: device.id,
+          name: device.name,
+          location: device.location,
+          zone: device.location,
+          ipAddress: device.ip,
+          macAddress: device.mac,
+          status: (device.status || 'online').toUpperCase(),
+          type: device.type,
+          range: device.coverageRadiusMeters || 25,
+          powerDbm: 30,
+          antennaGainDbi: 9,
+          frequencyBand: 'US 902-928 MHz UHF'
+        };
+        promises.push(
+          fetch('/api/data/hardware_readers', {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify(readerPayload)
+          }),
+          fetch(`/api/data/hardware_readers/${encodedId}`, {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify(readerPayload)
           })
-        }).catch(() => {});
+        );
       }
+
+      // If editing a worker tag/badge, also sync the rename into registered_people & people
+      if (device.category === 'rfid_tag' || device.workerName) {
+        const workerName = device.workerName || device.name.replace(/\s*\([^)]*\)$/, '').trim();
+        const personPayload = {
+          id: device.id,
+          hardhatTagId: device.id,
+          name: workerName,
+          role: device.workerRole || 'Field Personnel',
+          currentZone: device.location || 'Site Area',
+          updatedAt: new Date().toISOString()
+        };
+        promises.push(
+          fetch(`/api/data/registered_people/${encodedId}`, {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify(personPayload)
+          }),
+          fetch(`/api/data/people/${encodedId}`, {
+            method: 'POST',
+            headers: authHeaders,
+            body: JSON.stringify(personPayload)
+          })
+        );
+      }
+
+      await Promise.allSettled(promises);
 
       // 2. Client cache / Firestore snapshot
       await setDoc(doc(db, 'devices', device.id), device);
@@ -743,7 +790,8 @@ export default function DevicesTab() {
       }
 
       setDevices(prev => {
-        const idx = prev.findIndex(d => d.id === device.id);
+        const idLower = String(device.id || '').toLowerCase().trim();
+        const idx = prev.findIndex(d => String(d.id || '').toLowerCase().trim() === idLower);
         if (idx >= 0) {
           const next = [...prev];
           next[idx] = device;
@@ -752,6 +800,7 @@ export default function DevicesTab() {
         return [device, ...prev];
       });
       window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_workforce_updated'));
     } catch (err) {
       console.error('Failed saving device to MongoDB:', err);
     }
@@ -950,9 +999,11 @@ export default function DevicesTab() {
   // Save Edit Device
   const handleSaveEditDevice = async () => {
     if (!selectedDevice || !editForm.id) return;
+    const newName = editForm.name || selectedDevice.name;
     const updated: DeviceItem = {
       ...selectedDevice,
-      name: editForm.name || selectedDevice.name,
+      name: newName,
+      workerName: editForm.workerName || (selectedDevice.category === 'rfid_tag' ? newName.replace(/\s*\([^)]*\)$/, '').trim() : selectedDevice.workerName),
       category: editForm.category || selectedDevice.category,
       type: editForm.type || selectedDevice.type,
       location: editForm.location || selectedDevice.location,

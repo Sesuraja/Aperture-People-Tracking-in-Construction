@@ -68,6 +68,144 @@ function matchesCalendarDate(dateTarget: string, ...dateCandidates: (string | Da
   return false;
 }
 
+// Helper function to extract normalized keys for any person, tag, or visitor
+function getTagKeys(item: any): string[] {
+  if (!item) return [];
+  const keys = new Set<string>();
+  const addKey = (k: any) => {
+    if (!k && k !== 0) return;
+    const str = String(k).trim();
+    if (!str) return;
+    keys.add(str.toLowerCase());
+    keys.add(str.toUpperCase());
+    const clean = str.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (clean) keys.add(clean);
+    // Also strip prefixes like tag-, hh-, vis-, p-, etc.
+    const withoutPrefix = str.replace(/^(tag|hh|worker|p|vis|user|emp)[-_:]?/i, '').trim();
+    if (withoutPrefix && withoutPrefix !== str) {
+      keys.add(withoutPrefix.toLowerCase());
+      const cleanWithoutPrefix = withoutPrefix.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+      if (cleanWithoutPrefix) keys.add(cleanWithoutPrefix);
+    }
+  };
+
+  addKey(item.id);
+  addKey(item.hardhatTagId);
+  addKey(item.tagId);
+  addKey(item.TagID);
+  addKey(item.tag_id);
+  addKey(item.epc);
+  addKey(item.EPC);
+  addKey(item.badgeId);
+  addKey(item.BadgeID);
+  addKey(item.rfidTag);
+  addKey(item.personId);
+  addKey(item.workerId);
+  addKey(item.employeeId);
+  addKey(item.userId);
+
+  return Array.from(keys);
+}
+
+// Helper to extract a genuine human employee or visitor name
+function extractPersonName(item: any): string {
+  if (!item) return '';
+  if (item.name && typeof item.name === 'string' && item.name.trim()) {
+    const n = item.name.trim();
+    if (!n.startsWith('Personnel TAG_') && !n.startsWith('Worker TAG_') && !n.startsWith('Tag ') && n !== 'Unknown' && n !== 'Personnel' && n !== 'Worker') {
+      return n;
+    }
+  }
+  if (item.workerName && typeof item.workerName === 'string' && item.workerName.trim()) {
+    return item.workerName.trim();
+  }
+  if (item.personName && typeof item.personName === 'string' && item.personName.trim()) {
+    return item.personName.trim();
+  }
+  if (item.employeeName && typeof item.employeeName === 'string' && item.employeeName.trim()) {
+    return item.employeeName.trim();
+  }
+  if (item.fullName && typeof item.fullName === 'string' && item.fullName.trim()) {
+    return item.fullName.trim();
+  }
+  const first = (item.FirstName || item.firstName || '').trim();
+  const last = (item.LastName || item.lastName || '').trim();
+  if (first && first !== 'Worker' && first !== 'Field' && first !== 'Staff' && first !== 'Personnel') {
+    return `${first} ${last}`.trim();
+  }
+  if (item.name && typeof item.name === 'string' && item.name.trim()) {
+    return item.name.trim();
+  }
+  return '';
+}
+
+// Helper to resolve entity identity with full fallback and prefix matching
+function resolvePersonEntity(
+  tagId: string, 
+  rawData: any, 
+  peopleMap: Map<string, any>, 
+  fallbackPersonnelSingular: string = 'Personnel'
+) {
+  const candidateKeys = getTagKeys({ id: tagId, ...(rawData || {}) });
+  let matched: any = null;
+  for (const k of candidateKeys) {
+    if (peopleMap.has(k)) {
+      matched = peopleMap.get(k);
+      break;
+    }
+  }
+
+  // Also check if rawData has a name matching a person registered by name
+  if (!matched) {
+    const rawName = extractPersonName(rawData);
+    if (rawName) {
+      const nameKey = `name:${rawName.toLowerCase().trim()}`;
+      if (peopleMap.has(nameKey)) {
+        matched = peopleMap.get(nameKey);
+      }
+    }
+  }
+
+  const isVisitor = Boolean(
+    matched?.isVisitor || 
+    matched?.badgeId || 
+    rawData?.isVisitor || 
+    (rawData?.role && String(rawData.role).toLowerCase().includes('visitor')) ||
+    (matched?.role && String(matched.role).toLowerCase().includes('visitor')) ||
+    String(tagId || '').toUpperCase().startsWith('VIS-')
+  );
+
+  let fullName = '';
+  if (matched) {
+    fullName = extractPersonName(matched) || matched.name || '';
+  }
+  if (!fullName) {
+    fullName = extractPersonName(rawData);
+  }
+  if (!fullName) {
+    fullName = isVisitor ? `Visitor #${tagId || 'Guest'}` : `${fallbackPersonnelSingular} #${tagId || 'Unknown'}`;
+  }
+
+  const parts = fullName.split(' ');
+  const firstName = parts[0] || (isVisitor ? 'Visitor' : 'Personnel');
+  const lastName = parts.slice(1).join(' ');
+
+  let role = matched?.role || rawData?.role || rawData?.tradeCompany || matched?.tradeCompany || (isVisitor ? 'Site Visitor' : 'Field Personnel');
+  if (isVisitor && role === 'Field Personnel') role = 'Site Visitor';
+
+  let category: 'workers' | 'visitors' | 'equipment' | 'vehicles' | 'readers' = isVisitor ? 'visitors' : 'workers';
+  const roleLower = String(role).toLowerCase();
+  if (roleLower.includes('equipment') || roleLower.includes('asset') || roleLower.includes('generator')) {
+    category = 'equipment';
+  } else if (roleLower.includes('vehicle') || roleLower.includes('truck') || roleLower.includes('forklift')) {
+    category = 'vehicles';
+  } else if (roleLower.includes('reader') || roleLower.includes('gateway') || roleLower.includes('gate read')) {
+    category = 'readers';
+  }
+
+  return { fullName, firstName, lastName, role, category, isVisitor };
+}
+
 export default function PlaybackTab({ people, zones: initialZones }: { people?: Person[], zones?: any }) {
   const { mode } = useContext(AppModeContext);
   const trackingCtx = useTracking();
@@ -120,80 +258,121 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
     return () => unsub();
   }, []);
 
-  // Subscribe to registered_people and visitors to build a real-time name & role registry
+  // Helper to ingest people list into a map
+  const ingestPeopleIntoMap = (targetMap: Map<string, any>, items: any[]) => {
+    if (!Array.isArray(items)) return;
+    items.forEach(item => {
+      if (!item) return;
+      const keys = getTagKeys(item);
+      keys.forEach(k => targetMap.set(k, item));
+      const pName = extractPersonName(item);
+      if (pName) {
+        targetMap.set(`name:${pName.toLowerCase().trim()}`, item);
+      }
+    });
+  };
+
+  // Subscribe to registered_people, people, and visitors to build a real-time name & role registry
   useEffect(() => {
-    const unsubPeople = onSnapshot(collection(db, 'registered_people'), (peopleSnap) => {
-      const map = new Map<string, any>();
+    const masterMap = new Map<string, any>();
+
+    // Ingest props.people and tracking context people
+    if (people && people.length > 0) {
+      ingestPeopleIntoMap(masterMap, people);
+    }
+    if (trackingCtx?.people && trackingCtx.people.length > 0) {
+      ingestPeopleIntoMap(masterMap, trackingCtx.people);
+    }
+
+    const unsubRegistered = onSnapshot(collection(db, 'registered_people'), (peopleSnap) => {
       peopleSnap.forEach((doc) => {
         const d = doc.data();
         if (d) {
           const item = { id: doc.id, ...d };
-          if (doc.id) map.set(String(doc.id).toLowerCase(), item);
-          if (d.hardhatTagId) map.set(String(d.hardhatTagId).toLowerCase(), item);
-          if (d.tagId) map.set(String(d.tagId).toLowerCase(), item);
-          if (d.TagID) map.set(String(d.TagID).toLowerCase(), item);
-          if (d.epc) map.set(String(d.epc).toLowerCase(), item);
+          ingestPeopleIntoMap(masterMap, [item]);
         }
       });
-
-      // Also get visitors
-      getDocs(collection(db, 'visitors')).then((visitorsSnap) => {
-        visitorsSnap.forEach((doc) => {
-          const d = doc.data();
-          if (d) {
-            const item = { id: doc.id, isVisitor: true, ...d };
-            if (doc.id) map.set(String(doc.id).toLowerCase(), item);
-            if (d.badgeId) map.set(String(d.badgeId).toLowerCase(), item);
-            if (d.tagId) map.set(String(d.tagId).toLowerCase(), item);
-            if (d.TagID) map.set(String(d.TagID).toLowerCase(), item);
-            if (d.epc) map.set(String(d.epc).toLowerCase(), item);
-          }
-        });
-        setRegisteredPeopleMap(map);
-      }).catch(() => {
-        setRegisteredPeopleMap(map);
-      });
+      setRegisteredPeopleMap(new Map(masterMap));
     });
 
-    return () => unsubPeople();
-  }, []);
+    const unsubPeopleCol = onSnapshot(collection(db, 'people'), (peopleColSnap) => {
+      peopleColSnap.forEach((doc) => {
+        const d = doc.data();
+        if (d) {
+          const item = { id: doc.id, ...d };
+          ingestPeopleIntoMap(masterMap, [item]);
+        }
+      });
+      setRegisteredPeopleMap(new Map(masterMap));
+    });
+
+    const unsubVisitors = onSnapshot(collection(db, 'visitors'), (visitorsSnap) => {
+      visitorsSnap.forEach((doc) => {
+        const d = doc.data();
+        if (d) {
+          const item = { id: doc.id, isVisitor: true, ...d };
+          ingestPeopleIntoMap(masterMap, [item]);
+        }
+      });
+      setRegisteredPeopleMap(new Map(masterMap));
+    });
+
+    // Also fetch via REST API to ensure complete database coverage
+    Promise.allSettled([
+      fetch('/api/data/registered_people').then(r => r.ok ? r.json() : []),
+      fetch('/api/data/people').then(r => r.ok ? r.json() : []),
+      fetch('/api/data/visitors').then(r => r.ok ? r.json() : [])
+    ]).then(results => {
+      results.forEach(res => {
+        if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+          ingestPeopleIntoMap(masterMap, res.value);
+        }
+      });
+      setRegisteredPeopleMap(new Map(masterMap));
+    }).catch(() => {});
+
+    return () => {
+      unsubRegistered();
+      unsubPeopleCol();
+      unsubVisitors();
+    };
+  }, [people, trackingCtx?.people]);
 
   // Fetch full historical logs from database & sync external API logs into MongoDB
   const fetchDbHistory = async () => {
     setIsDbLoading(true);
     try {
-      const [historySnap, attendanceSnap, peopleSnap, eventsSnap, visitorsSnap] = await Promise.allSettled([
+      const [historySnap, attendanceSnap, registeredPeopleSnap, peopleSnap, eventsSnap, visitorsSnap, framesRes] = await Promise.allSettled([
         getDocs(collection(db, 'tag_history')),
         getDocs(collection(db, 'attendance_logs')),
         getDocs(collection(db, 'registered_people')),
+        getDocs(collection(db, 'people')),
         getDocs(collection(db, 'rfid_realtime_events')),
-        getDocs(collection(db, 'visitors'))
+        getDocs(collection(db, 'visitors')),
+        fetch(`/api/data/playback_frames?date=${selectedDate}`).then(r => r.ok ? r.json() : null)
       ]);
 
       // Build local people lookup
-      const localPeopleMap = new Map<string, any>();
+      const localPeopleMap = new Map<string, any>(registeredPeopleMap);
+      if (people && people.length > 0) ingestPeopleIntoMap(localPeopleMap, people);
+      if (trackingCtx?.people && trackingCtx.people.length > 0) ingestPeopleIntoMap(localPeopleMap, trackingCtx.people);
+
+      if (registeredPeopleSnap.status === 'fulfilled' && registeredPeopleSnap.value?.docs) {
+        registeredPeopleSnap.value.docs.forEach((doc: any) => {
+          const d = doc.data();
+          if (d) ingestPeopleIntoMap(localPeopleMap, [{ id: doc.id, ...d }]);
+        });
+      }
       if (peopleSnap.status === 'fulfilled' && peopleSnap.value?.docs) {
         peopleSnap.value.docs.forEach((doc: any) => {
           const d = doc.data();
-          if (d) {
-            const item = { id: doc.id, ...d };
-            if (doc.id) localPeopleMap.set(String(doc.id).toLowerCase(), item);
-            if (d.hardhatTagId) localPeopleMap.set(String(d.hardhatTagId).toLowerCase(), item);
-            if (d.tagId) localPeopleMap.set(String(d.tagId).toLowerCase(), item);
-            if (d.TagID) localPeopleMap.set(String(d.TagID).toLowerCase(), item);
-          }
+          if (d) ingestPeopleIntoMap(localPeopleMap, [{ id: doc.id, ...d }]);
         });
       }
       if (visitorsSnap.status === 'fulfilled' && visitorsSnap.value?.docs) {
         visitorsSnap.value.docs.forEach((doc: any) => {
           const d = doc.data();
-          if (d) {
-            const item = { id: doc.id, isVisitor: true, ...d };
-            if (doc.id) localPeopleMap.set(String(doc.id).toLowerCase(), item);
-            if (d.badgeId) localPeopleMap.set(String(d.badgeId).toLowerCase(), item);
-            if (d.tagId) localPeopleMap.set(String(d.tagId).toLowerCase(), item);
-            if (d.TagID) localPeopleMap.set(String(d.TagID).toLowerCase(), item);
-          }
+          if (d) ingestPeopleIntoMap(localPeopleMap, [{ id: doc.id, isVisitor: true, ...d }]);
         });
       }
 
@@ -201,52 +380,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
 
       // Helper to resolve entity identity accurately
       const resolveEntity = (tagId: string, rawData: any) => {
-        const key = String(tagId || '').toLowerCase();
-        const matched = localPeopleMap.get(key) || registeredPeopleMap.get(key);
-
-        const isVisitor = Boolean(
-          matched?.isVisitor || 
-          matched?.badgeId || 
-          rawData?.isVisitor || 
-          (rawData?.role && String(rawData.role).toLowerCase().includes('visitor')) ||
-          (matched?.role && String(matched.role).toLowerCase().includes('visitor'))
-        );
-
-        let fullName = '';
-        if (matched?.name && matched.name.trim()) {
-          fullName = matched.name.trim();
-        } else if (matched?.firstName) {
-          fullName = `${matched.firstName} ${matched.lastName || ''}`.trim();
-        } else if (rawData?.name && rawData.name.trim() && !rawData.name.startsWith('Personnel TAG_') && !rawData.name.startsWith('Worker TAG_')) {
-          fullName = rawData.name.trim();
-        } else if (rawData?.workerName && rawData.workerName.trim()) {
-          fullName = rawData.workerName.trim();
-        } else if (rawData?.personName && rawData.personName.trim()) {
-          fullName = rawData.personName.trim();
-        } else if (rawData?.FirstName && rawData.FirstName !== 'Worker' && rawData.FirstName !== 'Field' && rawData.FirstName !== 'Staff') {
-          fullName = `${rawData.FirstName} ${rawData.LastName || ''}`.trim();
-        } else {
-          fullName = isVisitor ? `Visitor #${tagId}` : `${personnelSingular} #${tagId}`;
-        }
-
-        const parts = fullName.split(' ');
-        const firstName = parts[0] || (isVisitor ? 'Visitor' : 'Personnel');
-        const lastName = parts.slice(1).join(' ');
-
-        let role = matched?.role || rawData?.role || rawData?.tradeCompany || (isVisitor ? 'Visitor' : 'Field Personnel');
-        if (isVisitor && role === 'Field Personnel') role = 'Site Visitor';
-
-        let category: 'workers' | 'visitors' | 'equipment' | 'vehicles' | 'readers' = isVisitor ? 'visitors' : 'workers';
-        const roleLower = String(role).toLowerCase();
-        if (roleLower.includes('equipment') || roleLower.includes('asset') || roleLower.includes('generator')) {
-          category = 'equipment';
-        } else if (roleLower.includes('vehicle') || roleLower.includes('truck') || roleLower.includes('forklift')) {
-          category = 'vehicles';
-        } else if (roleLower.includes('reader') || roleLower.includes('gateway') || roleLower.includes('gate read')) {
-          category = 'readers';
-        }
-
-        return { fullName, firstName, lastName, role, category, isVisitor };
+        return resolvePersonEntity(tagId, rawData, localPeopleMap, personnelSingular);
       };
 
       // 1. Tag History records
@@ -254,7 +388,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
         historySnap.value.docs.forEach((doc: any) => {
           const data = doc.data();
           if (data) {
-            const tagId = data.TagID || data.tagId || doc.id;
+            const tagId = data.TagID || data.tagId || data.epc || doc.id;
             const entity = resolveEntity(tagId, data);
             const enter = data.EnterTime || data.EnterTimeStr || (data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : String(data.timestamp || ''));
             const leave = data.LeaveTime || data.LeaveTimeStr || 'ACTIVE';
@@ -310,8 +444,8 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
       }
 
       // 3. Registered People & Visitors active presence
-      if (peopleSnap.status === 'fulfilled' && peopleSnap.value?.docs) {
-        peopleSnap.value.docs.forEach((doc: any) => {
+      if (registeredPeopleSnap.status === 'fulfilled' && registeredPeopleSnap.value?.docs) {
+        registeredPeopleSnap.value.docs.forEach((doc: any) => {
           const data = doc.data();
           if (data) {
             const tagId = data.hardhatTagId || data.tagId || data.TagID || doc.id;
@@ -366,6 +500,34 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
         });
       }
 
+      // 5. Playback Frames from Backend
+      if (framesRes.status === 'fulfilled' && framesRes.value?.frames) {
+        framesRes.value.frames.forEach((frame: any) => {
+          if (Array.isArray(frame.tags)) {
+            frame.tags.forEach((tag: any, idx: number) => {
+              const tagId = tag.tagId || tag.TagID || `FRAME_TAG_${idx}`;
+              const entity = resolveEntity(tagId, tag);
+              const enter = frame.timestamp || new Date().toISOString();
+              combinedRecords.push({
+                id: `frame_${frame.id || frame.timestamp}_${tagId}`,
+                TagID: tagId,
+                FirstName: entity.firstName,
+                LastName: entity.lastName,
+                fullName: entity.fullName,
+                LocationName: tag.location || tag.zone || 'Site Sector',
+                EnterTimeStr: enter,
+                LeaveTimeStr: tag.status === 'Active' ? 'ACTIVE' : 'Completed',
+                Duration: '10 mins',
+                role: entity.role,
+                category: entity.category,
+                isVisitor: entity.isVisitor,
+                rawDate: new Date(enter)
+              });
+            });
+          }
+        });
+      }
+
       // Deduplicate records by TagID + EnterTimeStr
       const seen = new Set<string>();
       const deduped: any[] = [];
@@ -391,21 +553,20 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
     fetchDbHistory();
     const interval = setInterval(() => {
       fetchDbHistory();
-    }, 1000);
+    }, 2000);
     return () => clearInterval(interval);
-  }, [registeredPeopleMap]);
+  }, [registeredPeopleMap, selectedDate]);
 
   // Sync incoming API records and save them to MongoDB
   useEffect(() => {
     if (apiRecords && apiRecords.length > 0) {
       apiRecords.forEach(rec => {
         if (rec.TagID && rec.EnterTime) {
-          const key = String(rec.TagID).toLowerCase();
-          const matched = registeredPeopleMap.get(key);
-          const fullName = matched?.name || (rec.FirstName ? `${rec.FirstName} ${rec.LastName || ''}`.trim() : (rec.name || `Personnel ${rec.TagID}`));
+          const entity = resolvePersonEntity(rec.TagID, rec, registeredPeopleMap, personnelSingular);
+          const fullName = entity.fullName;
           const parts = fullName.split(' ');
-          const role = matched?.role || (matched?.badgeId ? 'Visitor' : (rec.role || 'Field Personnel'));
-          const isVisitor = Boolean(matched?.badgeId || matched?.isVisitor || role.toLowerCase().includes('visitor'));
+          const role = entity.role;
+          const isVisitor = entity.isVisitor;
           const durationStr = formatDurationMinutes(rec.EnterTime, rec.LeaveTime, rec.Duration);
 
           const docId = `hist_${rec.TagID}_${String(rec.EnterTime).replace(/[: ]/g, '_')}`;
@@ -431,42 +592,38 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
         }
       });
     }
-  }, [apiRecords, registeredPeopleMap]);
+  }, [apiRecords, registeredPeopleMap, personnelSingular]);
 
   // Combined master records
   const allRecords = useMemo(() => {
     if (dbRecords && dbRecords.length > 0) return dbRecords;
     if (apiRecords && apiRecords.length > 0) {
       return apiRecords.map((r: any, idx: number) => {
-        const key = String(r.TagID || r.id || '').toLowerCase();
-        const matched = registeredPeopleMap.get(key);
-        const fullName = matched?.name || (r.FirstName ? `${r.FirstName} ${r.LastName || ''}`.trim() : `Personnel ${r.TagID || idx}`);
-        const parts = fullName.split(' ');
-        const role = matched?.role || (matched?.badgeId ? 'Visitor' : (r.role || 'Personnel'));
-        const isVisitor = Boolean(matched?.badgeId || matched?.isVisitor || role.toLowerCase().includes('visitor'));
+        const tagId = r.TagID || r.id || `TAG-${idx}`;
+        const entity = resolvePersonEntity(tagId, r, registeredPeopleMap, personnelSingular);
         const enter = r.EnterTime || r.EnterTimeStr || r.Timestamp || new Date().toLocaleString();
         const leave = r.LeaveTime || r.LeaveTimeStr || 'ACTIVE';
         const durationStr = formatDurationMinutes(enter, leave, r.Duration);
 
         return {
           id: r.id || `api-${idx}`,
-          TagID: r.TagID || r.id || `TAG-${idx}`,
-          FirstName: parts[0] || 'Personnel',
-          LastName: parts.slice(1).join(' '),
-          fullName,
+          TagID: tagId,
+          FirstName: entity.firstName,
+          LastName: entity.lastName,
+          fullName: entity.fullName,
           LocationName: r.LocationName || r.Location || 'Site Area',
           EnterTimeStr: enter,
           LeaveTimeStr: leave,
           Duration: durationStr,
-          role,
-          category: isVisitor ? 'visitors' : 'workers',
-          isVisitor,
+          role: entity.role,
+          category: entity.category,
+          isVisitor: entity.isVisitor,
           rawDate: new Date()
         };
       });
     }
     return [];
-  }, [dbRecords, apiRecords, registeredPeopleMap]);
+  }, [dbRecords, apiRecords, registeredPeopleMap, personnelSingular]);
 
   // Extract unique zones for filtering
   const uniqueZones = useMemo(() => {
@@ -505,8 +662,9 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
         const tag = (r.TagID || '').toLowerCase();
-        const name = (r.fullName || `${r.FirstName || ''} ${r.LastName || ''}`).toLowerCase();
-        const role = (r.role || '').toLowerCase();
+        const entity = resolvePersonEntity(r.TagID, r, registeredPeopleMap, personnelSingular);
+        const name = (entity.fullName || r.fullName || `${r.FirstName || ''} ${r.LastName || ''}`).toLowerCase();
+        const role = (entity.role || r.role || '').toLowerCase();
         const loc = (r.LocationName || '').toLowerCase();
         if (!tag.includes(q) && !name.includes(q) && !role.includes(q) && !loc.includes(q)) {
           return false;
@@ -515,7 +673,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
 
       return true;
     });
-  }, [allRecords, selectedCategory, selectedZoneFilter, searchQuery, selectedDate, filterByDateEnabled]);
+  }, [allRecords, selectedCategory, selectedZoneFilter, searchQuery, selectedDate, filterByDateEnabled, registeredPeopleMap, personnelSingular]);
 
   // Paginated records
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
@@ -567,16 +725,21 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
   };
 
   const handleExportCSV = () => {
-    const data = filteredRecords.map(r => ({
-      TagID: r.TagID,
-      Name: r.fullName || `${r.FirstName} ${r.LastName}`,
-      Role: r.role,
-      Category: r.isVisitor ? 'Visitor' : 'Employee/Contractor',
-      Zone: r.LocationName,
-      EnterTime: r.EnterTimeStr,
-      ExitTime: r.LeaveTimeStr,
-      Duration: r.Duration
-    }));
+    const data = filteredRecords.map(r => {
+      const entity = resolvePersonEntity(r.TagID, r, registeredPeopleMap, personnelSingular);
+      const name = entity.fullName || r.fullName || `${r.FirstName || ''} ${r.LastName || ''}`.trim() || r.TagID;
+      const role = entity.role || r.role || 'Field Personnel';
+      return {
+        TagID: r.TagID,
+        Name: name,
+        Role: role,
+        Category: entity.isVisitor ? 'Visitor' : 'Employee/Contractor',
+        Zone: r.LocationName,
+        EnterTime: r.EnterTimeStr,
+        ExitTime: r.LeaveTimeStr,
+        Duration: r.Duration
+      };
+    });
     exportToCSV(`Historical_Telemetry_Ledger_${selectedDate}`, data, [
       { key: 'TagID', label: 'TAG ID' },
       { key: 'Name', label: 'EMPLOYEE / VISITOR NAME' },
@@ -590,15 +753,20 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
   };
 
   const handleExportPDF = () => {
-    const data = filteredRecords.map(r => ({
-      id: r.TagID,
-      name: r.fullName || `${r.FirstName} ${r.LastName}`,
-      role: r.role,
-      zone: r.LocationName,
-      time: r.EnterTimeStr,
-      exit: r.LeaveTimeStr,
-      duration: r.Duration
-    }));
+    const data = filteredRecords.map(r => {
+      const entity = resolvePersonEntity(r.TagID, r, registeredPeopleMap, personnelSingular);
+      const name = entity.fullName || r.fullName || `${r.FirstName || ''} ${r.LastName || ''}`.trim() || r.TagID;
+      const role = entity.role || r.role || 'Field Personnel';
+      return {
+        id: r.TagID,
+        name: name,
+        role: role,
+        zone: r.LocationName,
+        time: r.EnterTimeStr,
+        exit: r.LeaveTimeStr,
+        duration: r.Duration
+      };
+    });
     generatePDFReport(
       'Historical Telemetry & Access Event Ledger',
       `Official Aperture Replay Log for ${selectedDate} — ${siteName}`,
@@ -844,7 +1012,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
       {/* Main Historical Table View */}
       <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm flex flex-col min-h-0 overflow-hidden">
         <div className="p-4 border-b border-slate-100 dark:border-slate-700 flex items-center justify-between bg-slate-50 dark:bg-slate-900">
-          <div className="flex items-center gap-2 font-bold text-slate-800 dark:text-white text-sm">
+          <div className="flex items-center gap-2 font-bold text-slate-800 dark:white text-sm">
             <Database className="w-4 h-4 text-[#007BC4]" />
             Chronological Access & Telemetry Ledger
           </div>
@@ -891,8 +1059,11 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                 </tr>
               )}
               {paginatedRecords.map((r, i) => {
-                const isVisitor = r.isVisitor || r.category === 'visitors';
-                const isReader = r.category === 'readers';
+                const entity = resolvePersonEntity(r.TagID, r, registeredPeopleMap, personnelSingular);
+                const displayName = entity.fullName || r.fullName || `${r.FirstName || ''} ${r.LastName || ''}`.trim() || r.TagID;
+                const displayRole = entity.role || r.role || 'Field Personnel';
+                const isVisitor = entity.isVisitor || r.isVisitor || r.category === 'visitors';
+                const isReader = r.category === 'readers' || entity.category === 'readers';
                 const isActive = r.LeaveTimeStr === 'ACTIVE' || String(r.Duration).includes('Active');
 
                 return (
@@ -905,7 +1076,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                     </td>
                     <td className="py-3.5 px-4">
                       <span className="font-bold text-slate-900 dark:text-white text-xs block">
-                        {r.fullName || `${r.FirstName} ${r.LastName}`}
+                        {displayName}
                       </span>
                     </td>
                     <td className="py-3.5 px-4">
@@ -916,7 +1087,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                           ? 'bg-purple-100 dark:bg-purple-950 text-purple-700 dark:text-purple-400 border border-purple-200 dark:border-purple-800'
                           : 'bg-blue-50 dark:bg-blue-950 text-[#007BC4] border border-blue-200 dark:border-blue-900'
                       }`}>
-                        {r.role}
+                        {displayRole}
                       </span>
                     </td>
                     <td className="py-3.5 px-4">

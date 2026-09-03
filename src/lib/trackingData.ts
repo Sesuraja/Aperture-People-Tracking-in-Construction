@@ -83,16 +83,33 @@ export function getZonesForProject(projectId: string): string[] {
   return ['People Tracking in Construction'];
 }
 
-export function normalizeZoneName(location?: string | null, projectId: string = 'metro-tower'): string {
-  const zones = getZonesForProject(projectId);
-  if (location && zones.includes(location)) {
-    return location;
-  }
-  if (location) {
-    const matched = zones.find(z => z.toLowerCase().includes(location.toLowerCase()) || location.toLowerCase().includes(z.toLowerCase()));
+
+
+export function normalizeZoneName(location?: string | null, projectId: string = 'metro-tower', dynamicZones?: Record<string, any>): string {
+  if (!location) return 'People Tracking in Construction';
+  const cleanLoc = location.trim();
+  const cleanLocLower = cleanLoc.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  // Check dynamicZones first
+  if (dynamicZones && Object.keys(dynamicZones).length > 0) {
+    const matched = Object.keys(dynamicZones).find(z => {
+      const zLower = z.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return zLower === cleanLocLower || zLower.includes(cleanLocLower) || cleanLocLower.includes(zLower);
+    });
     if (matched) return matched;
   }
-  return zones[0] || 'People Tracking in Construction';
+
+  const zones = getZonesForProject(projectId);
+  if (zones.includes(cleanLoc)) {
+    return cleanLoc;
+  }
+  const matched = zones.find(z => {
+    const zLower = z.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return zLower === cleanLocLower || zLower.includes(cleanLocLower) || cleanLocLower.includes(zLower);
+  });
+  if (matched) return matched;
+
+  return cleanLoc || zones[0] || 'People Tracking in Construction';
 }
 
 const DEFAULT_ROOM_BOUNDS: Record<string, { x: number; y: number; width: number; height: number }> = {
@@ -100,8 +117,15 @@ const DEFAULT_ROOM_BOUNDS: Record<string, { x: number; y: number; width: number;
 };
 
 export function getZoneRect(zoneName: string, projectId: string = 'metro-tower', dynamicZones?: Record<string, any>) {
-  if (dynamicZones && dynamicZones[zoneName]) {
-    return dynamicZones[zoneName];
+  const cleanNameLower = (zoneName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  if (dynamicZones && Object.keys(dynamicZones).length > 0) {
+    if (dynamicZones[zoneName]) return dynamicZones[zoneName];
+    const match = Object.entries(dynamicZones).find(([k]) => {
+      const kLower = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return kLower === cleanNameLower || kLower.includes(cleanNameLower) || cleanNameLower.includes(kLower);
+    });
+    if (match) return match[1];
   }
 
   try {
@@ -109,8 +133,13 @@ export function getZoneRect(zoneName: string, projectId: string = 'metro-tower',
     if (saved) {
       const parsed = JSON.parse(saved);
       const proj = parsed[projectId];
-      if (proj && proj.customZones && proj.customZones[zoneName]) {
-        return proj.customZones[zoneName];
+      if (proj && proj.customZones) {
+        if (proj.customZones[zoneName]) return proj.customZones[zoneName];
+        const match = Object.entries(proj.customZones).find(([k]) => {
+          const kLower = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+          return kLower === cleanNameLower || kLower.includes(cleanNameLower) || cleanNameLower.includes(kLower);
+        });
+        if (match) return match[1];
       }
     }
   } catch (e) {
@@ -118,8 +147,13 @@ export function getZoneRect(zoneName: string, projectId: string = 'metro-tower',
   }
 
   const staticZones = INITIAL_PROJECT_ZONES[projectId];
-  if (staticZones && staticZones[zoneName]) {
-    return staticZones[zoneName];
+  if (staticZones) {
+    if (staticZones[zoneName]) return staticZones[zoneName];
+    const match = Object.entries(staticZones).find(([k]) => {
+      const kLower = k.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return kLower === cleanNameLower || kLower.includes(cleanNameLower) || cleanNameLower.includes(kLower);
+    });
+    if (match) return match[1];
   }
 
   return DEFAULT_ROOM_BOUNDS['People Tracking in Construction'];
@@ -138,215 +172,13 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
   
   // Dynamic thresholds
   const loiteringThresholdRef = useRef(300);
-  const idleAlertThresholdRef = useRef(3600);
-  const occupancyLimitsRef = useRef<Record<string, number>>({});
-  const alertedZonesRef = useRef<Record<string, number>>({});
-  
+  const maxZoneCapacityRef = useRef(15);
+  const dynamicZonesRef = useRef<Record<string, any>>({});
   const registeredPeopleRef = useRef<Record<string, {name: string, role: string}>>({});
+  const activeProjectIdRef = useRef(activeProjectId);
+  activeProjectIdRef.current = activeProjectId;
 
-  const [dynamicZones, setDynamicZones] = useState<Record<string, { x: number; y: number; width: number; height: number }>>(ZONES);
-
-  useEffect(() => {
-    if (!mode) return;
-
-    // Listen to settings changes globally
-    const settingsRef = doc(db, 'settings', 'global');
-    const unsubscribeSettings = onSnapshot(settingsRef, (docSnap) => {
-      if (docSnap.exists()) {
-        const data = docSnap.data();
-        if (data.loiteringThreshold !== undefined) loiteringThresholdRef.current = data.loiteringThreshold;
-        if (data.idleAlertThreshold !== undefined) idleAlertThresholdRef.current = data.idleAlertThreshold;
-        if (data.occupancyThresholds) occupancyLimitsRef.current = data.occupancyThresholds;
-      }
-    }, (err) => handleDbError(err, OperationType.GET, 'settings/global'));
-
-    // Listen to real alerts from the database
-    const alertQuery = query(collection(db, 'alerts'), orderBy('timestamp', 'desc'), limit(50));
-    const unsubscribeAlerts = onSnapshot(alertQuery, (snapshot) => {
-       const fetchedAlerts: AIAlert[] = [];
-       snapshot.forEach(doc => {
-          const data = doc.data();
-          fetchedAlerts.push({
-             id: doc.id,
-             type: data.type,
-             message: data.message,
-             timestamp: data.timestamp?.toDate() || new Date(),
-             resolved: data.resolved
-          });
-       });
-       setAlerts(fetchedAlerts);
-    }, (err) => handleDbError(err, OperationType.LIST, 'alerts'));
-    
-    // Listen to floor plans to generate zones based on devices placed
-    const floorplansQuery = query(collection(db, 'floorplans'));
-    const unsubscribeFloorplans = onSnapshot(floorplansQuery, (snapshot) => {
-       const newZones: Record<string, {x:number, y:number, width:number, height:number}> = { ...ZONES };
-       snapshot.forEach(doc => {
-          const plan = doc.data();
-          if (plan.devices && Array.isArray(plan.devices)) {
-             plan.devices.forEach((dev: any) => {
-                newZones[dev.name] = {
-                   x: dev.x - 10,
-                   y: dev.y - 10,
-                   width: 20,
-                   height: 20
-                };
-             });
-          }
-       });
-       setDynamicZones(newZones);
-    }, (err) => handleDbError(err, OperationType.LIST, 'floorplans'));
-    
-    const registeredQuery = query(collection(db, 'registered_people'));
-    const unsubscribeRegistered = onSnapshot(registeredQuery, (snapshot) => {
-       const mapped: Record<string, {name: string, role: string}> = { ...registeredPeopleRef.current };
-       const registeredList: Person[] = [];
-       snapshot.forEach(doc => {
-          const data = doc.data();
-          const pName = data.name || data.workerName || data.personName || '';
-          const pRole = data.role || data.tradeCompany || data.department || 'Employee';
-          if (pName) {
-            const entry = { name: pName, role: pRole };
-            if (doc.id) {
-              mapped[doc.id] = entry;
-              mapped[doc.id.toLowerCase()] = entry;
-              mapped[doc.id.toUpperCase()] = entry;
-            }
-            if (data.hardhatTagId) {
-              mapped[String(data.hardhatTagId)] = entry;
-              mapped[String(data.hardhatTagId).toLowerCase()] = entry;
-              mapped[String(data.hardhatTagId).toUpperCase()] = entry;
-            }
-            if (data.tagId) {
-              mapped[String(data.tagId)] = entry;
-              mapped[String(data.tagId).toLowerCase()] = entry;
-              mapped[String(data.tagId).toUpperCase()] = entry;
-            }
-            if (data.TagID) {
-              mapped[String(data.TagID)] = entry;
-              mapped[String(data.TagID).toLowerCase()] = entry;
-              mapped[String(data.TagID).toUpperCase()] = entry;
-            }
-          }
-          const zName = data.currentZone || 'Site Office';
-          const rect = getZoneRect(zName, activeProjectId, dynamicZones);
-          registeredList.push({
-            id: doc.id,
-            hardhatTagId: data.hardhatTagId || doc.id,
-            name: pName || `Tag ${doc.id.substring(0, 8).toUpperCase()}`,
-            role: pRole,
-            currentZone: zName,
-            presenceState: data.presenceState || 'IDLE',
-            dwellTime: data.dwellTime || 0,
-            x: data.x !== undefined ? data.x : (rect.x + rect.width / 2),
-            y: data.y !== undefined ? data.y : (rect.y + rect.height / 2),
-            lastSeen: data.lastSeen ? new Date(data.lastSeen) : new Date(),
-            battery: data.battery !== undefined ? data.battery : 92,
-            trail: []
-          });
-       });
-       registeredPeopleRef.current = mapped;
-       setPeople(prev => {
-         if (prev.length === 0 && registeredList.length > 0) {
-           return registeredList;
-         }
-         return prev.map(p => {
-           const key = p.id;
-           const tagKey = p.hardhatTagId || p.id;
-           const reg = mapped[key] || mapped[key?.toLowerCase()] || mapped[key?.toUpperCase()] ||
-                       mapped[tagKey] || mapped[tagKey?.toLowerCase()] || mapped[tagKey?.toUpperCase()];
-           if (reg && reg.name) {
-             return { ...p, name: reg.name, role: reg.role || p.role };
-           }
-           return p;
-         });
-       });
-    }, (err) => handleDbError(err, OperationType.LIST, 'registered_people'));
-
-    const peopleColQuery = query(collection(db, 'people'));
-    const unsubscribePeople = onSnapshot(peopleColQuery, (snapshot) => {
-      if (!snapshot.empty) {
-        const mapped: Record<string, {name: string, role: string}> = { ...registeredPeopleRef.current };
-        const pList: Person[] = snapshot.docs.map(doc => {
-          const d = doc.data();
-          const pName = d.name || d.workerName || d.personName || '';
-          const pRole = d.role || d.tradeCompany || 'Field Personnel';
-          if (pName) {
-            const entry = { name: pName, role: pRole };
-            if (doc.id) {
-              mapped[doc.id] = entry;
-              mapped[doc.id.toLowerCase()] = entry;
-              mapped[doc.id.toUpperCase()] = entry;
-            }
-            if (d.hardhatTagId) {
-              mapped[String(d.hardhatTagId)] = entry;
-              mapped[String(d.hardhatTagId).toLowerCase()] = entry;
-              mapped[String(d.hardhatTagId).toUpperCase()] = entry;
-            }
-            if (d.tagId) {
-              mapped[String(d.tagId)] = entry;
-              mapped[String(d.tagId).toLowerCase()] = entry;
-              mapped[String(d.tagId).toUpperCase()] = entry;
-            }
-          }
-          const zName = d.currentZone || 'Site Office';
-          const rect = getZoneRect(zName, activeProjectId, dynamicZones);
-          return {
-            id: doc.id,
-            hardhatTagId: d.hardhatTagId || doc.id,
-            name: pName || `Tag ${doc.id.substring(0, 8).toUpperCase()}`,
-            role: pRole,
-            currentZone: zName,
-            presenceState: d.presenceState || 'IDLE',
-            dwellTime: d.dwellTime || 0,
-            x: d.x !== undefined ? d.x : (rect.x + rect.width / 2),
-            y: d.y !== undefined ? d.y : (rect.y + rect.height / 2),
-            lastSeen: d.lastSeen ? new Date(d.lastSeen) : new Date(),
-            battery: d.battery !== undefined ? d.battery : 90,
-            trail: []
-          };
-        });
-        registeredPeopleRef.current = mapped;
-        setPeople(prev => {
-          if (prev.length === 0) return pList;
-          return prev.map(p => {
-            const key = p.id;
-            const tagKey = p.hardhatTagId || p.id;
-            const reg = mapped[key] || mapped[key?.toLowerCase()] || mapped[key?.toUpperCase()] ||
-                        mapped[tagKey] || mapped[tagKey?.toLowerCase()] || mapped[tagKey?.toUpperCase()];
-            if (reg && reg.name) {
-              return { ...p, name: reg.name, role: reg.role || p.role };
-            }
-            return p;
-          });
-        });
-      }
-    }, (err) => handleDbError(err, OperationType.LIST, 'people'));
-    
-    // Listen to Assets from database
-    const assetsQuery = collection(db, 'assets');
-    const unsubscribeAssets = onSnapshot(assetsQuery, (snap) => {
-      const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      setAssets(items);
-    }, (err) => handleDbError(err, OperationType.LIST, 'assets'));
-
-    // Listen to Vehicles from database
-    const vehiclesQuery = collection(db, 'vehicles');
-    const unsubscribeVehicles = onSnapshot(vehiclesQuery, (snap) => {
-      const items = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
-      setVehicles(items);
-    }, (err) => handleDbError(err, OperationType.LIST, 'vehicles'));
-
-    return () => {
-       unsubscribeSettings();
-       unsubscribeAlerts();
-       unsubscribeFloorplans();
-       unsubscribeRegistered();
-       unsubscribePeople();
-       unsubscribeAssets();
-       unsubscribeVehicles();
-    };
-  }, [mode]);
+  const [dynamicZones, setDynamicZones] = useState<Record<string, any>>({});
 
   useEffect(() => {
     if (!mode) return;
@@ -376,8 +208,11 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
             
             const latestTagInfo: Record<string, any> = {};
             liveTags.forEach(tag => {
-               if (tag.TagID) {
-                 latestTagInfo[tag.TagID] = tag;
+               const tid = String(tag.TagID || (tag as any).tagId || (tag as any).id || '').trim();
+               if (tid) {
+                 latestTagInfo[tid] = tag;
+                 latestTagInfo[tid.toLowerCase()] = tag;
+                 latestTagInfo[tid.toUpperCase()] = tag;
                }
             });
 
@@ -386,38 +221,68 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
 
               if (Object.keys(latestTagInfo).length === 0) return nextPeople;
 
-              Object.values(latestTagInfo).forEach(tag => {
-                 let p = nextPeople.find(x => x.id === tag.TagID);
-                 let targetZone = normalizeZoneName(tag.Location, activeProjectId);
-                 const rect = getZoneRect(targetZone, activeProjectId, dynamicZones);
+              liveTags.forEach(tag => {
+                 const tid = String(tag.TagID || (tag as any).tagId || (tag as any).id || '').trim();
+                 if (!tid) return;
+
+                 const tidLower = tid.toLowerCase();
+                 let p = nextPeople.find(x => 
+                   (x.id && x.id.toLowerCase() === tidLower) || 
+                   (x.hardhatTagId && x.hardhatTagId.toLowerCase() === tidLower) ||
+                   ((x as any).tagId && String((x as any).tagId).toLowerCase() === tidLower)
+                 );
+
+                 const targetZone = normalizeZoneName(tag.Location || tag.LocationName, activeProjectIdRef.current, dynamicZonesRef.current);
+                 const rect = getZoneRect(targetZone, activeProjectIdRef.current, dynamicZonesRef.current);
                  
-                 const registered = registeredPeopleRef.current[tag.TagID];
-                 const pName = registered ? registered.name : (tag.personName || `Tag ${tag.TagID.substring(0, 8).toUpperCase()}`);
-                 const pRole = registered ? registered.role : (tag.role || 'Personnel');
+                 const hashOffset = (tid.split('').reduce((acc: number, char: string) => acc + char.charCodeAt(0), 0) % 7) - 3;
+                 const targetX = tag.x !== undefined ? tag.x : Math.max(5, Math.min(95, rect.x + (rect.width || 20) / 2 + hashOffset));
+                 const targetY = tag.y !== undefined ? tag.y : Math.max(5, Math.min(95, rect.y + (rect.height || 20) / 2 + hashOffset));
+
+                 const registered = registeredPeopleRef.current[tid] || registeredPeopleRef.current[tidLower] || registeredPeopleRef.current[tid.toUpperCase()];
+                 const pName = registered ? registered.name : (tag.personName || tag.name || `Tag ${tid.substring(0, 8).toUpperCase()}`);
+                 const pRole = registered ? registered.role : (tag.role || 'Field Personnel');
                  const parsedDate = parseTagTimestamp(tag.Timestamp);
 
                  if (!p) {
                     p = {
-                      id: tag.TagID,
+                      id: tid,
+                      hardhatTagId: tid,
                       name: pName,
                       role: pRole,
                       currentZone: targetZone,
-                      presenceState: 'IDLE',
+                      presenceState: 'ACTIVE',
                       dwellTime: 0,
-                      x: rect.x + rect.width / 2,
-                      y: rect.y + rect.height / 2,
+                      x: targetX,
+                      y: targetY,
                       lastSeen: parsedDate,
-                      trail: []
+                      rssi: tag.rssi,
+                      lastReader: tag.readerId,
+                      trail: [{ x: targetX, y: targetY }]
                     };
                     nextPeople.push(p);
                  } else {
                     p.lastSeen = parsedDate;
-                    p.name = pName;
-                    p.role = pRole;
-                    if (p.currentZone !== targetZone) {
+                    if (pName && !pName.startsWith('Tag ')) p.name = pName;
+                    if (pRole) p.role = pRole;
+                    if (tag.rssi !== undefined) p.rssi = tag.rssi;
+                    if (tag.readerId) p.lastReader = tag.readerId;
+
+                    const zoneChanged = p.currentZone !== targetZone;
+                    if (zoneChanged) {
                         p.currentZone = targetZone;
                         p.dwellTime = 0;
-                        p.presenceState = 'IDLE';
+                        p.presenceState = 'MOVING';
+                        p.x = targetX;
+                        p.y = targetY;
+                        const currTrail = p.trail || [];
+                        p.trail = [...currTrail.slice(-9), { x: targetX, y: targetY }];
+                    } else if (tag.x !== undefined && tag.y !== undefined) {
+                        p.x = tag.x;
+                        p.y = tag.y;
+                    } else if (p.x === undefined || p.y === undefined) {
+                        p.x = targetX;
+                        p.y = targetY;
                     }
                  }
               });
@@ -425,15 +290,14 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
               // Calculate occupancy bounds 
               const currentOccupancy: Record<string, number> = {};
               nextPeople.forEach(p => {
-                 const registered = registeredPeopleRef.current[p.id];
+                 const registered = registeredPeopleRef.current[p.id] || registeredPeopleRef.current[p.id?.toLowerCase()] || registeredPeopleRef.current[p.hardhatTagId || ''];
                  if (registered) {
-                    p.name = registered.name;
+                    if (registered.name && !p.name.startsWith('Tag ')) p.name = registered.name;
                     p.role = registered.role;
                  }
                  currentOccupancy[p.currentZone] = (currentOccupancy[p.currentZone] || 0) + 1;
               });
 
-              // Occupancy calculated in memory for UI presentation without creating synthetic alert records
               return nextPeople;
             });
           } catch (e: any) {
@@ -442,7 +306,6 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
         };
 
         syncRealtime();
-        // 1-second real-time update loop
         interval = setInterval(syncRealtime, 1000);
     }
 

@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { db, collection, getDocs, onSnapshot, addDoc, updateDoc, doc, deleteDoc, serverTimestamp } from '../lib/db';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
-import { useTerminology } from '../context/TrackingContext';
+import { useTerminology, useTracking } from '../context/TrackingContext';
 
 
 const PALETTE = ['#007BC4', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4'];
@@ -60,6 +60,7 @@ export interface SavedAiMetric {
 
 export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps) {
   const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+  const trackingCtx = useTracking();
   const [dynamicKpis, setDynamicKpis] = useState<any[]>([]);
 
   useEffect(() => {
@@ -140,21 +141,21 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       const combined = [
         ...hwDevs.map(d => ({
           id: d.id || d.readerId || d.name,
-          name: d.name || d.readerName || 'GAO UHF 4-Port Reader',
-          zone: d.location || d.zone || 'Gate 1 Portal',
+          name: d.name || d.readerName || 'UHF Reader Portal',
+          zone: d.location || d.zone || 'Portal Zone',
           status: String(d.status || 'ONLINE').toUpperCase().trim(),
-          type: 'GAO UHF Fixed Portal',
-          rssi: d.rssi ? `${d.rssi} dBm` : 'N/A',
+          type: d.type || 'GAO UHF Fixed Portal',
+          rssi: d.rssi !== undefined ? (typeof d.rssi === 'number' ? `${d.rssi} dBm` : d.rssi) : 'N/A',
           rate: d.rate || '250 Hz',
           scans: d.scans || d.totalScans || 0
         })),
         ...stdDevs.map(d => ({
           id: d.id || d.name,
           name: d.name || 'Portal Gateway Device',
-          zone: d.zone || d.location || 'Site Perimeter Gate',
+          zone: d.zone || d.location || 'Portal Zone',
           status: String(d.status || 'ONLINE').toUpperCase().trim(),
-          type: 'Portal Gateway Anchor',
-          rssi: d.rssi ? `${d.rssi} dBm` : 'N/A',
+          type: d.type || 'Portal Gateway Anchor',
+          rssi: d.signalRssi !== undefined ? `${d.signalRssi} dBm` : (d.rssi !== undefined ? (typeof d.rssi === 'number' ? `${d.rssi} dBm` : d.rssi) : 'N/A'),
           rate: d.rate || '200 Hz',
           scans: d.scans || 0
         }))
@@ -163,6 +164,32 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
       const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
       setPortalReaders(unique);
     };
+
+    const fetchPortalReadersDirect = async () => {
+      try {
+        const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('token') || 'demo';
+        const headers = { 'Authorization': `Bearer ${token}` };
+        const [rRes, dRes] = await Promise.allSettled([
+          fetch('/api/data/hardware_readers', { headers }),
+          fetch('/api/data/devices', { headers })
+        ]);
+        if (rRes.status === 'fulfilled' && rRes.value.ok) {
+          const rList = await rRes.value.json();
+          if (Array.isArray(rList) && rList.length > 0) {
+            hwDevs = rList;
+            syncPortals();
+          }
+        }
+        if (dRes.status === 'fulfilled' && dRes.value.ok) {
+          const dList = await dRes.value.json();
+          if (Array.isArray(dList) && dList.length > 0) {
+            stdDevs = dList.filter((d: any) => d.category === 'rfid' || (d.type || '').toLowerCase().includes('reader') || (d.type || '').toLowerCase().includes('portal'));
+            syncPortals();
+          }
+        }
+      } catch {}
+    };
+    fetchPortalReadersDirect();
 
     const unsub1 = onSnapshot(collection(db, 'hardware_readers'), (snapshot) => {
       hwDevs = [];
@@ -559,109 +586,155 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
     }, 600);
   };
 
-  // Active workers computed from MongoDB or props
+  // Active workers computed from MongoDB, props, and live TrackingContext
   const activeWorkers = useMemo(() => {
-    return dbRegisteredPeople.length > 0 ? dbRegisteredPeople : people;
-  }, [dbRegisteredPeople, people]);
+    const map = new Map<string, any>();
+    (dbRegisteredPeople || []).forEach(p => { if (p && (p.id || p.hardhatTagId)) map.set(String(p.id || p.hardhatTagId).toUpperCase(), p); });
+    (people || []).forEach(p => { if (p && (p.id || p.hardhatTagId)) map.set(String(p.id || p.hardhatTagId).toUpperCase(), p); });
+    (trackingCtx?.people || []).forEach(p => { if (p && (p.id || p.hardhatTagId)) map.set(String(p.id || p.hardhatTagId).toUpperCase(), p); });
+    return Array.from(map.values());
+  }, [dbRegisteredPeople, people, trackingCtx?.people]);
 
   const executiveKPIs = useMemo(() => {
     const totalWorkers = activeWorkers.length;
     const movingCount = activeWorkers.filter(p => p.presenceState === 'MOVING').length;
-    const toolTimePct = totalWorkers > 0 ? Math.min(98, Math.max(50, Math.round((movingCount / Math.max(1, totalWorkers)) * 100))) : 0;
+    const toolTimePct = totalWorkers > 0 ? Math.min(100, Math.round((movingCount / Math.max(1, totalWorkers)) * 100)) : 0;
     const compliantCount = activeWorkers.filter(p => p.ppeStatus !== 'NON_COMPLIANT').length;
-    const safetyScore = totalWorkers > 0 ? Math.min(100, Math.max(60, Math.round((compliantCount / Math.max(1, totalWorkers)) * 100))) : 100;
+    const safetyScore = totalWorkers > 0 ? Math.min(100, Math.round((compliantCount / Math.max(1, totalWorkers)) * 100)) : 100;
+    const openIncidents = (dbIncidents || []).filter(i => String(i.status || '').toUpperCase() !== 'RESOLVED' && String(i.status || '').toUpperCase() !== 'CLOSED').length;
+    const trirScore = totalWorkers > 0 ? Number(((openIncidents * 200000) / Math.max(200000, totalWorkers * 2000)).toFixed(2)) : 0.00;
 
     return {
       safetyScore,
       productivityIndex: toolTimePct,
-      costSavings: '$14,280 / mo',
-      activeSites: 1,
       totalHeadcount: totalWorkers,
-      shiftCompliance: '98.4%',
-      trirScore: 0.12,
-      dartScore: 0.04
+      openIncidents,
+      trirScore
     };
-  }, [activeWorkers, dateRange]);
+  }, [activeWorkers, dbIncidents]);
 
   const attendanceTrendData = useMemo(() => {
     return dbAttendanceData;
   }, [dbAttendanceData]);
 
   const movementFlowData = useMemo(() => {
-    const byZone: Record<string, number> = {};
+    const byZone: Record<string, { count: number; totalDwell: number }> = {};
     activeWorkers.forEach(p => {
-      const zone = p.currentZone || p.zone || `${siteLabel || 'Facility'} Operations`;
-      byZone[zone] = (byZone[zone] || 0) + 1;
+      const zone = p.currentZone || p.zone || (p.LocationName) || `${siteLabel || 'Facility'} Area`;
+      if (!byZone[zone]) byZone[zone] = { count: 0, totalDwell: 0 };
+      byZone[zone].count += 1;
+      byZone[zone].totalDwell += (p.dwellTime || 0);
     });
-    return Object.entries(byZone).map(([name, count]) => ({
-      zone: name,
-      hourlyFlow: count * 4,
-      avgDwellMin: 45,
-      congestionRisk: count > 8 ? 'High' : count > 4 ? 'Moderate' : 'Low'
-    }));
+
+    return Object.entries(byZone).map(([name, data]) => {
+      const avgDwellMin = data.count > 0 ? Math.max(1, Math.round(data.totalDwell / (data.count * 60))) : 0;
+      return {
+        zone: name,
+        hourlyFlow: data.count,
+        avgDwellMin,
+        congestionRisk: data.count >= 8 ? 'High' : data.count >= 4 ? 'Moderate' : 'Low'
+      };
+    });
   }, [activeWorkers, siteLabel]);
 
   const productivityData = useMemo(() => {
     const hours = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00'];
     const baseTotal = activeWorkers.length;
-    return hours.map((hour, idx) => {
-      const activeCount = Math.round(baseTotal * (0.65 + Math.sin(idx * 0.8) * 0.2));
-      const idleCount = Math.round(baseTotal * 0.15);
-      const inTransit = Math.max(0, baseTotal - activeCount - idleCount);
+    const movingTotal = activeWorkers.filter(p => p.presenceState === 'MOVING').length;
+    const idleTotal = Math.max(0, baseTotal - movingTotal);
+
+    return hours.map((hour) => {
       return {
         time: hour,
-        toolTime: activeCount,
-        idle: idleCount,
-        transit: inTransit,
-        efficiencyPct: baseTotal > 0 ? Math.round((activeCount / baseTotal) * 100) : 0
+        toolTime: movingTotal,
+        idle: idleTotal,
+        transit: 0,
+        efficiencyPct: baseTotal > 0 ? Math.round((movingTotal / baseTotal) * 100) : 0
       };
     });
   }, [activeWorkers]);
 
   const zoneOccupancyData = useMemo(() => {
-    const defaultZonesConfig = (config?.defaultZones && config.defaultZones.length > 0)
-      ? config.defaultZones.map(z => ({ name: z.name, capacity: 15, risk: 'Normal' }))
-      : [
-          { name: 'Primary Portal', capacity: 10, risk: 'Normal' },
-          { name: 'Core Operations Area', capacity: 25, risk: 'Normal' },
-          { name: 'Secured Perimeter', capacity: 8, risk: 'High' }
-        ];
+    const rawZones = (trackingCtx?.zones && trackingCtx.zones.length > 0)
+      ? trackingCtx.zones
+      : (config?.defaultZones && config.defaultZones.length > 0)
+      ? config.defaultZones
+      : [];
 
-    return defaultZonesConfig.map(z => {
-      const current = activeWorkers.filter(p => (p.currentZone || p.zone || '').toLowerCase().includes(z.name.toLowerCase().split(' ')[0])).length;
-      const effectiveCurrent = current;
-      const loadPct = Math.round((effectiveCurrent / z.capacity) * 100);
+    const knownZoneNames = new Set(rawZones.map(z => z.name));
+    activeWorkers.forEach(w => {
+      const zName = w.currentZone || w.zone;
+      if (zName && !knownZoneNames.has(zName)) {
+        knownZoneNames.add(zName);
+      }
+    });
+
+    return Array.from(knownZoneNames).map(zName => {
+      const matchedConfig = rawZones.find(z => z.name.toLowerCase() === zName.toLowerCase());
+      const capacity = matchedConfig?.capacity || matchedConfig?.maxOccupancy || 20;
+      const current = activeWorkers.filter(p => (p.currentZone || p.zone || '').toLowerCase() === zName.toLowerCase()).length;
+      const loadPct = capacity > 0 ? Math.round((current / capacity) * 100) : 0;
       return {
-        zone: z.name,
-        current: effectiveCurrent,
-        capacity: z.capacity,
+        zone: zName,
+        current,
+        capacity,
         loadPct,
         risk: loadPct >= 90 ? 'High' : loadPct >= 70 ? 'Moderate' : 'Normal'
       };
     });
-  }, [activeWorkers, config?.defaultZones]);
+  }, [activeWorkers, trackingCtx?.zones, config?.defaultZones]);
 
   const incidentTrendData = useMemo(() => {
-    if (dbIncidents.length > 0) {
-      const nearMissCount = dbIncidents.filter(i => String(i.severity || '').toUpperCase().includes('LOW') || String(i.title || '').toLowerCase().includes('near')).length;
-      const zoneBreachCount = dbIncidents.filter(i => String(i.title || '').toLowerCase().includes('breach') || String(i.zone || '').toLowerCase().includes('exclusion') || String(i.zone || '').toLowerCase().includes('blast')).length;
-      const ppeViolationCount = dbIncidents.filter(i => String(i.title || '').toLowerCase().includes('ppe') || String(i.title || '').toLowerCase().includes('compliance')).length;
-
-      return [
-        { month: new Date().toLocaleString('default', { month: 'short' }) + ' ' + new Date().getFullYear(), nearMiss: nearMissCount, zoneBreach: zoneBreachCount, ppeViolation: ppeViolationCount, slipFall: 0 }
-      ];
+    const monthsMap: Record<string, { month: string; nearMiss: number; zoneBreach: number; ppeViolation: number }> = {};
+    const now = new Date();
+    
+    // Create the last 6 rolling months dynamically
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const label = d.toLocaleString('default', { month: 'short' });
+      const year = d.getFullYear();
+      const key = `${year}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      monthsMap[key] = { month: label, nearMiss: 0, zoneBreach: 0, ppeViolation: 0 };
     }
-    return [];
+
+    (dbIncidents || []).forEach(inc => {
+      const dateStr = inc.timestamp || inc.createdAt || inc.date || new Date().toISOString();
+      const incDate = new Date(dateStr);
+      if (!isNaN(incDate.getTime())) {
+        const key = `${incDate.getFullYear()}-${String(incDate.getMonth() + 1).padStart(2, '0')}`;
+        if (monthsMap[key]) {
+          const title = String(inc.title || '').toLowerCase();
+          const zone = String(inc.zone || '').toLowerCase();
+          if (title.includes('breach') || zone.includes('exclusion') || zone.includes('restricted')) {
+            monthsMap[key].zoneBreach++;
+          } else if (title.includes('ppe') || title.includes('vest') || title.includes('helmet') || title.includes('hardhat')) {
+            monthsMap[key].ppeViolation++;
+          } else {
+            monthsMap[key].nearMiss++;
+          }
+        }
+      }
+    });
+
+    return Object.values(monthsMap);
   }, [dbIncidents]);
 
-  const ppeComplianceData = useMemo(() => {
+  const ppeRadarData = useMemo(() => {
+    const total = Math.max(1, activeWorkers.length);
     const compliantCount = activeWorkers.filter(p => p.ppeStatus !== 'NON_COMPLIANT').length;
-    const nonCompliantCount = activeWorkers.length - compliantCount;
+    const baseRate = activeWorkers.length > 0 ? Math.round((compliantCount / total) * 100) : 100;
+    const hardhatCount = activeWorkers.filter(p => p.hardhatTagId || p.TagID || p.ppeStatus === 'COMPLIANT').length;
+    const hardhatRate = activeWorkers.length > 0 ? Math.round((hardhatCount / total) * 100) : 100;
+
     return [
-      { name: `${safetyComplianceLabel || 'Safety'} Compliant`, value: compliantCount, color: '#10B981' },
-      { name: `${safetyComplianceLabel || 'Safety'} Attention Required`, value: nonCompliantCount, color: '#F59E0B' }
+      { subject: 'Head Protection', score: hardhatRate, target: 98, fullMark: 100 },
+      { subject: 'High-Vis Vest', score: baseRate, target: 95, fullMark: 100 },
+      { subject: 'Safety Footwear', score: baseRate, target: 95, fullMark: 100 },
+      { subject: 'Zone Boundaries', score: Math.max(0, 100 - (dbIncidents.length * 2)), target: 99, fullMark: 100 },
+      { subject: 'Harness & Fall', score: baseRate, target: 92, fullMark: 100 },
+      { subject: 'Ergonomic Dwell', score: Math.max(60, 100 - activeWorkers.filter(w => (w.dwellTime || 0) > 7200).length * 5), target: 90, fullMark: 100 }
     ];
-  }, [activeWorkers, safetyComplianceLabel]);
+  }, [activeWorkers, dbIncidents]);
 
   // EXPORT HANDLERS
   const handleExportFullBI = () => {
@@ -820,418 +893,127 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
         </div>
       )}
 
-      {/* 2. STICKY ENTERPRISE HEAD MENU & DOMAIN NAVIGATION */}
-      <div className="sticky top-0 z-20 bg-slate-50/95 dark:bg-slate-900/95 backdrop-blur-md pt-1 pb-2 space-y-2 border-b border-slate-200/80 dark:border-slate-800">
-        
-        {/* 3 Essential Working Analytics Tabs */}
-        <div className="bg-white dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 rounded-2xl p-1.5 shadow-2xs flex items-center gap-2 overflow-x-auto">
-          {[
-            {
-              id: 'operations',
-              label: 'Workforce & Operations',
-              icon: Zap
-            },
-            {
-              id: 'safety',
-              label: 'Safety, PPE & OSHA',
-              icon: ShieldCheck
-            },
-            {
-              id: 'equipment',
-              label: 'Portals & Reader Anchors',
-              icon: Radio
-            }
-          ].map(tab => {
-            const Icon = tab.icon;
-            const isActive = activeModule === tab.id || 
-              (tab.id === 'operations' && (activeModule === 'overview' || activeModule === 'executive' || activeModule === 'productivity' || activeModule === 'attendance' || activeModule === 'movement')) ||
-              (tab.id === 'safety' && (activeModule === 'occupancy' || activeModule === 'incidents' || activeModule === 'ppe')) ||
-              (tab.id === 'equipment' && activeModule === 'readers');
-            
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveModule(tab.id as any)}
-                className={`px-4 py-2.5 rounded-xl text-xs font-bold transition flex items-center gap-2 select-none cursor-pointer whitespace-nowrap ${
-                  isActive
-                    ? 'bg-[#007BC4] text-white shadow-xs'
-                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700/60 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                <Icon size={16} className={isActive ? 'text-white' : 'text-slate-400'} />
-                <span>{tab.label}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* 3. DYNAMIC MODULE CONTENTS */}
-
-      {/* --- MODULE A: WORKFORCE & OPERATIONS FEED --- */}
-      {(activeModule === 'operations' || activeModule === 'overview' || activeModule === 'executive' || activeModule === 'productivity' || activeModule === 'attendance' || activeModule === 'movement') && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          {/* Dynamic B2B Industry Intelligence KPIs */}
-          <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#007BC4] animate-pulse" />
-                <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
-                  {intelligenceProfile?.subIndustry || config?.industryName || 'Industry Intelligence'} Metrics & KPIs
-                </span>
-              </div>
-              <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-                Compliance: {intelligenceProfile?.complianceFramework || config?.complianceFramework || 'Standard'}
+      {/* 2. DYNAMIC WORKFORCE & OPERATIONS ANALYTICS CONTENT */}
+      <div className="space-y-6 animate-in fade-in duration-200">
+        {/* Dynamic B2B Industry Intelligence KPIs */}
+        <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-[#007BC4] animate-pulse" />
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
+                {intelligenceProfile?.subIndustry || config?.industryName || 'Industry Intelligence'} Metrics & KPIs
               </span>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-              {(dynamicKpis.length > 0 ? dynamicKpis : (intelligenceProfile?.kpis || [])).map((k: any) => (
-                <div key={k.key} className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700/80 shadow-2xs space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block truncate" title={k.label}>
-                    {k.label}
-                  </span>
-                  <div className="text-xl font-black text-slate-800 dark:text-slate-100 flex items-baseline gap-1">
-                    {k.value !== undefined ? k.value : k.target}
-                    <span className="text-xs font-semibold text-slate-400">{k.unit}</span>
-                  </div>
-                  <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate" title={k.description}>
-                    Target: {k.target} {k.unit}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
+              Compliance: {intelligenceProfile?.complianceFramework || config?.complianceFramework || 'Standard'}
+            </span>
           </div>
 
-          {/* Executive Top Cards */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-3 gap-4">
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Safety Compliance Score</span>
-                  <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{executiveKPIs.safetyScore}%</div>
-                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
-                    <ArrowUpRight size={12} /> +1.2% vs target
-                  </span>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            {(dynamicKpis.length > 0 ? dynamicKpis : (intelligenceProfile?.kpis || [])).map((k: any) => (
+              <div key={k.key} className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700/80 shadow-2xs space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block truncate" title={k.label}>
+                  {k.label}
+                </span>
+                <div className="text-xl font-black text-slate-800 dark:text-slate-100 flex items-baseline gap-1">
+                  {k.value !== undefined ? k.value : k.target}
+                  <span className="text-xs font-semibold text-slate-400">{k.unit}</span>
                 </div>
-                <div className="w-11 h-11 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/60 dark:border-emerald-800/60 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400 shadow-2xs">
-                  <ShieldCheck size={22} />
+                <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate" title={k.description}>
+                  Target: {k.target} {k.unit}
                 </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Productivity Index</span>
-                  <div className="text-2xl font-black text-blue-600 dark:text-blue-400">{executiveKPIs.productivityIndex}%</div>
-                  <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-0.5">
-                    <ArrowUpRight size={12} /> +3.4% tool-time efficiency
-                  </span>
-                </div>
-                <div className="w-11 h-11 bg-blue-50 dark:bg-blue-950/50 border border-blue-200/60 dark:border-blue-800/60 rounded-2xl flex items-center justify-center text-[#007BC4] shadow-2xs">
-                  <TrendingUp size={22} />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">OSHA TRIR Rate</span>
-                  <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{executiveKPIs.trirScore}</div>
-                  <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">Industry Avg: 2.40</span>
-                </div>
-                <div className="w-11 h-11 bg-amber-50 dark:bg-amber-950/50 border border-amber-200/60 dark:border-amber-800/60 rounded-2xl flex items-center justify-center text-amber-600 dark:text-amber-400 shadow-2xs">
-                  <ShieldAlert size={22} />
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Combined Attendance & PPE Radar Section */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            <Card className="lg:col-span-8 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="pb-2 flex flex-row items-center justify-between border-b border-slate-100 dark:border-slate-700/60">
-                <div>
-                  <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">Daily On-Site Headcount & Shift Attendance</CardTitle>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">On-time arrivals, late arrivals, and overtime {personnelSingular} counts</p>
-                </div>
-                <Badge variant="outline" className="text-[10px] font-bold text-[#007BC4] border-blue-200 dark:border-blue-800">MongoDB Atlas Synced</Badge>
-              </CardHeader>
-              <CardContent className="p-4 h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={attendanceTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.5} vertical={false} />
-                    <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                    <Tooltip contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                    <Bar dataKey="onTime" name={`On-Time ${personnelPlural}`} fill="#007BC4" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="late" name="Late Arrivals" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-                    <Bar dataKey="overtime" name={`Overtime ${personnelPlural}`} fill="#8B5CF6" radius={[4, 4, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            <Card className="lg:col-span-4 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="pb-2 border-b border-slate-100 dark:border-slate-700/60">
-                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">{safetyComplianceLabel} Safety Radar Compliance</CardTitle>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Real-time inspection & safety adherence rates</p>
-              </CardHeader>
-              <CardContent className="p-4 h-72 flex items-center justify-center">
-                <ResponsiveContainer width="100%" height="100%">
-                  <RadarChart cx="50%" cy="50%" outerRadius="70%" data={ppeComplianceData}>
-                    <PolarGrid stroke="#e2e8f0" strokeOpacity={0.6} />
-                    <PolarAngleAxis dataKey="subject" stroke="#64748b" fontSize={10} />
-                    <PolarRadiusAxis angle={30} domain={[0, 100]} fontSize={9} stroke="#94a3b8" />
-                    <Radar name="Actual Score %" dataKey="score" stroke="#007BC4" fill="#007BC4" fillOpacity={0.45} />
-                    <Radar name="Safety Target %" dataKey="target" stroke="#10B981" fill="#10B981" fillOpacity={0.15} />
-                    <Tooltip contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0' }} />
-                  </RadarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      )}
-
-      {/* --- MODULE B: OPERATIONS & THROUGHPUT --- */}
-      {(activeModule === 'operations' || activeModule === 'productivity' || activeModule === 'attendance') && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          <div>
-            {/* Zone Throughput & Congestion */}
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
-                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">
-                  Zone Hourly Throughput & Dwell Risk
-                </CardTitle>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Automated detection of personnel density and bottleneck choke points</p>
-              </CardHeader>
-              <CardContent className="p-0 overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
-                  <thead>
-                    <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100 dark:border-slate-700">
-                      <th className="p-3.5 pl-4">Zone Location</th>
-                      <th className="p-3.5 text-right">Hourly Flow</th>
-                      <th className="p-3.5 text-right">Avg Dwell</th>
-                      <th className="p-3.5 text-center pr-4">Congestion Risk</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
-                    {movementFlowData.map(row => (
-                      <tr key={row.zone} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
-                        <td className="p-3.5 pl-4 font-bold text-slate-800 dark:text-slate-200">{row.zone}</td>
-                        <td className="p-3.5 text-right font-mono font-bold text-[#007BC4]">{row.hourlyFlow} p/hr</td>
-                        <td className="p-3.5 text-right font-mono text-slate-600 dark:text-slate-300">{row.avgDwellMin} min</td>
-                        <td className="p-3.5 text-center pr-4">
-                          <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                            row.congestionRisk === 'High' 
-                              ? 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800' 
-                              : row.congestionRisk === 'Medium'
-                              ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800'
-                              : 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
-                          }`}>
-                            {row.congestionRisk}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      )}
-
-      {/* --- MODULE C: PORTALS & READER ANCHORS --- */}
-      {(activeModule === 'equipment' || activeModule === 'readers' || activeModule === 'movement') && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          
-          {/* Reader Network Summary Bar */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Total Active Portals</span>
-                  <div className="text-2xl font-black text-slate-900 dark:text-white">
-                    {portalReaders.length}
-                  </div>
-                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">MongoDB Atlas Synced</span>
-                </div>
-                <div className="w-11 h-11 bg-blue-50 dark:bg-blue-950/50 border border-blue-200/60 dark:border-blue-800/60 rounded-2xl flex items-center justify-center text-[#007BC4]">
-                  <Radio size={22} />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Online & Scanning</span>
-                  <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
-                    {portalReaders.filter(p => String(p.status).toUpperCase() === 'ONLINE' || String(p.status).toUpperCase() === 'SCANNING').length}
-                  </div>
-                  <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Active Gate Scans</span>
-                </div>
-                <div className="w-11 h-11 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/60 dark:border-emerald-800/60 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400">
-                  <CheckCircle2 size={22} />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">In Warning State</span>
-                  <div className="text-2xl font-black text-amber-600 dark:text-amber-400">
-                    {portalReaders.filter(p => String(p.status).toUpperCase() === 'WARNING').length}
-                  </div>
-                  <span className="text-[10px] font-semibold text-amber-600 dark:text-amber-400">High Attenuation</span>
-                </div>
-                <div className="w-11 h-11 bg-amber-50 dark:bg-amber-950/50 border border-amber-200/60 dark:border-amber-800/60 rounded-2xl flex items-center justify-center text-amber-600 dark:text-amber-400">
-                  <AlertTriangle size={22} />
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardContent className="p-4 flex items-center justify-between">
-                <div className="space-y-1">
-                  <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Offline Readers</span>
-                  <div className="text-2xl font-black text-rose-600 dark:text-rose-400">
-                    {portalReaders.filter(p => String(p.status).toUpperCase() === 'OFFLINE').length}
-                  </div>
-                  <span className="text-[10px] font-semibold text-rose-600 dark:text-rose-400">Needs Inspection</span>
-                </div>
-                <div className="w-11 h-11 bg-rose-50 dark:bg-rose-950/50 border border-rose-200/60 dark:border-rose-800/60 rounded-2xl flex items-center justify-center text-rose-600 dark:text-rose-400">
-                  <XCircle size={22} />
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Unified UHF Reader Portal Matrix Table */}
-          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-            <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3 flex flex-row items-center justify-between">
-              <div>
-                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Radio size={16} className="text-[#007BC4]" /> Personnel UHF Reader Portals & Network Anchors
-                </CardTitle>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Live MongoDB hardware telemetry, antenna RSSI quality, and personnel scan rates</p>
               </div>
-              <Badge variant="outline" className="text-[#007BC4] font-bold border-blue-200 dark:border-blue-800">
-                MongoDB Live ({portalReaders.length} Nodes)
-              </Badge>
-            </CardHeader>
-            <CardContent className="p-0 overflow-x-auto">
-              <table className="w-full text-left border-collapse text-xs">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100 dark:border-slate-700">
-                    <th className="p-3.5 pl-4">Reader Portal Name</th>
-                    <th className="p-3.5">Zone Location</th>
-                    <th className="p-3.5">Hardware Type</th>
-                    <th className="p-3.5 text-right">RSSI Signal</th>
-                    <th className="p-3.5 text-right">Read Rate</th>
-                    <th className="p-3.5 text-right">Scans Today</th>
-                    <th className="p-3.5 text-center">Status</th>
-                    <th className="p-3.5 text-center pr-4">Diagnostic</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
-                  {portalReaders.length === 0 ? (
-                    <tr>
-                      <td colSpan={8} className="p-8 text-center text-slate-400 font-semibold">
-                        No portal readers or network anchors configured in MongoDB. Register readers in Custom Map or Hardware Integration to view live telemetry.
-                      </td>
-                    </tr>
-                  ) : (
-                    portalReaders.map(portal => {
-                      const isPinging = pingingReader === portal.id;
-                      const st = String(portal.status || 'ONLINE').toUpperCase();
-                      return (
-                        <tr key={portal.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
-                          <td className="p-3.5 pl-4">
-                            <strong className="text-slate-800 dark:text-slate-200 block text-xs">{portal.name}</strong>
-                            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono">{portal.id}</span>
-                          </td>
-                          <td className="p-3.5 font-bold text-slate-700 dark:text-slate-300">{portal.zone}</td>
-                          <td className="p-3.5 text-slate-500 dark:text-slate-400">{portal.type}</td>
-                          <td className="p-3.5 text-right font-mono font-bold text-slate-700 dark:text-slate-300">{portal.rssi}</td>
-                          <td className="p-3.5 text-right font-mono text-slate-600 dark:text-slate-400">{portal.rate}</td>
-                          <td className="p-3.5 text-right font-mono font-bold text-[#007BC4]">{portal.scans} scans</td>
-                          <td className="p-3.5 text-center">
-                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold ${
-                              st === 'ONLINE' || st === 'SCANNING'
-                                ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300 dark:border-emerald-800'
-                                : st === 'WARNING'
-                                ? 'bg-amber-50 text-amber-800 border border-amber-200 dark:bg-amber-950 dark:text-amber-300 dark:border-amber-800'
-                                : 'bg-rose-50 text-rose-800 border border-rose-200 dark:bg-rose-950 dark:text-rose-300 dark:border-rose-800'
-                            }`}>
-                              {st}
-                            </span>
-                          </td>
-                          <td className="p-3.5 text-center pr-4">
-                            <button
-                              onClick={() => handlePingReader(portal.id)}
-                              disabled={isPinging}
-                              className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 rounded-lg font-bold text-[10px] transition flex items-center gap-1 mx-auto cursor-pointer shadow-2xs"
-                            >
-                              <RadioTower size={12} className={isPinging ? 'animate-pulse text-[#007BC4]' : 'text-slate-500'} />
-                              <span>{isPinging ? 'Testing...' : 'Ping Node'}</span>
-                            </button>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
+            ))}
+          </div>
+        </div>
+
+        {/* Executive Top Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-3 gap-4">
+          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
+            <CardContent className="p-4 flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Safety Compliance Score</span>
+                <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{executiveKPIs.safetyScore}%</div>
+                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
+                  <ShieldCheck size={12} /> {executiveKPIs.safetyScore >= 90 ? 'Optimal Compliance' : 'Attention Required'}
+                </span>
+              </div>
+              <div className="w-11 h-11 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/60 dark:border-emerald-800/60 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400 shadow-2xs">
+                <ShieldCheck size={22} />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
+            <CardContent className="p-4 flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Productivity Index</span>
+                <div className="text-2xl font-black text-blue-600 dark:text-blue-400">{executiveKPIs.productivityIndex}%</div>
+                <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-0.5">
+                  <TrendingUp size={12} /> {executiveKPIs.productivityIndex}% Active Presence
+                </span>
+              </div>
+              <div className="w-11 h-11 bg-blue-50 dark:bg-blue-950/50 border border-blue-200/60 dark:border-blue-800/60 rounded-2xl flex items-center justify-center text-[#007BC4] shadow-2xs">
+                <TrendingUp size={22} />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
+            <CardContent className="p-4 flex items-center justify-between">
+              <div className="space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">OSHA TRIR Rate</span>
+                <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{executiveKPIs.trirScore}</div>
+                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                  {executiveKPIs.openIncidents} Open Recordable Incidents
+                </span>
+              </div>
+              <div className="w-11 h-11 bg-amber-50 dark:bg-amber-950/50 border border-amber-200/60 dark:border-amber-800/60 rounded-2xl flex items-center justify-center text-amber-600 dark:text-amber-400 shadow-2xs">
+                <ShieldAlert size={22} />
+              </div>
             </CardContent>
           </Card>
         </div>
-      )}
 
-      {/* --- MODULE D: SAFETY, PPE & INCIDENT TRENDS --- */}
-      {(activeModule === 'incidents' || activeModule === 'ppe' || activeModule === 'safety' || activeModule === 'occupancy') && (
-        <div className="space-y-6 animate-in fade-in duration-200">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            
-            {/* Incident Trends Chart */}
-            <Card className="lg:col-span-8 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="flex flex-row items-center justify-between border-b border-slate-100 dark:border-slate-700/60 pb-3">
-                <div>
-                  <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">6-Month Safety Incident & Near-Miss Reduction Trend</CardTitle>
-                  <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Tracking near misses, PPE violations, and unauthorized zone breaches</p>
+        {/* Combined Attendance & Zone Occupancy Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+          <Card className="lg:col-span-8 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
+            <CardHeader className="pb-2 flex flex-row items-center justify-between border-b border-slate-100 dark:border-slate-700/60">
+              <div>
+                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">Daily On-Site Headcount & Shift Attendance</CardTitle>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">On-time arrivals, late arrivals, and overtime {personnelSingular} counts</p>
+              </div>
+              <Badge variant="outline" className="text-[10px] font-bold text-[#007BC4] border-blue-200 dark:border-blue-800">MongoDB Atlas Synced</Badge>
+            </CardHeader>
+            <CardContent className="p-4 h-72">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={attendanceTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.5} vertical={false} />
+                  <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
+                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
+                  <Bar dataKey="onTime" name={`On-Time ${personnelPlural}`} fill="#007BC4" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="late" name="Late Arrivals" fill="#F59E0B" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="overtime" name={`Overtime ${personnelPlural}`} fill="#8B5CF6" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </CardContent>
+          </Card>
+
+          {/* Zone Capacity & Occupancy Matrix */}
+          <Card className="lg:col-span-4 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
+            <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
+              <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">Zone Capacity & Occupancy</CardTitle>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Real-time headcount vs permitted safety capacity</p>
+            </CardHeader>
+            <CardContent className="p-4 space-y-4 max-h-72 overflow-y-auto">
+              {zoneOccupancyData.length === 0 ? (
+                <div className="p-4 text-center text-slate-400 text-xs font-medium">
+                  No active zone telemetry. Monitored zones will update in real time.
                 </div>
-                <Badge variant="outline" className="text-emerald-600 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800 font-bold">-75% Incident Reduction</Badge>
-              </CardHeader>
-              <CardContent className="p-4 h-72">
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={incidentTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.5} vertical={false} />
-                    <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                    <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                    <Tooltip contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0' }} />
-                    <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                    <Area type="monotone" dataKey="ppeViolation" name="PPE Violations" stroke="#F59E0B" fill="#F59E0B" fillOpacity={0.2} />
-                    <Area type="monotone" dataKey="nearMiss" name="Near Misses" stroke="#007BC4" fill="#007BC4" fillOpacity={0.2} />
-                    <Area type="monotone" dataKey="zoneBreach" name="Zone Breaches" stroke="#EF4444" fill="#EF4444" fillOpacity={0.2} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            {/* Zone Capacity Matrix */}
-            <Card className="lg:col-span-4 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-              <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
-                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">Zone Capacity & Thresholds</CardTitle>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Real-time headcount vs permitted safety occupancy</p>
-              </CardHeader>
-              <CardContent className="p-4 space-y-4">
-                {zoneOccupancyData.map(z => (
+              ) : (
+                zoneOccupancyData.map(z => (
                   <div key={z.zone} className="space-y-1.5">
                     <div className="flex justify-between items-center text-xs">
                       <span className="font-bold text-slate-800 dark:text-slate-200 truncate pr-2">{z.zone}</span>
@@ -1242,112 +1024,66 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
                         className={`h-full rounded-full transition-all duration-500 ${
                           z.loadPct > 90 ? 'bg-rose-500' : z.loadPct > 75 ? 'bg-amber-500' : 'bg-[#007BC4]'
                         }`}
-                        style={{ width: `${z.loadPct}%` }}
+                        style={{ width: `${Math.min(100, z.loadPct)}%` }}
                       />
                     </div>
                   </div>
-                ))}
-              </CardContent>
-            </Card>
-
-          </div>
+                ))
+              )}
+            </CardContent>
+          </Card>
         </div>
-      )}
 
-      {/* --- MODAL: REGISTER UHF READER PORTAL --- */}
-      {isEquipmentModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 max-w-md w-full shadow-2xl space-y-4 text-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-700">
-              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <Radio size={18} className="text-[#007BC4]" /> Register UHF Reader Portal / Zone Anchor
-              </h3>
-              <button onClick={() => setIsEquipmentModalOpen(false)} className="text-slate-400 hover:text-slate-600">
-                <X size={16} />
-              </button>
-            </div>
-            
-            <form onSubmit={handleAddEquipment} className="space-y-3">
-              <div>
-                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Reader Portal Name:</label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Gate 1 Turnstile UHF Reader Portal"
-                  value={eqName}
-                  onChange={e => setEqName(e.target.value)}
-                  className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none focus:ring-2 focus:ring-[#007BC4] text-slate-800 dark:text-slate-100"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Portal Type:</label>
-                  <select
-                    value={eqType}
-                    onChange={e => setEqType(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none text-slate-800 dark:text-slate-100"
-                  >
-                    <option value="Fixed UHF Portal">Fixed UHF Gate Portal</option>
-                    <option value="UHF RFID Reader">UHF 4-Port Reader</option>
-                    <option value="Long-Range UHF">Long-Range UHF Antenna</option>
-                    <option value="Overhead Portal">Overhead Structure Portal</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Active Runtime (hrs):</label>
-                  <input
-                    type="number"
-                    step="0.5"
-                    value={eqActiveHours}
-                    onChange={e => setEqActiveHours(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none text-slate-800 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Load Factor %:</label>
-                  <input
-                    type="number"
-                    value={eqLoadFactor}
-                    onChange={e => setEqLoadFactor(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none text-slate-800 dark:text-slate-100"
-                  />
-                </div>
-
-                <div>
-                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Maint. Due (Days):</label>
-                  <input
-                    type="number"
-                    value={eqMaintDays}
-                    onChange={e => setEqMaintDays(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-medium outline-none text-slate-800 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setIsEquipmentModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-bold hover:bg-slate-200 transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-2 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl font-bold transition cursor-pointer shadow-xs"
-                >
-                  Save Equipment
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
+        {/* Zone Throughput & Congestion Risk Table */}
+        <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
+          <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
+            <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">
+              Zone Hourly Flow & Dwell Risk
+            </CardTitle>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Automated detection of personnel density, dwell duration, and choke points</p>
+          </CardHeader>
+          <CardContent className="p-0 overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100 dark:border-slate-700">
+                  <th className="p-3.5 pl-4">Zone Location</th>
+                  <th className="p-3.5 text-right">Active Flow</th>
+                  <th className="p-3.5 text-right">Avg Dwell</th>
+                  <th className="p-3.5 text-center pr-4">Congestion Risk</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
+                {movementFlowData.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="p-6 text-center text-slate-400 font-medium">
+                      No active personnel in monitored sectors.
+                    </td>
+                  </tr>
+                ) : (
+                  movementFlowData.map(row => (
+                    <tr key={row.zone} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
+                      <td className="p-3.5 pl-4 font-bold text-slate-800 dark:text-slate-200">{row.zone}</td>
+                      <td className="p-3.5 text-right font-mono font-bold text-[#007BC4]">{row.hourlyFlow} {personnelPlural.toLowerCase()}</td>
+                      <td className="p-3.5 text-right font-mono text-slate-600 dark:text-slate-300">{row.avgDwellMin} min</td>
+                      <td className="p-3.5 text-center pr-4">
+                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
+                          row.congestionRisk === 'High' 
+                            ? 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800' 
+                            : row.congestionRisk === 'Medium'
+                            ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800'
+                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
+                        }`}>
+                          {row.congestionRisk}
+                        </span>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

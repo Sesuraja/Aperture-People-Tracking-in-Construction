@@ -205,40 +205,87 @@ export default function LiveTrackingTab({
   }, []);
 
   // Unified workforce list directly from MongoDB (people + registered_people + live tracking context)
-
   const people = useMemo(() => {
+    // 1. Build authoritative directory from registered workforce to resolve genuine employee names
+    const directory = new Map<string, any>();
+    const registerEntry = (p: any) => {
+      if (!p) return;
+      const genuineName = p.name || p.workerName || p.personName || (p.firstName ? `${p.firstName} ${p.lastName || ''}`.trim() : '');
+      const isGeneric = !genuineName || genuineName.toLowerCase().startsWith('tag ') || genuineName.toLowerCase().startsWith('worker ');
+      
+      const keys: string[] = [];
+      const addKey = (v: any) => {
+        if (!v) return;
+        const str = String(v).trim();
+        if (!str) return;
+        keys.push(str);
+        keys.push(str.toLowerCase());
+        keys.push(str.toUpperCase());
+        const clean = str.replace(/[^a-zA-Z0-9]/g, '');
+        if (clean) {
+          keys.push(clean);
+          keys.push(clean.toLowerCase());
+          keys.push(clean.toUpperCase());
+        }
+        const noPfx = str.replace(/^(tag|hh|rfid|vis|epc)[_\-\s:]*/i, '');
+        if (noPfx && noPfx !== str) {
+          keys.push(noPfx);
+          keys.push(noPfx.toLowerCase());
+          keys.push(noPfx.toUpperCase());
+        }
+      };
+
+      addKey(p.id);
+      addKey(p.hardhatTagId);
+      addKey(p.tagId);
+      addKey(p.TagID);
+      addKey(p.epc);
+      addKey(p.badgeId);
+      addKey(p.workerId);
+      addKey(p.employeeId);
+      if (genuineName && !isGeneric) {
+        addKey(genuineName);
+      }
+
+      keys.forEach(k => {
+        if (!directory.has(k) || (!isGeneric && directory.get(k)?.isGeneric)) {
+          directory.set(k, { ...p, genuineName, isGeneric });
+        }
+      });
+    };
+
+    (registeredPeople || []).forEach(registerEntry);
+    (dbPeople || []).forEach(registerEntry);
+
     const map = new Map<string, Person>();
-    const nameToKeyMap = new Map<string, string>();
-    const tagToKeyMap = new Map<string, string>();
 
     const append = (arr: Person[] | undefined) => {
       if (!arr) return;
       arr.forEach(p => {
         if (!p) return;
         const rawId = String(p.id || (p as any).hardhatTagId || (p as any).tagId || '').trim();
-        const rawTag = String((p as any).hardhatTagId || (p as any).tagId || (p as any).rfidTag || (p.id?.length > 10 ? p.id : '')).trim().toUpperCase();
-        const rawName = String(p.name || '').trim().toLowerCase();
+        const rawTag = String((p as any).hardhatTagId || (p as any).tagId || (p as any).rfidTag || (p.id?.length > 10 ? p.id : '')).trim();
 
-        // Find canonical key by Tag ID or worker Name
-        let canonicalKey = '';
-        if (rawTag && tagToKeyMap.has(rawTag)) {
-          canonicalKey = tagToKeyMap.get(rawTag)!;
-        } else if (rawName && nameToKeyMap.has(rawName)) {
-          canonicalKey = nameToKeyMap.get(rawName)!;
-        } else if (rawId && map.has(rawId)) {
-          canonicalKey = rawId;
-        } else {
-          canonicalKey = rawTag || rawId || rawName || `worker_${map.size + 1}`;
-        }
+        // Match against directory to resolve genuine employee name
+        const match = directory.get(rawTag) || (rawTag ? directory.get(rawTag.toLowerCase()) : null) || (rawTag ? directory.get(rawTag.toUpperCase()) : null) ||
+                      directory.get(rawId) || (rawId ? directory.get(rawId.toLowerCase()) : null) || (rawId ? directory.get(rawId.toUpperCase()) : null) ||
+                      (p.name ? directory.get(p.name.toLowerCase()) : null);
 
-        if (rawTag) tagToKeyMap.set(rawTag, canonicalKey);
-        if (rawName) nameToKeyMap.set(rawName, canonicalKey);
+        const resolvedName = (match?.genuineName && !match.isGeneric) ? match.genuineName :
+                             (p.name && !p.name.startsWith('Tag ') && !p.name.startsWith('Worker ')) ? p.name :
+                             (match?.name || p.name || `Worker ${map.size + 1}`);
+
+        const resolvedRole = (match?.role && match.role !== 'Field Personnel') ? match.role : (p.role || 'Field Personnel');
+        const resolvedCompany = match?.tradeCompany || match?.company || p.tradeCompany || 'Contractor';
+        const canonicalKey = match?.id || rawTag || rawId || resolvedName;
 
         if (!map.has(canonicalKey)) {
           map.set(canonicalKey, {
             ...p,
             id: canonicalKey,
-            name: p.name || `Worker ${map.size + 1}`
+            name: resolvedName,
+            role: resolvedRole,
+            tradeCompany: resolvedCompany
           });
         } else {
           // Merge live telemetry coordinates and latest state
@@ -247,25 +294,30 @@ export default function LiveTrackingTab({
             ...existing,
             ...p,
             id: canonicalKey,
-            name: (p.name && !p.name.startsWith('Tag ')) ? p.name : existing.name,
-            role: (p.role && p.role !== 'Field Personnel') ? p.role : existing.role,
+            name: (resolvedName && !resolvedName.startsWith('Tag ') && !resolvedName.startsWith('Worker ')) ? resolvedName : existing.name,
+            role: (resolvedRole && resolvedRole !== 'Field Personnel') ? resolvedRole : existing.role,
+            tradeCompany: resolvedCompany || existing.tradeCompany,
+            currentZone: p.currentZone || existing.currentZone,
             x: p.x !== undefined ? p.x : existing.x,
             y: p.y !== undefined ? p.y : existing.y,
             presenceState: p.presenceState || existing.presenceState,
-            currentZone: p.currentZone || existing.currentZone,
+            lastSeen: p.lastSeen || existing.lastSeen,
+            lastReader: p.lastReader || existing.lastReader,
+            rssi: p.rssi !== undefined ? p.rssi : existing.rssi,
             dwellTime: p.dwellTime !== undefined ? p.dwellTime : existing.dwellTime,
             battery: p.battery !== undefined ? p.battery : existing.battery,
+            trail: p.trail && p.trail.length > 0 ? p.trail : existing.trail,
             floor: (p as any).floor || (p as any).floorLevel || (existing as any).floor || (existing as any).floorLevel
           } as any);
         }
       });
     };
 
-    // Prefer registered_people first, then dbPeople, tracking context, and props
+    // Load static database registries first, then overwrite with live dynamic telemetry
     append(registeredPeople);
     append(dbPeople);
-    append(trackingCtx?.people);
     append(propPeople);
+    append(trackingCtx?.people);
 
     const merged = Array.from(map.values());
     return merged.length > 0 ? merged : (propPeople || []);

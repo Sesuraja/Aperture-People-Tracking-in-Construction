@@ -3,7 +3,7 @@ try {
   dns.setServers(['8.8.8.8', '1.1.1.1', '8.8.4.4']);
 } catch {}
 
-import { MongoClient, Db, ObjectId } from 'mongodb';
+import { MongoClient, Db, ObjectId, Binary } from 'mongodb';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
@@ -43,7 +43,10 @@ const inMemoryStore: Record<string, any[]> = {
   visitors: [],
   visitor_security_list: [],
   visitor_access_tokens: [],
+  visitor_passes: [],
+  visitor_checkin_logs: [],
   visitor_access_logs: [],
+  evacuation_status: [],
   attendance_logs: [],
   leave_requests: [],
   shift_schedules: [],
@@ -109,12 +112,85 @@ export function invalidateCollectionCache(colName?: string) {
 }
 
 /**
- * Automatically detects base64 image strings (e.g. uploaded floorplans, blueprints, avatars)
- * and offloads them to static disk files, replacing them with light relative URLs (/uploads/floorplans/...)
- * This prevents MongoDB documents from bloating to multiple megabytes and keeps queries under 10ms.
+ * Automatically converts base64 image strings (custom map floorplans, blueprints, avatars)
+ * into native MongoDB BSON Binary (SubType 0) storage.
+ * This stores the raw binary bytes directly in MongoDB Atlas for small images (< 15MB).
  */
+export function convertImagesToBinary(doc: any): any {
+  if (!doc || typeof doc !== 'object') return doc;
+  const out = { ...doc };
+
+  const imageFieldKeys = ['floorplanUrl', 'floorplanData', 'imageData', 'url', 'avatar', 'image'];
+  for (const key of imageFieldKeys) {
+    const val = out[key];
+    if (typeof val === 'string' && val.startsWith('data:image/')) {
+      const match = val.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
+      if (match) {
+        const mimeType = match[1] === 'svg+xml' ? 'image/svg+xml' : `image/${match[1]}`;
+        const base64Data = match[2];
+        try {
+          const buffer = Buffer.from(base64Data, 'base64');
+          // For small images (< 15MB, within MongoDB 16MB document limit)
+          if (buffer.length <= 15 * 1024 * 1024) {
+            out.imageBinary = new Binary(buffer);
+            out.floorplanBinary = new Binary(buffer);
+            out.contentType = mimeType;
+            out.imageSize = buffer.length;
+            out.isBinary = true;
+            out.storedAs = 'bson_binary';
+          }
+        } catch (e: any) {
+          console.warn(`[DB Service] Failed to convert image to binary for field ${key}:`, e.message);
+        }
+      }
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Reconstitutes BSON Binary fields from MongoDB documents back into usable
+ * data URLs and clean properties for client consumption.
+ */
+export function serializeBinaryImages(doc: any): any {
+  if (!doc || typeof doc !== 'object') return doc;
+  const out = { ...doc };
+
+  const binaryField = out.imageBinary || out.floorplanBinary || out.binaryData;
+  if (binaryField) {
+    try {
+      let buffer: Buffer | null = null;
+      if (Buffer.isBuffer(binaryField)) {
+        buffer = binaryField;
+      } else if (binaryField && typeof binaryField.buffer === 'object' && binaryField.buffer) {
+        buffer = Buffer.from(binaryField.buffer);
+      } else if (binaryField && typeof binaryField.value === 'function') {
+        buffer = Buffer.from(binaryField.value());
+      }
+
+      if (buffer && buffer.length > 0) {
+        const mimeType = out.contentType || 'image/webp';
+        const dataUrl = `data:${mimeType};base64,${buffer.toString('base64')}`;
+        if (!out.floorplanUrl || out.floorplanUrl.startsWith('data:') === false) {
+          out.floorplanUrl = dataUrl;
+        }
+        if (!out.url || out.url.startsWith('data:') === false) {
+          out.url = dataUrl;
+        }
+        out.imageSize = buffer.length;
+        out.contentType = mimeType;
+        out.isBinary = true;
+      }
+    } catch (e: any) {
+      console.warn('[DB Service] Error serializing BSON binary image:', e.message);
+    }
+  }
+
+  return out;
+}
+
 export function offloadBase64Images(doc: any): any {
-  // Store uploaded image maps directly in MongoDB Atlas without hardcoding or uploading to code/disk
   return doc;
 }
 
@@ -454,7 +530,7 @@ export async function getCollectionDocs(
             delete out.tagId;
           }
         }
-        return out;
+        return serializeBinaryImages(out);
       });
 
       collectionReadCache.set(cacheKey, { docs, cachedAt: Date.now() });
@@ -472,8 +548,9 @@ export async function getCollectionDocs(
         : item.organizationId === organizationId
     );
   }
-  collectionReadCache.set(cacheKey, { docs: result, cachedAt: Date.now() });
-  return result;
+  const serialized = result.map((item: any) => serializeBinaryImages(item));
+  collectionReadCache.set(cacheKey, { docs: serialized, cachedAt: Date.now() });
+  return serialized;
 }
 
 export const DEFAULT_ORGS = ['default', 'demo', 'org_main', 'org_aperture_default'];
@@ -527,7 +604,7 @@ export async function getDocById(colName: string, id: string, organizationId?: s
       if (doc) {
         const { _id, ...rest } = doc;
         const out: any = { id: doc.id || (_id ? _id.toString() : idStr), ...rest };
-        return out;
+        return serializeBinaryImages(out);
       }
       return null;
     } catch (err) {
@@ -549,12 +626,13 @@ export async function getDocById(colName: string, id: string, organizationId?: s
       if (!isBothDefault) return null; // IDOR protected: do not return other tenant's document
     }
   }
-  return doc;
+  return serializeBinaryImages(doc);
 }
 
 export async function upsertDoc(colName: string, doc: any, organizationId?: string): Promise<any> {
   invalidateCollectionCache(colName);
-  const processedDoc = offloadBase64Images(doc);
+  const binaryReady = convertImagesToBinary(doc);
+  const processedDoc = offloadBase64Images(binaryReady);
 
   if (!processedDoc.id) {
     processedDoc.id = `${colName}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
@@ -938,14 +1016,21 @@ export async function bulkWriteRealtimeTags(
     const orgId = rawTag.organizationId || organizationId;
     const now = new Date();
     const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000);
+    const fullName = rawTag.name || rawTag.workerName || rawTag.personName || `${rawTag.FirstName || ''} ${rawTag.LastName || ''}`.trim() || '';
+    const parts = fullName ? fullName.split(' ') : [];
+    const firstName = rawTag.FirstName || parts[0] || '';
+    const lastName = rawTag.LastName || parts.slice(1).join(' ') || '';
+
     return {
       id: tagId,
       organizationId: orgId,
       TagID: tagId,
       Timestamp: rawTag.Timestamp || new Date().toISOString(),
       Location: rawTag.Location || rawTag.LocationName || rawTag.zone || 'Zone1',
-      FirstName: rawTag.FirstName || '',
-      LastName: rawTag.LastName || '',
+      FirstName: firstName,
+      LastName: lastName,
+      name: fullName || `${firstName} ${lastName}`.trim(),
+      role: rawTag.role || rawTag.tradeCompany || 'Field Personnel',
       rssi: rawTag.rssi !== undefined ? Number(rawTag.rssi) : -60,
       status: rawTag.status || 'Active',
       lastSyncAt: new Date().toISOString(),
@@ -1016,7 +1101,7 @@ export async function savePlaybackSnapshot(
     expireAt,
     tags: tags.map(t => ({
       tagId: t.TagID || t.tagId || t.id,
-      name: `${t.FirstName || ''} ${t.LastName || ''}`.trim() || 'Unknown',
+      name: t.name || t.workerName || t.personName || `${t.FirstName || ''} ${t.LastName || ''}`.trim() || 'Unknown',
       location: t.Location || t.LocationName || t.zone || 'Unknown',
       role: t.role || 'Personnel',
       rssi: t.rssi,
@@ -1390,13 +1475,14 @@ export async function pruneDuplicateAlerts(): Promise<number> {
 export async function purgeLegacySampleWorkers(): Promise<void> {
   if (!mongoDb) return;
   try {
-    const fakeIds = ['TAG_123', 'W-101', 'worker-1', 'worker-2', 'worker-3'];
+    const fakeIds = ['TAG_123', 'W-101', 'worker-1', 'worker-2', 'worker-3', 'TEST_AUTH_CHECK', 'TEST_DEVICE_INGEST'];
     const fakeNames = ['Staff User', 'John Miller'];
     const filter = {
       $or: [
         { id: { $in: fakeIds } },
         { _id: { $in: fakeIds } },
         { tagId: { $in: fakeIds } },
+        { TagID: { $in: fakeIds } },
         { hardhatTagId: { $in: fakeIds } },
         { name: { $in: fakeNames } },
         { personName: { $in: fakeNames } }
@@ -1405,6 +1491,16 @@ export async function purgeLegacySampleWorkers(): Promise<void> {
     await mongoDb.collection('people').deleteMany(filter);
     await mongoDb.collection('registered_people').deleteMany(filter);
     await mongoDb.collection('attendance_logs').deleteMany(filter);
+    await mongoDb.collection('real_time_tags').deleteMany(filter);
+    await mongoDb.collection('live_tags').deleteMany(filter);
+    await mongoDb.collection('tag_history').deleteMany(filter);
+    await mongoDb.collection('rfid_realtime_events').deleteMany(filter);
+    await mongoDb.collection('playback_history').deleteMany({
+      $or: [
+        { 'tags.tagId': { $in: fakeIds } },
+        { 'tags.TagID': { $in: fakeIds } }
+      ]
+    });
     await mongoDb.collection('alerts').deleteMany({
       $or: [
         { tagId: { $in: fakeIds } },
@@ -1412,7 +1508,7 @@ export async function purgeLegacySampleWorkers(): Promise<void> {
       ]
     });
     invalidateCollectionCache();
-    console.log('[DB Service] Purged legacy sample workers (Staff User, John Miller, etc.) from MongoDB.');
+    console.log('[DB Service] Purged test/mock sample tags (TAG_123, Staff User, John Miller, etc.) from MongoDB.');
   } catch (err: any) {
     console.warn('[DB Service] Note on purgeLegacySampleWorkers:', err.message);
   }

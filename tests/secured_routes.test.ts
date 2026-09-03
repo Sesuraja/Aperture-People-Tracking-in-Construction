@@ -116,7 +116,7 @@ describe('Secured Routes Access Control', () => {
           'Content-Type': 'application/json',
           'X-Device-Key': 'aperture_test_device_key'
         },
-        body: JSON.stringify([{ TagID: 'TAG_123', Location: 'Zone_A' }])
+        body: JSON.stringify([{ TagID: 'TEST_AUTH_CHECK', Location: 'Zone_A' }])
       });
       expect(res.status).toBe(200);
     });

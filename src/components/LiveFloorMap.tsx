@@ -1376,8 +1376,8 @@ export default function LiveFloorMap({
                             'bg-emerald-500'
                           }`} />
                         </div>
-                        <span className="text-[9px] font-black text-slate-800 bg-white/95 px-1.5 py-0.5 rounded-md border border-slate-300 shadow-md truncate max-w-[65px] leading-tight text-center">
-                          {(person.name || "").split(' ')[0]}
+                        <span className="text-[9px] font-black text-slate-800 bg-white/95 px-1.5 py-0.5 rounded-md border border-slate-300 shadow-md truncate max-w-[100px] leading-tight text-center" title={person.name}>
+                          {person.name || "Worker"}
                         </span>
                       </div>
                     ) : (
@@ -1405,12 +1405,12 @@ export default function LiveFloorMap({
                           }`} />
                         </div>
 
-                        <div className="flex flex-col text-left min-w-[70px]">
-                          <div className="text-[10px] font-black text-slate-900 leading-tight tracking-wide truncate max-w-[90px]">
+                        <div className="flex flex-col text-left min-w-[75px]">
+                          <div className="text-[10px] font-black text-slate-900 leading-tight tracking-wide truncate max-w-[120px]" title={person.name}>
                             {person.name}
                           </div>
                           <div className="flex items-center gap-1.5 mt-0.5">
-                            <span className="text-[8px] font-bold text-slate-500 leading-none truncate max-w-[55px]">
+                            <span className="text-[8px] font-bold text-slate-500 leading-none truncate max-w-[65px]">
                               {person.role}
                             </span>
                             <span className={`text-[7px] font-extrabold px-1 py-0.5 rounded-sm uppercase tracking-wider leading-none border ${badgeBgColor}`}>

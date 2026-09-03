@@ -114,8 +114,12 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [selectedPersonForLeave, setSelectedPersonForLeave] = useState<Person | null>(null);
   const [leaveType, setLeaveType] = useState<LeaveRecord['type']>('Medical Leave');
-  const [leaveStartDate, setLeaveStartDate] = useState('2026-08-08');
-  const [leaveEndDate, setLeaveEndDate] = useState('2026-08-10');
+  const [leaveStartDate, setLeaveStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [leaveEndDate, setLeaveEndDate] = useState(() => {
+    const d = new Date();
+    d.setDate(d.getDate() + 2);
+    return d.toISOString().split('T')[0];
+  });
   const [leaveReasonText, setLeaveReasonText] = useState('Physiotherapy Session');
 
   // Shift Edit Modal
@@ -273,71 +277,201 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     return () => window.removeEventListener('gao_refresh_data', loadDbPeople);
   }, []);
 
-  // Combine real-time database logs with live moving personnel from TrackingContext & MongoDB
+  // Combine real-time database logs with live moving personnel from TrackingContext, GAO Live RFID API & MongoDB
   const attendanceData = useMemo<AttendanceRecord[]>(() => {
-    const map = new Map<string, AttendanceRecord>();
+    const todayDateStr = new Date().toISOString().split('T')[0];
 
-    // 1. Load persisted attendance logs from MongoDB
-    attendanceLogs.forEach(log => {
-      const key = (log.personId || log.name || log.id).toLowerCase();
-      map.set(key, log);
-    });
+    // 1. Build authoritative directory from registered workforce
+    const directory = new Map<string, any>();
+    const registerEntry = (p: any) => {
+      if (!p) return;
+      const genuineName = p.name || p.workerName || p.personName || (p.firstName ? `${p.firstName} ${p.lastName || ''}`.trim() : '');
+      const isGeneric = !genuineName || genuineName.toLowerCase().startsWith('tag ') || genuineName.toLowerCase().startsWith('worker ');
 
-    // 2. Synchronize registered people & live TrackingContext movers
-    const allPeople = [...(people || []), ...(trackingCtx?.people || []), ...(dbPeople || [])];
-    const seenIds = new Set<string>();
+      const keys: string[] = [];
+      const addKey = (v: any) => {
+        if (!v) return;
+        const str = String(v).trim();
+        if (!str) return;
+        keys.push(str);
+        keys.push(str.toLowerCase());
+        const clean = str.replace(/[^a-zA-Z0-9]/g, '');
+        if (clean) keys.push(clean.toLowerCase());
+        const noPfx = str.replace(/^(tag|hh|rfid|vis|epc)[_\-\s:]*/i, '');
+        if (noPfx && noPfx !== str) keys.push(noPfx.toLowerCase());
+      };
 
-    allPeople.forEach((p, idx) => {
-      if (!p || !p.id) return;
-      if (seenIds.has(p.id)) return;
-      seenIds.add(p.id);
+      addKey(p.id);
+      addKey(p.hardhatTagId);
+      addKey(p.tagId);
+      addKey(p.TagID);
+      addKey(p.epc);
+      addKey(p.badgeId);
+      if (genuineName && !isGeneric) addKey(genuineName);
 
-      const key = (p.id || p.name).toLowerCase();
-      const existing = map.get(key);
+      const entry = {
+        ...p,
+        id: p.id || p.hardhatTagId || p.tagId,
+        name: genuineName || p.name || 'Worker',
+        role: p.role || 'Field Personnel',
+        tradeCompany: p.tradeCompany || (p as any).company || organizationType || 'Operations Partner',
+        department: (p as any).department || p.role || 'Operations',
+        hardhatTagId: p.hardhatTagId || p.tagId || p.id,
+        currentZone: p.currentZone || 'Site Perimeter',
+        shiftStatus: p.shiftStatus || 'ON_SITE',
+        presenceState: p.presenceState || 'ACTIVE',
+        lastSeen: p.lastSeen
+      };
 
-      const liveZone = p.currentZone || 'Tower Core L2';
-      const isOnSite = p.shiftStatus === 'ON_SITE' || p.presenceState === 'MOVING' || p.presenceState === 'IDLE';
+      keys.forEach(k => {
+        if (!directory.has(k)) directory.set(k, entry);
+      });
+    };
 
-      if (existing) {
-        map.set(key, {
-          ...existing,
-          siteZone: liveZone || existing.siteZone,
-          status: isOnSite ? (existing.status === 'LATE' ? 'LATE' : 'PRESENT') : existing.status,
-          geoStatus: (liveZone.toLowerCase().includes('restricted') || liveZone.toLowerCase().includes('shaft')) ? 'OUT_OF_BOUNDS' : 'IN_GEO_FENCE',
-          updatedAt: new Date().toISOString()
-        });
-      } else {
-        map.set(key, {
-          id: `ATT-${p.id}`,
-          personId: p.id,
-          name: p.name,
-          role: p.role,
-          company: (p as any).tradeCompany || (p as any).company || organizationType || 'Operations Partner',
-          department: (p as any).department || p.role || 'Operations',
-          siteZone: liveZone,
-          shift: idx % 3 === 0 ? 'Night Shift (19:00-03:30)' : (idx % 4 === 0 ? 'Swing OT (15:00-23:30)' : 'Day Shift (07:00-15:30)'),
-          firstIn: '07:15',
-          lastOut: '15:45',
-          breakDurationMins: 45,
-          totalHoursStr: '8h 30m',
-          totalMins: 510,
-          overtimeHours: idx % 4 === 0 ? 1.5 : 0,
-          isLate: false,
-          isOvertime: idx % 4 === 0,
-          rfidTagId: p.hardhatTagId || `HH-${p.id}`,
-          geoStatus: 'IN_GEO_FENCE',
-          status: isOnSite ? 'PRESENT' : 'ABSENT',
-          hourlyRate: 45,
-          punchType: 'RFID_AUTO',
-          gateLocation: 'Main Turnstile Gate 1',
-          date: new Date().toISOString().split('T')[0],
-          updatedAt: new Date().toISOString()
-        });
+    (dbPeople || []).forEach(registerEntry);
+    (people || []).forEach(registerEntry);
+    (trackingCtx?.people || []).forEach(registerEntry);
+
+    // 2. Index approved leaves for today
+    const approvedLeaveMap = new Map<string, LeaveRecord>();
+    (leaveRequests || []).forEach(lv => {
+      if (lv.status === 'APPROVED' && (!lv.startDate || lv.startDate <= todayDateStr) && (!lv.endDate || lv.endDate >= todayDateStr)) {
+        const key = (lv.personId || lv.name || '').toLowerCase();
+        if (key) approvedLeaveMap.set(key, lv);
       }
     });
 
-    return Array.from(map.values());
-  }, [attendanceLogs, people, trackingCtx?.people, dbPeople]);
+    // 3. Index configured shift schedules
+    const shiftScheduleMap = new Map<string, ShiftScheduleRecord>();
+    (shiftSchedules || []).forEach(sc => {
+      const key = (sc.personId || sc.name || '').toLowerCase();
+      if (key) shiftScheduleMap.set(key, sc);
+    });
+
+    // 4. Index live tags from realtime RFID stream
+    const liveTagMap = new Map<string, any>();
+    (trackingCtx?.liveTags || []).forEach(tag => {
+      const tagId = String(tag.TagID || (tag as any).tagId || tag.id || '').trim();
+      if (tagId) {
+        liveTagMap.set(tagId.toLowerCase(), tag);
+        const clean = tagId.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+        if (clean) liveTagMap.set(clean, tag);
+        const noPfx = tagId.replace(/^(tag|hh|rfid|vis|epc)[_\-\s:]*/i, '').toLowerCase();
+        if (noPfx) liveTagMap.set(noPfx, tag);
+      }
+    });
+
+    // 5. Index MongoDB attendance logs
+    const mongoLogsMap = new Map<string, AttendanceRecord>();
+    (attendanceLogs || []).forEach(log => {
+      const pKey = String(log.personId || '').toLowerCase();
+      const tKey = String(log.rfidTagId || '').toLowerCase();
+      const nKey = String(log.name || '').toLowerCase();
+      if (pKey) mongoLogsMap.set(pKey, log);
+      if (tKey) mongoLogsMap.set(tKey, log);
+      if (nKey) mongoLogsMap.set(nKey, log);
+    });
+
+    // 6. Build unified attendance records for all known workers
+    const resultMap = new Map<string, AttendanceRecord>();
+    const seenCanonicalIds = new Set<string>();
+
+    const processPerson = (p: any, idx: number) => {
+      const canonicalId = String(p.id || p.hardhatTagId || p.tagId || p.name).trim();
+      if (!canonicalId || seenCanonicalIds.has(canonicalId.toLowerCase())) return;
+      seenCanonicalIds.add(canonicalId.toLowerCase());
+
+      const tagId = String(p.hardhatTagId || p.tagId || p.id || '').trim();
+      const rawTagLower = tagId.toLowerCase();
+      const rawIdLower = String(p.id || '').toLowerCase();
+      const nameLower = String(p.name || '').toLowerCase();
+
+      // Check live RFID tag telemetry
+      const liveTag = liveTagMap.get(rawTagLower) || liveTagMap.get(rawIdLower) || (nameLower ? liveTagMap.get(nameLower) : null);
+      // Check MongoDB persisted log
+      const mongoLog = mongoLogsMap.get(rawIdLower) || mongoLogsMap.get(rawTagLower) || (nameLower ? mongoLogsMap.get(nameLower) : null);
+      // Check shift schedule
+      const shiftSchedule = shiftScheduleMap.get(rawIdLower) || (nameLower ? shiftScheduleMap.get(nameLower) : null);
+      // Check approved leave
+      const approvedLeave = approvedLeaveMap.get(rawIdLower) || approvedLeaveMap.get(rawTagLower) || (nameLower ? approvedLeaveMap.get(nameLower) : null);
+
+      const isLiveActive = Boolean(
+        liveTag ||
+        p.presenceState === 'MOVING' ||
+        p.presenceState === 'ACTIVE' ||
+        p.shiftStatus === 'ON_SITE' ||
+        (p.lastSeen && (Date.now() - new Date(p.lastSeen).getTime()) < 3600000 * 12)
+      );
+
+      const liveZone = liveTag?.LocationName || liveTag?.Location || p.currentZone || mongoLog?.siteZone || 'Tower Core L2';
+
+      // Compute first in time
+      let firstIn = mongoLog?.firstIn || '--:--';
+      if (firstIn === '--:--' && (isLiveActive || p.lastSeen || liveTag)) {
+        if (liveTag?.EnterTime) {
+          firstIn = String(liveTag.EnterTime).slice(-8, -3) || '07:15';
+        } else if (p.lastSeen) {
+          const dt = new Date(p.lastSeen);
+          firstIn = `${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
+        } else {
+          firstIn = '07:30';
+        }
+      }
+
+      // Compute last out time
+      const lastOut = isLiveActive ? 'ACTIVE' : (mongoLog?.lastOut || (p.lastSeen ? new Date(p.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'));
+
+      // Determine attendance status
+      let status: AttendanceRecord['status'] = 'ABSENT';
+      if (approvedLeave) {
+        status = 'ON_LEAVE';
+      } else if (isLiveActive || mongoLog?.status === 'PRESENT' || mongoLog?.status === 'LATE' || mongoLog?.status === 'OVERTIME') {
+        const isLate = mongoLog?.isLate || (firstIn !== '--:--' && firstIn > '07:35' && (!shiftSchedule || shiftSchedule.shift.includes('Day')));
+        if (mongoLog?.isOvertime || (shiftSchedule?.overtimeAuthorized && shiftSchedule.maxOtHours > 0)) {
+          status = 'OVERTIME';
+        } else if (isLate) {
+          status = 'LATE';
+        } else {
+          status = 'PRESENT';
+        }
+      }
+
+      const assignedShiftName = shiftSchedule?.shift || (idx % 3 === 0 ? 'Night Shift (19:00-03:30)' : (idx % 4 === 0 ? 'Swing OT (15:00-23:30)' : 'Day Shift (07:00-15:30)'));
+      const isOutOfBounds = liveZone.toLowerCase().includes('restricted') || liveZone.toLowerCase().includes('danger') || liveZone.toLowerCase().includes('shaft');
+
+      resultMap.set(canonicalId.toLowerCase(), {
+        id: mongoLog?.id || `ATT-${canonicalId}`,
+        personId: p.id || canonicalId,
+        name: p.name || 'Worker',
+        role: p.role || 'Field Personnel',
+        company: p.tradeCompany || (p as any).company || organizationType || 'Operations Partner',
+        department: (p as any).department || p.role || 'Operations',
+        siteZone: liveZone,
+        shift: assignedShiftName as any,
+        firstIn,
+        lastOut,
+        breakDurationMins: mongoLog?.breakDurationMins !== undefined ? mongoLog.breakDurationMins : 45,
+        totalHoursStr: status === 'PRESENT' || status === 'LATE' || status === 'OVERTIME' ? (mongoLog?.totalHoursStr || '8h 15m') : '0h 0m',
+        totalMins: status === 'PRESENT' || status === 'LATE' || status === 'OVERTIME' ? (mongoLog?.totalMins || 495) : 0,
+        overtimeHours: status === 'OVERTIME' ? (mongoLog?.overtimeHours || 1.5) : 0,
+        isLate: status === 'LATE',
+        isOvertime: status === 'OVERTIME',
+        rfidTagId: tagId || `HH-${canonicalId}`,
+        geoStatus: isOutOfBounds ? 'OUT_OF_BOUNDS' : 'IN_GEO_FENCE',
+        status,
+        hourlyRate: mongoLog?.hourlyRate || 45,
+        punchType: mongoLog?.punchType || (isLiveActive ? 'RFID_AUTO' : 'RFID_AUTO'),
+        gateLocation: liveTag?.AntennaID ? `Antenna ${liveTag.AntennaID} Access Portal` : (mongoLog?.gateLocation || 'Main Turnstile Gate 1'),
+        date: todayDateStr,
+        updatedAt: new Date().toISOString()
+      });
+    };
+
+    // Process all registered and live workers
+    Array.from(directory.values()).forEach((p, idx) => processPerson(p, idx));
+
+    return Array.from(resultMap.values());
+  }, [attendanceLogs, people, trackingCtx?.people, trackingCtx?.liveTags, dbPeople, leaveRequests, shiftSchedules, organizationType]);
 
   // Filtered Roster
   const filteredRoster = useMemo(() => {
@@ -406,6 +540,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     if (!selectedPersonForPunch) return;
     const now = new Date();
     const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    const todayDateStr = now.toISOString().split('T')[0];
 
     const existing = attendanceData.find(a => a.personId === selectedPersonForPunch.id || a.name === selectedPersonForPunch.name);
 
@@ -442,7 +577,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           hourlyRate: 42,
           punchType: 'MANUAL_OVERRIDE',
           gateLocation: manualGateLocation,
-          date: '2026-08-07',
+          date: todayDateStr,
           updatedAt: now.toISOString()
         });
       }

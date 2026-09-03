@@ -91,8 +91,8 @@ dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// GET /api/data/floorplan_image/:id - streams floorplan image directly from MongoDB
-dataRouter.get('/floorplan_image/:id', async (req: AuthRequest, res: Response) => {
+// GET /api/data/floorplan_image/:id - streams floorplan image directly from MongoDB (Binary BSON or base64)
+const serveFloorplanImageHandler = async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const orgId = req.user?.organizationId || 'default';
 
@@ -104,13 +104,33 @@ dataRouter.get('/floorplan_image/:id', async (req: AuthRequest, res: Response) =
       return res.status(404).send('Floorplan not found');
     }
 
+    // Check if stored as raw Binary / Buffer in MongoDB
+    const binary = config.imageBinary || config.floorplanBinary || config.binaryData;
+    if (binary) {
+      let buffer: Buffer | null = null;
+      if (Buffer.isBuffer(binary)) {
+        buffer = binary;
+      } else if (binary && typeof binary.buffer === 'object' && binary.buffer) {
+        buffer = Buffer.from(binary.buffer);
+      } else if (binary && typeof binary.value === 'function') {
+        buffer = Buffer.from(binary.value());
+      }
+
+      if (buffer && buffer.length > 0) {
+        res.setHeader('Content-Type', config.contentType || 'image/webp');
+        res.setHeader('Content-Length', buffer.length);
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.send(buffer);
+      }
+    }
+
     const raw = config.floorplanData || config.imageData || config.floorplanUrl || config.url;
     if (!raw) {
       return res.status(404).send('No image data in floorplan');
     }
 
     if (typeof raw === 'string' && raw.startsWith('data:image/')) {
-      const match = raw.match(/^data:image\/([a-zA-Z0-9+]+);base64,(.+)$/);
+      const match = raw.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
       if (match) {
         const mimeType = match[1] === 'svg+xml' ? 'image/svg+xml' : `image/${match[1]}`;
         const buffer = Buffer.from(match[2], 'base64');
@@ -136,7 +156,11 @@ dataRouter.get('/floorplan_image/:id', async (req: AuthRequest, res: Response) =
     console.error('[Data Route] Error serving floorplan image from MongoDB:', err);
     return res.status(500).send('Error serving image');
   }
-});
+};
+
+dataRouter.get('/floorplan_image/:id', serveFloorplanImageHandler);
+dataRouter.get('/map_configurations/:id/image', serveFloorplanImageHandler);
+dataRouter.get('/floorplans/:id/image', serveFloorplanImageHandler);
 
 // GET /api/data/:collection/:id
 dataRouter.get('/:collection/:id', async (req: AuthRequest, res: Response) => {

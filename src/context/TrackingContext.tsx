@@ -517,8 +517,10 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       z.zoneId.toLowerCase() === lower || 
       z.id.toLowerCase() === lower || 
       z.name.toLowerCase() === lower ||
+      z.zoneId.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanLower ||
+      z.id.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanLower ||
       z.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanLower ||
-      (z.aliasNames && z.aliasNames.some(a => a.toLowerCase() === lower || lower.includes(a.toLowerCase()))) ||
+      (z.aliasNames && z.aliasNames.some(a => a.toLowerCase() === lower || a.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanLower || lower.includes(a.toLowerCase()))) ||
       lower.includes(z.name.toLowerCase()) ||
       z.name.toLowerCase().includes(lower)
     );
@@ -1064,11 +1066,13 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     });
 
     setPeople(prev => {
+      const tagIdLower = tagId.toLowerCase();
       const personIdx = prev.findIndex(p => 
-        p.hardhatTagId === tagId || 
-        p.id === tagId || 
-        (tagUpdate.personId && p.id === tagUpdate.personId) ||
-        (tagUpdate.personName && p.name.toLowerCase() === tagUpdate.personName.toLowerCase())
+        (p.hardhatTagId && p.hardhatTagId.toLowerCase() === tagIdLower) || 
+        (p.id && p.id.toLowerCase() === tagIdLower) || 
+        ((p as any).tagId && String((p as any).tagId).toLowerCase() === tagIdLower) ||
+        (tagUpdate.personId && p.id && p.id.toLowerCase() === String(tagUpdate.personId).toLowerCase()) ||
+        (tagUpdate.personName && p.name && p.name.toLowerCase() === String(tagUpdate.personName).toLowerCase())
       );
 
       if (personIdx >= 0) {
@@ -1076,14 +1080,18 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         const hasExplicitCoords = tagUpdate.x !== undefined && tagUpdate.y !== undefined;
         const newZoneName = matchedZone ? matchedZone.name : locName;
         const zoneChanged = existing.currentZone !== newZoneName;
+        const targetCoordX = hasExplicitCoords ? targetX : (zoneChanged ? targetX : (existing.x || targetX));
+        const targetCoordY = hasExplicitCoords ? targetY : (zoneChanged ? targetY : (existing.y || targetY));
         const updatedPerson = {
           ...existing,
           currentZone: newZoneName,
-          x: hasExplicitCoords ? targetX : (zoneChanged ? targetX : (existing.x || targetX)),
-          y: hasExplicitCoords ? targetY : (zoneChanged ? targetY : (existing.y || targetY)),
+          x: targetCoordX,
+          y: targetCoordY,
           rssi,
           lastReader: readerId || existing.lastReader,
-          lastSeen: new Date(timestamp)
+          lastSeen: new Date(timestamp),
+          presenceState: zoneChanged ? 'MOVING' : 'ACTIVE',
+          trail: zoneChanged ? [...(existing.trail || []).slice(-9), { x: targetCoordX, y: targetCoordY }] : existing.trail
         };
 
         const nextPeople = [...prev];
@@ -1100,7 +1108,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
           trainingStatus: 'COMPLIANT',
           hardhatTagId: tagId,
           currentZone: matchedZone ? matchedZone.name : locName,
-          presenceState: 'IDLE',
+          presenceState: 'ACTIVE',
           dwellTime: 1,
           x: targetX,
           y: targetY,
