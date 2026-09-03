@@ -166,7 +166,7 @@ export const AI_ALERT_RULES_CATALOG: AIRuleDefinition[] = [
     category: 'Worker',
     defaultZone: 'Corridor & Staging Bay',
     description: 'Triggered when rapid oscillation between adjacent zone boundaries is detected.',
-    sampleMessage: 'Rapid zone oscillation (6 transitions in 4 mins) detected for worker John Miller between Staging Bay and Hallway.',
+    sampleMessage: 'Rapid zone oscillation (6 transitions in 4 mins) detected across sector boundaries.',
     triggerSiren: false,
     priority: 'High'
   },
@@ -178,7 +178,7 @@ export const AI_ALERT_RULES_CATALOG: AIRuleDefinition[] = [
     category: 'Safety',
     defaultZone: 'Pedestrian Walkway Sector',
     description: 'Triggered when velocity anomalies (>3.0 m/s) or erratic worker trajectories are detected.',
-    sampleMessage: 'Kinematic speed anomaly: Velocity of 3.6 m/s recorded for personnel inside pedestrian-restricted Zone 2 corridor.',
+    sampleMessage: 'Kinematic speed anomaly: Velocity of 3.6 m/s recorded for personnel inside restricted corridor.',
     triggerSiren: false,
     priority: 'Medium'
   },
@@ -190,7 +190,7 @@ export const AI_ALERT_RULES_CATALOG: AIRuleDefinition[] = [
     category: 'Reader',
     defaultZone: 'Antenna Portal Array 3',
     description: 'Triggered when overlapping RFID antenna lobes produce boundary read jitter.',
-    sampleMessage: 'High-power RF lobe interference (-44 dBm / -48 dBm) registered at Antenna Portal Array 3 boundary.',
+    sampleMessage: 'High-power RF lobe interference (-44 dBm / -48 dBm) registered at Antenna Portal boundary.',
     triggerSiren: false,
     priority: 'Medium'
   },
@@ -203,7 +203,7 @@ export const AI_ALERT_RULES_CATALOG: AIRuleDefinition[] = [
     category: 'Worker',
     defaultZone: 'Conference Suite 1',
     description: 'Informational log generated when verified personnel enter a meeting room.',
-    sampleMessage: 'Staff User (TAG_123) entered Conference Suite 1.',
+    sampleMessage: 'Personnel badge entered monitored sector zone.',
     triggerSiren: false,
     priority: 'Low'
   },
@@ -215,7 +215,7 @@ export const AI_ALERT_RULES_CATALOG: AIRuleDefinition[] = [
     category: 'Worker',
     defaultZone: 'Conference Suite 1',
     description: 'Informational log generated when personnel exit a meeting room with dwell duration.',
-    sampleMessage: 'Staff User departed Conference Suite 1 after 38 minutes dwell.',
+    sampleMessage: 'Personnel departed monitored zone sector.',
     triggerSiren: false,
     priority: 'Low'
   },
@@ -227,7 +227,7 @@ export const AI_ALERT_RULES_CATALOG: AIRuleDefinition[] = [
     category: 'Worker',
     defaultZone: 'Executive Boardroom',
     description: 'Continuous presence heartbeat confirming personnel active in meeting room.',
-    sampleMessage: 'Active heartbeat presence verified for John Doe Testing in Executive Boardroom.',
+    sampleMessage: 'Active presence heartbeat verified in operational zone.',
     triggerSiren: false,
     priority: 'Low'
   },
@@ -239,7 +239,7 @@ export const AI_ALERT_RULES_CATALOG: AIRuleDefinition[] = [
     category: 'Operational' as AlertCategory,
     defaultZone: 'Training & Meeting Hall',
     description: 'Room headcount delta event logged as personnel enter or leave.',
-    sampleMessage: 'Occupancy headcount in Training & Meeting Hall updated from 5 to 6 persons.',
+    sampleMessage: 'Occupancy headcount updated for active zone sector.',
     triggerSiren: false,
     priority: 'Low'
   },
@@ -251,340 +251,9 @@ export const AI_ALERT_RULES_CATALOG: AIRuleDefinition[] = [
     category: 'Reader',
     defaultZone: 'Facility Entrance Portal',
     description: 'Routine antenna beacon telemetry scan acknowledged and logged.',
-    sampleMessage: 'UHF RFID badge transponder E28011606000020788842D21 scanned at Facility Entrance Portal (RSSI: -58 dBm).',
+    sampleMessage: 'Active RFID badge transponder scanned at Facility Entrance Portal.',
     triggerSiren: false,
     priority: 'Low'
-  }
-];
-
-const DEFAULT_AI_ALERTS: AIAlert[] = [
-  // 🔴 Critical
-  {
-    id: 'ALT-CRIT-101',
-    type: 'security',
-    category: 'Security',
-    priority: 'Critical',
-    status: 'New',
-    title: 'After-hours meeting room entry',
-    message: 'Unauthorized personnel [Staff User / TAG_123] entered Executive Meeting Room A outside operating hours (21:45).',
-    timestamp: new Date(Date.now() - 6 * 60000),
-    assignedTo: 'Operations Duty Lead',
-    assignedRole: 'Security Lead',
-    aiSummary: {
-      rootCause: 'Cardholder access recorded during locked facility window (19:00 - 07:00).',
-      threatScore: 92,
-      recommendedActions: [
-        'Dispatch gatehouse officer to verify credentials.',
-        'Review CCTV camera stream for Executive Meeting Room A.',
-        'Validate after-hours work permit authorization.'
-      ]
-    },
-    evidence: {
-      locationZone: 'Executive Meeting Room A',
-      cctvCameraId: 'CAM-MEET-01',
-      rfidReaderId: 'RD-EXEC-PORTAL',
-      rfidTagId: 'TAG_123',
-      telemetryLog: '[AI_RULE_CRITICAL] After-hours entry detected at 21:45:12 in Executive Meeting Room A.'
-    }
-  },
-  {
-    id: 'ALT-CRIT-102',
-    type: 'security',
-    category: 'Safety',
-    priority: 'Critical',
-    status: 'In Progress',
-    title: 'Capacity exceeded',
-    message: 'Active headcount in Main Conference Suite reached 12 occupants, exceeding maximum safety limit of 8.',
-    timestamp: new Date(Date.now() - 15 * 60000),
-    assignedTo: 'Field Safety Lead',
-    assignedRole: 'Safety Lead',
-    aiSummary: {
-      rootCause: 'Room headcount surged beyond fire marshal safety threshold.',
-      threatScore: 88,
-      recommendedActions: [
-        'Notify meeting organizer to adhere to room capacity limits.',
-        'Re-route excess attendees to overflow conference annex.',
-        'Verify emergency egress pathways remain unobstructed.'
-      ]
-    },
-    evidence: {
-      locationZone: 'Main Conference Suite',
-      cctvCameraId: 'CAM-CONF-MAIN',
-      rfidReaderId: 'RD-CONF-PORTAL',
-      telemetryLog: '[AI_RULE_CRITICAL] Headcount: 12 / Capacity: 8. Density limit exceeded.'
-    }
-  },
-  {
-    id: 'ALT-CRIT-103',
-    type: 'security',
-    category: 'Security',
-    priority: 'Critical',
-    status: 'New',
-    title: 'Unknown/unassigned tag detected',
-    message: 'Unregistered UHF RFID transponder [TAG_UNKNOWN_9921] detected at Facility Secure Gate 1 without assigned personnel profile.',
-    timestamp: new Date(Date.now() - 25 * 60000),
-    assignedTo: 'Gate Security Lead',
-    assignedRole: 'Security Officer',
-    aiSummary: {
-      rootCause: 'Rogue or unprovisioned transponder beacon detected in active portal beam.',
-      threatScore: 95,
-      recommendedActions: [
-        'Intercept individual at Gate 1 turnstile.',
-        'Enroll or confiscate unprovisioned transponder.',
-        'Log visitor badge reconciliation audit.'
-      ]
-    },
-    evidence: {
-      locationZone: 'Facility Secure Gate 1',
-      cctvCameraId: 'CAM-GATE-1A',
-      rfidReaderId: 'RD-GATE-01-TURNSTILE',
-      rfidTagId: 'TAG_UNKNOWN_9921',
-      telemetryLog: '[AI_RULE_CRITICAL] Unregistered tag detected in active RFID beam.'
-    }
-  },
-  {
-    id: 'ALT-CRIT-104',
-    type: 'security',
-    category: 'System',
-    priority: 'Critical',
-    status: 'New',
-    title: 'Persistent zone detection conflict',
-    message: 'Tag E28011606000020788842D21 detected across contradictory antennas (Portal Gate 1 & Boardroom Array) simultaneously.',
-    timestamp: new Date(Date.now() - 35 * 60000),
-    assignedTo: 'IT Network Systems Admin',
-    assignedRole: 'Systems Admin',
-    aiSummary: {
-      rootCause: 'RF reflection multipath loop or dual simultaneous antenna boundary read conflict.',
-      threatScore: 84,
-      recommendedActions: [
-        'Calibrate antenna gain and signal RSSI squelch thresholds.',
-        'Verify portal isolation barrier.'
-      ]
-    },
-    evidence: {
-      locationZone: 'Portal Gate 1 & Boardroom Array',
-      rfidReaderId: 'RD-ARRAY-03',
-      rfidTagId: 'E28011606000020788842D21',
-      telemetryLog: '[AI_RULE_CRITICAL] Simultaneous dual-portal read conflict logged.'
-    }
-  },
-  // 🟠 Warning
-  {
-    id: 'ALT-WARN-201',
-    type: 'warning',
-    category: 'Worker',
-    priority: 'High',
-    status: 'In Progress',
-    title: 'Meeting room overstay',
-    message: 'Personnel John Doe Testing occupied Meeting Room B for 82 minutes (exceeding 45-minute scheduled reservation).',
-    timestamp: new Date(Date.now() - 45 * 60000),
-    assignedTo: 'Operations Duty Lead',
-    assignedRole: 'Operations Duty Lead',
-    aiSummary: {
-      rootCause: 'Dwell duration exceeded booking window by 37 minutes.',
-      threatScore: 65,
-      recommendedActions: [
-        'Send digital chime notification to in-room display.',
-        'Check upcoming reservation queue.'
-      ]
-    },
-    evidence: {
-      locationZone: 'Meeting Room B',
-      rfidReaderId: 'RD-MEET-B',
-      rfidTagId: 'E28011606000020788842D21',
-      telemetryLog: '[AI_RULE_WARNING] Dwell time: 82m > 45m threshold.'
-    }
-  },
-  {
-    id: 'ALT-WARN-202',
-    type: 'warning',
-    category: 'Worker',
-    priority: 'High',
-    status: 'New',
-    title: 'Repeated zone movement',
-    message: 'Rapid zone oscillation (6 transitions in 4 mins) detected for worker John Miller between Staging Bay and Hallway.',
-    timestamp: new Date(Date.now() - 55 * 60000),
-    assignedTo: 'Field Safety Lead',
-    assignedRole: 'Field Safety Lead',
-    aiSummary: {
-      rootCause: 'Frequent boundary crossings indicative of workflow bottleneck or material transit delay.',
-      threatScore: 60,
-      recommendedActions: [
-        'Inspect task staging area for workflow obstruction.'
-      ]
-    },
-    evidence: {
-      locationZone: 'Staging Bay & Corridor',
-      rfidReaderId: 'RD-STAGING-01',
-      rfidTagId: 'W-101',
-      telemetryLog: '[AI_RULE_WARNING] 6 rapid transitions recorded across boundary portal.'
-    }
-  },
-  {
-    id: 'ALT-WARN-203',
-    type: 'warning',
-    category: 'Safety',
-    priority: 'Medium',
-    status: 'New',
-    title: 'Unusual movement pattern',
-    message: 'Kinematic speed anomaly: Velocity of 3.6 m/s recorded for personnel inside pedestrian-restricted Zone 2 corridor.',
-    timestamp: new Date(Date.now() - 70 * 60000),
-    assignedTo: 'Field Safety Lead',
-    assignedRole: 'Safety Lead',
-    aiSummary: {
-      rootCause: 'Speed threshold exceeded in restricted indoor pedestrian corridor.',
-      threatScore: 58,
-      recommendedActions: [
-        'Verify worker safety condition.',
-        'Issue gentle safety compliance reminder.'
-      ]
-    },
-    evidence: {
-      locationZone: 'Zone 2 Pedestrian Corridor',
-      rfidReaderId: 'RD-ZONE2-01',
-      rfidTagId: 'TAG_123',
-      telemetryLog: '[AI_RULE_WARNING] Velocity: 3.6 m/s in pedestrian safety zone.'
-    }
-  },
-  {
-    id: 'ALT-WARN-204',
-    type: 'warning',
-    category: 'Reader',
-    priority: 'Medium',
-    status: 'New',
-    title: 'Zone detection overlap',
-    message: 'High-power RF lobe interference (-44 dBm / -48 dBm) registered at Antenna Portal Array 3 boundary.',
-    timestamp: new Date(Date.now() - 90 * 60000),
-    assignedTo: 'IT Network Systems Admin',
-    assignedRole: 'Systems Admin',
-    aiSummary: {
-      rootCause: 'Antenna beam angle cross-talk causing dual zone registration.',
-      threatScore: 50,
-      recommendedActions: [
-        'Tune antenna power level by -2 dBm.',
-        'Verify antenna beam tilt angle.'
-      ]
-    },
-    evidence: {
-      locationZone: 'Antenna Portal Array 3',
-      rfidReaderId: 'RD-ARRAY-03',
-      telemetryLog: '[AI_RULE_WARNING] Dual boundary lobe signal overlap detected.'
-    }
-  },
-  // 🔵 Information
-  {
-    id: 'ALT-INFO-301',
-    type: 'info',
-    category: 'Worker',
-    priority: 'Low',
-    status: 'Resolved',
-    title: 'Person entered meeting room',
-    message: 'Staff User (TAG_123) entered Conference Suite 1.',
-    timestamp: new Date(Date.now() - 110 * 60000),
-    assignedTo: 'Operations Duty Lead',
-    assignedRole: 'Operations Duty Lead',
-    aiSummary: {
-      rootCause: 'Standard scheduled meeting entry event.',
-      threatScore: 10,
-      recommendedActions: ['No action required. Normal operational entry.']
-    },
-    evidence: {
-      locationZone: 'Conference Suite 1',
-      rfidReaderId: 'RD-CONF-01',
-      rfidTagId: 'TAG_123',
-      telemetryLog: '[AI_RULE_INFO] Entry scan registered at 14:02:10.'
-    }
-  },
-  {
-    id: 'ALT-INFO-302',
-    type: 'info',
-    category: 'Worker',
-    priority: 'Low',
-    status: 'Resolved',
-    title: 'Person left meeting room',
-    message: 'Staff User departed Conference Suite 1 after 38 minutes dwell.',
-    timestamp: new Date(Date.now() - 120 * 60000),
-    assignedTo: 'Operations Duty Lead',
-    assignedRole: 'Operations Duty Lead',
-    aiSummary: {
-      rootCause: 'Standard meeting room exit event.',
-      threatScore: 10,
-      recommendedActions: ['Room status updated to Available.']
-    },
-    evidence: {
-      locationZone: 'Conference Suite 1',
-      rfidReaderId: 'RD-CONF-01',
-      rfidTagId: 'TAG_123',
-      telemetryLog: '[AI_RULE_INFO] Exit scan registered at 14:40:15.'
-    }
-  },
-  {
-    id: 'ALT-INFO-303',
-    type: 'info',
-    category: 'Worker',
-    priority: 'Low',
-    status: 'In Progress',
-    title: 'Person currently in meeting room',
-    message: 'Active heartbeat presence verified for John Doe Testing in Executive Boardroom.',
-    timestamp: new Date(Date.now() - 130 * 60000),
-    assignedTo: 'Operations Duty Lead',
-    assignedRole: 'Operations Duty Lead',
-    aiSummary: {
-      rootCause: 'Active meeting room occupancy telemetry heartbeat.',
-      threatScore: 10,
-      recommendedActions: ['Normal in-session meeting verification.']
-    },
-    evidence: {
-      locationZone: 'Executive Boardroom',
-      rfidReaderId: 'RD-EXEC-PORTAL',
-      rfidTagId: 'E28011606000020788842D21',
-      telemetryLog: '[AI_RULE_INFO] Heartbeat presence verified.'
-    }
-  },
-  {
-    id: 'ALT-INFO-304',
-    type: 'info',
-    category: 'Worker',
-    priority: 'Low',
-    status: 'Resolved',
-    title: 'Occupancy changed',
-    message: 'Occupancy headcount in Training & Meeting Hall updated from 5 to 6 persons.',
-    timestamp: new Date(Date.now() - 150 * 60000),
-    assignedTo: 'Operations Duty Lead',
-    assignedRole: 'Operations Duty Lead',
-    aiSummary: {
-      rootCause: 'Room headcount sensor delta update.',
-      threatScore: 10,
-      recommendedActions: ['Occupancy within permitted limits (6/20).']
-    },
-    evidence: {
-      locationZone: 'Training & Meeting Hall',
-      rfidReaderId: 'RD-TRAIN-01',
-      telemetryLog: '[AI_RULE_INFO] Occupancy delta counter: +1 (Total: 6).'
-    }
-  },
-  {
-    id: 'ALT-INFO-305',
-    type: 'info',
-    category: 'Reader',
-    priority: 'Low',
-    status: 'Resolved',
-    title: 'Tag detected',
-    message: 'UHF RFID badge transponder E28011606000020788842D21 scanned at Facility Entrance Portal (RSSI: -58 dBm).',
-    timestamp: new Date(Date.now() - 180 * 60000),
-    assignedTo: 'Operations Duty Lead',
-    assignedRole: 'Operations Duty Lead',
-    aiSummary: {
-      rootCause: 'Routine RFID portal antenna scan registered.',
-      threatScore: 10,
-      recommendedActions: ['Standard telemetry heartbeat logged.']
-    },
-    evidence: {
-      locationZone: 'Facility Entrance Portal',
-      rfidReaderId: 'RD-GATE-01-TURNSTILE',
-      rfidTagId: 'E28011606000020788842D21',
-      telemetryLog: '[AI_RULE_INFO] Antenna scan: RSSI -58 dBm.'
-    }
   }
 ];
 
@@ -726,33 +395,80 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   // Notification Toast
   const [notificationMsg, setNotificationMsg] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
-  // Handle WebSocket messages
+  // Handle WebSocket messages (realtime AI alerts, emergency sirens, acknowledgements)
   const handleWSMessage = useCallback((msg: any) => {
-    if (msg.type === 'safety_alert' || msg.type === 'trigger_safety_alert') {
+    if (msg.type === 'safety_alert' || msg.type === 'trigger_safety_alert' || msg.type === 'alert_created' || msg.type === 'ai_alert') {
       const p = msg.payload || {};
       const newWsAlert: AIAlert = {
         id: p.id || `ALT-${Math.floor(Math.random() * 9000) + 1000}`,
-        type: p.severity === 'critical' ? 'security' : 'warning',
-        category: (p.category as AlertCategory) || 'Safety',
-        priority: p.severity === 'critical' ? 'Critical' : 'High',
-        status: 'New',
-        title: p.title || 'Zero-Latency WS Emergency Hazard Alert',
-        message: p.location ? `Real-time hazard triggered at ${p.location}` : 'Immediate worker safety response required.',
-        timestamp: new Date(),
-        assignedTo: OFFICERS_LIST[0],
-        evidence: { locationZone: p.location || 'Site Perimeter' }
+        type: p.priority === 'Critical' || p.severity === 'critical' ? 'security' : p.priority === 'High' || p.severity === 'high' ? 'warning' : 'info',
+        category: (p.category as AlertCategory) || (p.type as AlertCategory) || 'Safety',
+        priority: p.priority || (p.severity === 'critical' ? 'Critical' : p.severity === 'high' ? 'High' : 'Medium'),
+        status: p.status || 'New',
+        title: p.title || 'Live AI Telemetry Safety Alert',
+        message: p.message || (p.location ? `Real-time hazard triggered at ${p.location}` : 'Immediate worker safety response required.'),
+        timestamp: p.timestamp ? new Date(p.timestamp) : new Date(),
+        assignedTo: p.assignedTo || OFFICERS_LIST[0],
+        assignedRole: p.assignedRole || 'Field Safety Lead',
+        aiSummary: p.aiSummary,
+        evidence: p.evidence || { locationZone: p.targetZone || p.location || p.locationZone || 'Site Perimeter', rfidTagId: p.tagId }
       };
 
-      setAlertList(prev => [newWsAlert, ...prev.filter(a => a.id !== newWsAlert.id)]);
-      setNotificationMsg({ type: 'error', text: `⚡ ZERO-LATENCY WS ALERT: ${newWsAlert.title}` });
+      setAlertList(prev => {
+        const tag = (newWsAlert.evidence?.rfidTagId || newWsAlert.tagId || 'general').toString().trim().toUpperCase();
+        const titleKey = (newWsAlert.title || newWsAlert.message || 'alert').trim().toLowerCase();
+        const key = `${tag}_${titleKey}`;
+
+        const filtered = prev.filter(a => {
+          const aTag = (a.evidence?.rfidTagId || a.tagId || 'general').toString().trim().toUpperCase();
+          const aTitle = (a.title || a.message || 'alert').trim().toLowerCase();
+          return a.id !== newWsAlert.id && `${aTag}_${aTitle}` !== key;
+        });
+
+        return [newWsAlert, ...filtered].sort((a, b) => getTimestampMs(b.timestamp) - getTimestampMs(a.timestamp));
+      });
+      setNotificationMsg({ type: newWsAlert.priority === 'Critical' ? 'error' : 'info', text: `⚡ AI ALERT: ${newWsAlert.title}` });
     } else if (msg.type === 'alert_acknowledged') {
       const p = msg.payload || {};
-      setAlertList(prev => prev.map(a => a.id === p.alertId ? { ...a, status: 'In Progress' } : a));
+      setAlertList(prev => prev.map(a => a.id === p.alertId ? { ...a, status: 'In Progress' } : a).sort((a, b) => getTimestampMs(b.timestamp) - getTimestampMs(a.timestamp)));
       setNotificationMsg({ type: 'info', text: `⚡ WS Alert ${p.alertId} acknowledged` });
     }
   }, []);
 
   const { isConnected: isWsConnected, triggerSafetyAlert: wsTriggerSafetyAlert } = useWebSocket(handleWSMessage);
+
+  // Live AI Telemetry Sync & Analysis State
+  const [isSyncingAi, setIsSyncingAi] = useState<boolean>(false);
+
+  const handleRunAiAnalysis = async () => {
+    setIsSyncingAi(true);
+    try {
+      const res = await fetch('/api/external-tracking/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ syncRealtime: true, syncHistory: true, historyTake: 30 })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setNotificationMsg({
+          type: 'success',
+          text: `🤖 AI Analysis Complete: Ingested ${data.realtimeTagsCount || 0} live tags & ${data.historyRecordsCount || 0} records → ${data.generatedAlerts || 0} alerts evaluated.`
+        });
+      } else {
+        setNotificationMsg({
+          type: 'info',
+          text: `AI Analysis completed: ${data.message || data.error || 'All active telemetry evaluated.'}`
+        });
+      }
+    } catch (err: any) {
+      setNotificationMsg({
+        type: 'error',
+        text: `AI Analysis error: ${err.message}`
+      });
+    } finally {
+      setIsSyncingAi(false);
+    }
+  };
 
   // Persistent Resolved & Dismissed Alerts state (stored in localStorage & React state)
   const [resolvedIds, setResolvedIds] = useState<Set<string>>(() => {
@@ -800,13 +516,23 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     let incAlerts: AIAlert[] = [];
 
     const mergeAndSetAlerts = () => {
-      const map = new Map<string, AIAlert>();
-      // Include built-in AI alert rule templates so all 13 rules are immediately visible and testable
-      DEFAULT_AI_ALERTS.forEach(a => map.set(a.id!, a));
       const baseAlerts = [...entAlerts, ...stdAlerts, ...incAlerts];
-      baseAlerts.forEach(a => map.set(a.id!, a));
 
-      const combined = Array.from(map.values())
+      // Deduplicate alerts with same tag and title, keeping the newest timestamp
+      const dedupMap = new Map<string, AIAlert>();
+
+      baseAlerts.forEach(a => {
+        const tag = (a.evidence?.rfidTagId || a.tagId || (a as any).tag || (a as any).rfidTag || 'general').toString().trim().toUpperCase();
+        const titleKey = (a.title || a.message || 'alert').trim().toLowerCase();
+        const key = `${tag}_${titleKey}`;
+
+        const existing = dedupMap.get(key);
+        if (!existing || getTimestampMs(a.timestamp) > getTimestampMs(existing.timestamp)) {
+          dedupMap.set(key, a);
+        }
+      });
+
+      const combined = Array.from(dedupMap.values())
         .filter(a => !dismissedIds.has(a.id!))
         .map(a => {
           if (resolvedIds.has(a.id!) || (a.status as string) === 'Closed' || a.status === 'Resolved') {
@@ -925,7 +651,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
         (a.evidence?.locationZone && (a.evidence.locationZone || "").toLowerCase().includes(searchLower));
 
       return matchesCategory && matchesPriority && matchesStatus && matchesZone && matchesAiTier && matchesAiRule && matchesSearch;
-    });
+    }).sort((a, b) => getTimestampMs(b.timestamp) - getTimestampMs(a.timestamp));
   }, [alertList, selectedCategory, selectedPriority, selectedStatus, selectedZone, selectedAiTier, selectedAiRule, searchTerm]);
 
   // Key KPI Metrics
@@ -1626,6 +1352,16 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
+            onClick={handleRunAiAnalysis}
+            disabled={isSyncingAi}
+            className="px-3.5 py-2 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-1.5 cursor-pointer"
+            title="Fetch latest UHF telemetry & analyze with Gemini/AI engine"
+          >
+            <Sparkles size={14} className={isSyncingAi ? 'animate-spin' : ''} />
+            {isSyncingAi ? 'AI Analyzing...' : 'Run AI Telemetry Analysis'}
+          </button>
+
+          <button
             onClick={() => {
               wsTriggerSafetyAlert(
                 '⚡ INSTANT WS PANIC: High Voltage Perimeter Breach',
@@ -2252,9 +1988,26 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
             })}
 
             {filteredAlerts.length === 0 && (
-              <div className="py-16 text-center text-slate-500 font-medium bg-white dark:bg-slate-800 rounded-2xl border border-slate-200 dark:border-slate-700">
-                <CheckCircle2 size={36} className="mx-auto text-emerald-500 mb-2" />
-                No active alerts matching search criteria.
+              <div className="py-16 px-4 text-center bg-white dark:bg-slate-800 rounded-3xl border border-slate-200 dark:border-slate-700 shadow-sm space-y-4">
+                <div className="w-16 h-16 rounded-2xl bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 flex items-center justify-center mx-auto shadow-inner">
+                  <CheckCircle2 size={32} className="text-emerald-500" />
+                </div>
+                <div>
+                  <h4 className="text-base font-bold text-slate-900 dark:text-white">All Clear • No Active Alerts</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 max-w-md mx-auto mt-1 font-medium">
+                    The autonomous Multi-AI Safety Engine is continuously analyzing worker badge telemetry and RFID spatial events.
+                  </p>
+                </div>
+                <div className="flex items-center justify-center gap-3 pt-2">
+                  <button
+                    onClick={handleRunAiAnalysis}
+                    disabled={isSyncingAi}
+                    className="px-4 py-2 bg-gradient-to-r from-indigo-600 to-sky-600 hover:from-indigo-500 hover:to-sky-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold shadow transition flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <Sparkles size={14} className={isSyncingAi ? 'animate-spin' : ''} />
+                    {isSyncingAi ? 'Evaluating Telemetry...' : 'Run AI Telemetry Analysis Now'}
+                  </button>
+                </div>
               </div>
             )}
           </div>

@@ -162,8 +162,8 @@ export async function executeDailyReportingTask(
     tagId: (p.hardhatTagId || `HH-${p.id.substring(0, 4)}`).toUpperCase(),
     name: p.name,
     role: p.role,
-    trade: p.tradeCompany || 'Apex Structural',
-    zone: p.currentZone || 'Gatehouse 1',
+    trade: p.tradeCompany || 'Operations',
+    zone: p.currentZone || 'Site Area',
     ppe: p.ppeStatus === 'COMPLIANT' ? '✓ Full PPE Compliant' : p.ppeStatus === 'WARNING' ? '⚠️ Check Required' : '❌ Non-Compliant',
     shift: p.shiftStatus === 'ON_SITE' ? '🟢 Present On-Site' : p.shiftStatus === 'ON_LEAVE' ? '🟡 On Leave' : '⚪ Off-Site'
   }));

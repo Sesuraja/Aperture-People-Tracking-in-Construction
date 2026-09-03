@@ -223,7 +223,7 @@ Return strictly valid JSON with this exact schema:
   "incident": { "category": string, "title": string, "description": string, "severity": "Critical" | "High" | "Medium" | "Low" } | null
 }`;
 
-  const candidateModels = [model || 'gemini-2.5-flash', 'gemini-2.0-flash'].filter((v, i, a) => a.indexOf(v) === i);
+  const candidateModels = [model || 'gemini-2.5-flash', 'gemini-3.1-pro-preview'].filter((v, i, a) => a.indexOf(v) === i);
   let lastError: any = null;
 
   for (const m of candidateModels) {
@@ -534,10 +534,11 @@ export async function analyzeTelemetryBatchWithAI(
       aiAnomaly: decision.aiAnomaly
     });
 
-    // 1. Alerts Generation
+    // 1. Alerts Generation with Deterministic Deduplication Key
     if (decision.alert) {
+      const alertTitleSlug = decision.alert.title.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 30);
       alerts.push({
-        id: `alert_${item.tagId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        id: `alert_${item.tagId}_${alertTitleSlug}`,
         type: decision.alert.category,
         title: decision.alert.title,
         message: decision.alert.message,
@@ -551,10 +552,11 @@ export async function analyzeTelemetryBatchWithAI(
       });
     }
 
-    // 2. Incidents Generation
+    // 2. Incidents Generation with Deterministic Deduplication Key
     if (decision.incident) {
+      const incTitleSlug = decision.incident.title.toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 30);
       incidents.push({
-        id: `inc_${item.tagId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        id: `inc_${item.tagId}_${incTitleSlug}`,
         title: decision.incident.title,
         category: decision.incident.category,
         severity: decision.incident.severity,

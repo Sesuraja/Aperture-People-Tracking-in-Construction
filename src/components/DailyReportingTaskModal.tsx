@@ -84,12 +84,17 @@ export default function DailyReportingTaskModal({
 
   if (!isOpen) return null;
 
-  // Live Stats preview calculation
-  const totalCount = people.length || 32;
-  const presentCount = people.filter(p => p.shiftStatus === 'ON_SITE' || !p.shiftStatus).length || 28;
-  const attendanceRate = Math.round((presentCount / totalCount) * 100);
-  const ppeCompliantCount = people.filter(p => p.ppeStatus === 'COMPLIANT' || !p.ppeStatus).length || 30;
-  const ppeRate = Math.round((ppeCompliantCount / totalCount) * 100);
+  // Live Stats preview calculation from real MongoDB workforce data
+  const totalCount = people.length;
+  const presentCount = people.filter(p => p.shiftStatus === 'ON_SITE').length;
+  const attendanceRate = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
+  const ppeCompliantCount = people.filter(p => p.ppeStatus === 'COMPLIANT').length;
+  const ppeRate = totalCount > 0 ? Math.round((ppeCompliantCount / totalCount) * 100) : 0;
+  const lateCount = people.filter(p => p.shiftStatus === 'LATE').length;
+  const overtimeHours = people.reduce((acc, p) => acc + (p.overtimeHours || 0), 0);
+  const safetyIndex = totalCount > 0 
+    ? Math.min(100, Math.max(50, Math.round((ppeRate * 0.6) + (attendanceRate * 0.4)))) 
+    : 100;
 
   const modalContent = (
     <div className="fixed inset-0 z-[99999] bg-slate-950/80 backdrop-blur-md flex items-center justify-center p-4 sm:p-6 overflow-y-auto">
@@ -242,10 +247,10 @@ export default function DailyReportingTaskModal({
                       <Clock size={12} className="text-blue-500" /> Overtime Logged
                     </div>
                     <div className="text-2xl font-black text-slate-900 dark:text-white">
-                      14.5 <span className="text-xs text-slate-400 font-normal">hrs</span>
+                      {overtimeHours.toFixed(1)} <span className="text-xs text-slate-400 font-normal">hrs</span>
                     </div>
                     <div className="text-[11px] text-blue-600 font-bold mt-1">
-                      3 Late Arrivals Recorded
+                      {lateCount} Late Arrivals Recorded
                     </div>
                   </div>
 
@@ -254,10 +259,10 @@ export default function DailyReportingTaskModal({
                       <ShieldAlert size={12} className="text-amber-500" /> Site Safety Index
                     </div>
                     <div className="text-2xl font-black text-cyan-600 dark:text-cyan-400">
-                      94 / 100
+                      {safetyIndex} / 100
                     </div>
                     <div className="text-[11px] text-slate-500 font-medium mt-1">
-                      1 Open Safety Incident
+                      Live Compliance Score
                     </div>
                   </div>
                 </div>

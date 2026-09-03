@@ -2931,7 +2931,7 @@ export default function SettingsTab() {
                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-3">
                       <div>
                         <h4 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
-                          <User className="w-4 h-4 text-[#007BC4]" /> Provision Staff User Account
+                          <User className="w-4 h-4 text-[#007BC4]" /> Provision User Account
                         </h4>
                         <p className="text-xs text-slate-500 mt-0.5">
                           Create a new team member login, assign default role claims, and grant granular dashboard permissions.

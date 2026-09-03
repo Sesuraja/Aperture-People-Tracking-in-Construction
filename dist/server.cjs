@@ -305,6 +305,8 @@ async function initDatabase(customUri) {
     }
     console.log(`[DB Service] Successfully connected to MongoDB Atlas database (DATA_MODE=${getDataMode()}).`);
     await initDatabaseIndexes();
+    await pruneDuplicateAlerts();
+    await purgeLegacySampleWorkers();
   } catch (err) {
     console.error("[DB Service] Failed to connect to MongoDB:", err.message);
     console.warn("[DB Service] Operating with in-memory storage fallback.");
@@ -837,8 +839,8 @@ async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol
       TagID: tagId,
       Timestamp: timestampMs,
       Location: location,
-      FirstName: raw.FirstName || raw.firstName || "Staff",
-      LastName: raw.LastName || raw.lastName || "Member",
+      FirstName: raw.FirstName || raw.firstName || "",
+      LastName: raw.LastName || raw.lastName || "",
       protocol: raw.protocol || protocol,
       rssi: raw.rssi !== void 0 ? Number(raw.rssi) : -60,
       readerId,
@@ -901,8 +903,8 @@ async function bulkWriteRealtimeTags(tags, organizationId = "default") {
       TagID: tagId,
       Timestamp: rawTag.Timestamp || (/* @__PURE__ */ new Date()).toISOString(),
       Location: rawTag.Location || rawTag.LocationName || rawTag.zone || "Zone1",
-      FirstName: rawTag.FirstName || "Staff",
-      LastName: rawTag.LastName || "User",
+      FirstName: rawTag.FirstName || "",
+      LastName: rawTag.LastName || "",
       rssi: rawTag.rssi !== void 0 ? Number(rawTag.rssi) : -60,
       status: rawTag.status || "Active",
       lastSyncAt: (/* @__PURE__ */ new Date()).toISOString(),
@@ -1222,6 +1224,69 @@ async function getDataRetentionStatus(retentionDays = 10) {
     engine: mongoDb ? "MongoDB Atlas TTL Indexes + Scheduled Background Purge" : "In-Memory Fallback Retention",
     collections: collectionsStatus
   };
+}
+async function pruneDuplicateAlerts() {
+  if (!mongoDb) return 0;
+  try {
+    const alertsCol = mongoDb.collection("alerts");
+    const allAlerts = await alertsCol.find().sort({ timestamp: -1, createdAt: -1 }).toArray();
+    if (allAlerts.length <= 50) return 0;
+    const seenKeys = /* @__PURE__ */ new Set();
+    const toKeep = [];
+    const toDeleteIds = [];
+    for (const a of allAlerts) {
+      const key = `${a.tagId || "tag"}_${(a.title || a.message || "alert").trim().toLowerCase()}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        toKeep.push(a);
+      } else {
+        toDeleteIds.push(a._id);
+      }
+    }
+    if (toDeleteIds.length > 0) {
+      const chunkSize = 1e3;
+      for (let i = 0; i < toDeleteIds.length; i += chunkSize) {
+        const chunk = toDeleteIds.slice(i, i + chunkSize);
+        await alertsCol.deleteMany({ _id: { $in: chunk } });
+      }
+      console.log(`[DB Service] Pruned ${toDeleteIds.length} duplicate alerts from MongoDB. Retained ${toKeep.length} unique active alerts.`);
+      invalidateCollectionCache("alerts");
+    }
+    return toDeleteIds.length;
+  } catch (err) {
+    console.warn("[DB Service] Alert pruning note:", err.message);
+    return 0;
+  }
+}
+async function purgeLegacySampleWorkers() {
+  if (!mongoDb) return;
+  try {
+    const fakeIds = ["TAG_123", "W-101", "worker-1", "worker-2", "worker-3"];
+    const fakeNames = ["Staff User", "John Miller"];
+    const filter = {
+      $or: [
+        { id: { $in: fakeIds } },
+        { _id: { $in: fakeIds } },
+        { tagId: { $in: fakeIds } },
+        { hardhatTagId: { $in: fakeIds } },
+        { name: { $in: fakeNames } },
+        { personName: { $in: fakeNames } }
+      ]
+    };
+    await mongoDb.collection("people").deleteMany(filter);
+    await mongoDb.collection("registered_people").deleteMany(filter);
+    await mongoDb.collection("attendance_logs").deleteMany(filter);
+    await mongoDb.collection("alerts").deleteMany({
+      $or: [
+        { tagId: { $in: fakeIds } },
+        { personName: { $in: fakeNames } }
+      ]
+    });
+    invalidateCollectionCache();
+    console.log("[DB Service] Purged legacy sample workers (Staff User, John Miller, etc.) from MongoDB.");
+  } catch (err) {
+    console.warn("[DB Service] Note on purgeLegacySampleWorkers:", err.message);
+  }
 }
 
 // src/server/routes/connections.ts
@@ -2268,7 +2333,7 @@ Return strictly valid JSON with this exact schema:
   "alert": { "category": string, "title": string, "message": string, "priority": "Critical" | "High" | "Medium" | "Low", "triggerSiren": boolean } | null,
   "incident": { "category": string, "title": string, "description": string, "severity": "Critical" | "High" | "Medium" | "Low" } | null
 }`;
-  const candidateModels = [model || "gemini-2.5-flash", "gemini-2.0-flash"].filter((v, i, a) => a.indexOf(v) === i);
+  const candidateModels = [model || "gemini-2.5-flash", "gemini-3.1-pro-preview"].filter((v, i, a) => a.indexOf(v) === i);
   let lastError = null;
   for (const m of candidateModels) {
     try {
@@ -2517,8 +2582,9 @@ async function analyzeTelemetryBatchWithAI(items, orgId = "default", registeredP
       aiAnomaly: decision.aiAnomaly
     });
     if (decision.alert) {
+      const alertTitleSlug = decision.alert.title.toLowerCase().replace(/[^a-z0-9]/g, "_").substring(0, 30);
       alerts.push({
-        id: `alert_${item.tagId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        id: `alert_${item.tagId}_${alertTitleSlug}`,
         type: decision.alert.category,
         title: decision.alert.title,
         message: decision.alert.message,
@@ -2532,8 +2598,9 @@ async function analyzeTelemetryBatchWithAI(items, orgId = "default", registeredP
       });
     }
     if (decision.incident) {
+      const incTitleSlug = decision.incident.title.toLowerCase().replace(/[^a-z0-9]/g, "_").substring(0, 30);
       incidents.push({
-        id: `inc_${item.tagId}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        id: `inc_${item.tagId}_${incTitleSlug}`,
         title: decision.incident.title,
         category: decision.incident.category,
         severity: decision.incident.severity,
@@ -2724,6 +2791,8 @@ setInterval(() => {
 }, 15e3);
 
 // src/server/services/aiPipeline.ts
+var recentAlertsCooldown = /* @__PURE__ */ new Map();
+var recentTagLocationHistory = /* @__PURE__ */ new Map();
 async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server", organizationId = "default") {
   const sourceValidation = validateTelemetrySource(sourceProtocol);
   if (!sourceValidation.valid) {
@@ -2814,30 +2883,36 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
     };
     await upsertDoc("real_time_tags", tagDocument, orgId);
     await upsertDoc("live_tags", tagDocument, orgId);
-    await upsertDoc("rfid_realtime_events", {
-      id: `evt_${tagId}_${eventHash}`,
-      eventId: eventHash,
-      ...tagDocument,
-      receivedAt: nowIso,
-      createdAt: now,
-      expireAt: tenDaysLater
-    }, orgId);
-    await upsertDoc("tag_history", {
-      id: `hist_${tagId}_${eventHash}`,
-      eventId: eventHash,
-      organizationId: orgId,
-      TagID: tagId,
-      FirstName: item.firstName,
-      LastName: item.lastName,
-      LocationName: item.location,
-      EnterTime: item.timestamp,
-      LeaveTime: item.timestamp,
-      ...tagDocument,
-      createdAt: now,
-      expireAt: tenDaysLater
-    }, orgId);
+    const lastHist = recentTagLocationHistory.get(tagId);
+    const locChanged = !lastHist || lastHist.location !== item.location;
+    const timeElapsed = !lastHist || Date.now() - lastHist.timestamp > 3e5;
+    if (locChanged || timeElapsed) {
+      recentTagLocationHistory.set(tagId, { location: item.location, timestamp: Date.now() });
+      await upsertDoc("rfid_realtime_events", {
+        id: `evt_${tagId}_${eventHash}`,
+        eventId: eventHash,
+        ...tagDocument,
+        receivedAt: nowIso,
+        createdAt: now,
+        expireAt: tenDaysLater
+      }, orgId);
+      await upsertDoc("tag_history", {
+        id: `hist_${tagId}_${eventHash}`,
+        eventId: eventHash,
+        organizationId: orgId,
+        TagID: tagId,
+        FirstName: item.firstName,
+        LastName: item.lastName,
+        LocationName: item.location,
+        EnterTime: item.timestamp,
+        LeaveTime: item.timestamp,
+        ...tagDocument,
+        createdAt: now,
+        expireAt: tenDaysLater
+      }, orgId);
+    }
     const existingPerson = await getDocById("registered_people", tagId, orgId) || await getDocById("people", tagId, orgId);
-    const personName = existingPerson?.name || item.personName || item.name || (item.fullName || (item.firstName && item.firstName !== "Staff" ? `${item.firstName} ${item.lastName || ""}`.trim() : `Tag ${tagId}`));
+    const personName = existingPerson?.name || item.personName || item.name || (item.fullName || (item.firstName ? `${item.firstName} ${item.lastName || ""}`.trim() : `Tag ${tagId}`));
     const personRole = existingPerson?.role || (item.role && item.role !== "General Staff" ? item.role : "Field Specialist");
     const personCompany = existingPerson?.tradeCompany || existingPerson?.company || item.company || "Direct RFID / Ingested Data";
     if (existingPerson) {
@@ -2889,15 +2964,25 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
     broadcastSseEvent("tag_update", tagDocument, orgId);
   }
   for (const alert of analysisResult.alerts) {
+    const alertCooldownKey = `${alert.tagId || "all"}_${alert.title || alert.type}_${alert.targetZone || "all"}`;
+    const nowMs = Date.now();
+    const lastAlertTime = recentAlertsCooldown.get(alertCooldownKey) || 0;
     const alertDoc = {
       ...alert,
+      id: alert.id || `alert_${alert.tagId || "tag"}_${(alert.title || "alert").toLowerCase().replace(/[^a-z0-9]/g, "_").substring(0, 30)}`,
       organizationId,
+      updatedAt: nowIso,
       createdAt: now,
       expireAt: tenDaysLater
     };
-    await upsertDoc("alerts", alertDoc, organizationId);
-    broadcastWebSocketEvent("alert_created", alertDoc, organizationId);
-    broadcastSseEvent("alert_created", alertDoc, organizationId);
+    if (nowMs - lastAlertTime < 18e4) {
+      await upsertDoc("alerts", alertDoc, organizationId);
+    } else {
+      recentAlertsCooldown.set(alertCooldownKey, nowMs);
+      await upsertDoc("alerts", alertDoc, organizationId);
+      broadcastWebSocketEvent("alert_created", alertDoc, organizationId);
+      broadcastSseEvent("alert_created", alertDoc, organizationId);
+    }
   }
   for (const incident of analysisResult.incidents) {
     const incDoc = {
@@ -2994,8 +3079,8 @@ function mapRawItemToTelemetry(item, mapping) {
   const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.EPC || item.id || "";
   const location = item[locKey] || item.Location || item.location || item.LocationName || item.zone || "Zone 1";
   const timestamp = item[timeKey] || item.Timestamp || item.timestamp || item.EnterTime || (/* @__PURE__ */ new Date()).toISOString();
-  const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(" ")[0] || "Staff";
-  const lastName = item.LastName || item.lastName || item.name?.split(" ").slice(1).join(" ") || "User";
+  const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(" ")[0] || "";
+  const lastName = item.LastName || item.lastName || item.name?.split(" ").slice(1).join(" ") || "";
   const rssi = item[rssiKey] !== void 0 ? Number(item[rssiKey]) : item.rssi || -60;
   return {
     ...item,
@@ -3111,6 +3196,8 @@ var lastSyncMetadata = {
   status: "IDLE",
   error: null
 };
+var lastBatchFingerprint = "";
+var lastAiProcessedAt = 0;
 async function getPeopleTrackingApiHost() {
   if (runtimeHostOverride && runtimeHostOverride.trim()) {
     return runtimeHostOverride.trim().replace(/\/+$/, "");
@@ -3245,7 +3332,7 @@ async function fetchTagsInRealtime(customHost) {
       LocationName: String(tag.Location || tag.location || tag.LocationName || "Active Zone"),
       Timestamp: tag.Timestamp || tag.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
       timestamp: tag.Timestamp || tag.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
-      FirstName: tag.FirstName || tag.firstName || "Staff",
+      FirstName: tag.FirstName || tag.firstName || "",
       LastName: tag.LastName || tag.lastName || ""
     }));
     tags.sort((a, b) => new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime());
@@ -3325,7 +3412,11 @@ async function syncPeopleTrackingData(options) {
     let generatedAlerts = 0;
     let generatedIncidents = 0;
     let generatedInsights = 0;
-    if (telemetryBatch.length > 0) {
+    const currentFingerprint = JSON.stringify(telemetryBatch.map((t) => `${t.tagId}_${t.Location}_${t.Timestamp}`));
+    const isUnchanged = currentFingerprint === lastBatchFingerprint && Date.now() - lastAiProcessedAt < 3e4;
+    if (telemetryBatch.length > 0 && !isUnchanged) {
+      lastBatchFingerprint = currentFingerprint;
+      lastAiProcessedAt = Date.now();
       const aiResult = await processTelemetryWithAI(
         telemetryBatch,
         `i360 People Tracking UHF API (${host})`,
@@ -3460,9 +3551,9 @@ async function pollSingleConnection(config) {
     }
   }
 }
-function startPeopleTrackingPolling(intervalSeconds = 1) {
+function startPeopleTrackingPolling(intervalSeconds = 5) {
   if (peopleTrackingPollerInterval) return;
-  const ms = Math.max(intervalSeconds * 1e3, 1e3);
+  const ms = Math.max(intervalSeconds * 1e3, 3e3);
   console.log(`[Connection Poller] Starting periodic sync for People Tracking UHF API every ${ms / 1e3}s`);
   setTimeout(() => {
     syncPeopleTrackingData().catch((err) => {
@@ -5246,7 +5337,7 @@ function parseCleanJSON(rawText) {
   return JSON.parse(cleaned);
 }
 async function generateContentWithFallback(ai, params) {
-  const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+  const models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
   let lastError = null;
   for (const model of models) {
     try {
@@ -6352,6 +6443,22 @@ data: ${JSON.stringify({ status: "connected", timestamp: (/* @__PURE__ */ new Da
 // src/server/routes/mongodb.ts
 var import_express8 = require("express");
 var mongodbRouter = (0, import_express8.Router)();
+mongodbRouter.post("/prune-alerts", async (_req, res) => {
+  try {
+    const prunedCount = await pruneDuplicateAlerts();
+    return res.json({ success: true, prunedCount });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+mongodbRouter.post("/purge-samples", async (_req, res) => {
+  try {
+    await purgeLegacySampleWorkers();
+    return res.json({ success: true, message: "Purged legacy sample worker data from MongoDB Atlas" });
+  } catch (err) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 mongodbRouter.get("/status", async (req, res) => {
   res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
   try {

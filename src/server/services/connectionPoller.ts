@@ -180,9 +180,9 @@ export function stopPollingService(): void {
 /**
  * Periodically syncs live tags and history records from the People Tracking UHF API
  */
-export function startPeopleTrackingPolling(intervalSeconds = 1): void {
+export function startPeopleTrackingPolling(intervalSeconds = 5): void {
   if (peopleTrackingPollerInterval) return;
-  const ms = Math.max(intervalSeconds * 1000, 1000);
+  const ms = Math.max(intervalSeconds * 1000, 3000);
   console.log(`[Connection Poller] Starting periodic sync for People Tracking UHF API every ${ms / 1000}s`);
 
   // Run initial sync after server has stabilized

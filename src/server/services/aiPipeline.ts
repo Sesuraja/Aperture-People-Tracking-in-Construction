@@ -13,6 +13,9 @@ import {
 import { broadcastWebSocketEvent } from './websocket.js';
 import { broadcastSseEvent } from './sse.js';
 
+const recentAlertsCooldown = new Map<string, number>();
+const recentTagLocationHistory = new Map<string, { location: string; timestamp: number }>();
+
 export interface TelemetryPayload {
   TagID?: string;
   tagId?: string;
@@ -180,33 +183,42 @@ export async function processTelemetryWithAI(
 
     await upsertDoc('real_time_tags', tagDocument, orgId);
     await upsertDoc('live_tags', tagDocument, orgId);
-    await upsertDoc('rfid_realtime_events', {
-      id: `evt_${tagId}_${eventHash}`,
-      eventId: eventHash,
-      ...tagDocument,
-      receivedAt: nowIso,
-      createdAt: now,
-      expireAt: tenDaysLater
-    }, orgId);
+    // Throttle tag_history & rfid_realtime_events so continuous unchanged detection doesn't bloat MongoDB
+    const lastHist = recentTagLocationHistory.get(tagId);
+    const locChanged = !lastHist || lastHist.location !== item.location;
+    const timeElapsed = !lastHist || (Date.now() - lastHist.timestamp > 300000); // 5 min interval
 
-    await upsertDoc('tag_history', {
-      id: `hist_${tagId}_${eventHash}`,
-      eventId: eventHash,
-      organizationId: orgId,
-      TagID: tagId,
-      FirstName: item.firstName,
-      LastName: item.lastName,
-      LocationName: item.location,
-      EnterTime: item.timestamp,
-      LeaveTime: item.timestamp,
-      ...tagDocument,
-      createdAt: now,
-      expireAt: tenDaysLater
-    }, orgId);
+    if (locChanged || timeElapsed) {
+      recentTagLocationHistory.set(tagId, { location: item.location, timestamp: Date.now() });
+
+      await upsertDoc('rfid_realtime_events', {
+        id: `evt_${tagId}_${eventHash}`,
+        eventId: eventHash,
+        ...tagDocument,
+        receivedAt: nowIso,
+        createdAt: now,
+        expireAt: tenDaysLater
+      }, orgId);
+
+      await upsertDoc('tag_history', {
+        id: `hist_${tagId}_${eventHash}`,
+        eventId: eventHash,
+        organizationId: orgId,
+        TagID: tagId,
+        FirstName: item.firstName,
+        LastName: item.lastName,
+        LocationName: item.location,
+        EnterTime: item.timestamp,
+        LeaveTime: item.timestamp,
+        ...tagDocument,
+        createdAt: now,
+        expireAt: tenDaysLater
+      }, orgId);
+    }
 
     // 3b. Update registered_people & people ONLY if the person already exists in MongoDB (Do NOT auto-create fake/new workers)
     const existingPerson = (await getDocById('registered_people', tagId, orgId)) || (await getDocById('people', tagId, orgId));
-    const personName = existingPerson?.name || item.personName || item.name || (item.fullName || (item.firstName && item.firstName !== 'Staff' ? `${item.firstName} ${item.lastName || ''}`.trim() : `Tag ${tagId}`));
+    const personName = existingPerson?.name || item.personName || item.name || (item.fullName || (item.firstName ? `${item.firstName} ${item.lastName || ''}`.trim() : `Tag ${tagId}`));
     const personRole = existingPerson?.role || (item.role && item.role !== 'General Staff' ? item.role : 'Field Specialist');
     const personCompany = existingPerson?.tradeCompany || existingPerson?.company || item.company || 'Direct RFID / Ingested Data';
 
@@ -263,17 +275,30 @@ export async function processTelemetryWithAI(
     broadcastSseEvent('tag_update', tagDocument, orgId);
   }
 
-  // 4. Persist Generated Alerts to MongoDB & Broadcast
+  // 4. Persist Generated Alerts to MongoDB & Broadcast with 3-minute Cooldown
   for (const alert of analysisResult.alerts) {
+    const alertCooldownKey = `${alert.tagId || 'all'}_${alert.title || alert.type}_${alert.targetZone || 'all'}`;
+    const nowMs = Date.now();
+    const lastAlertTime = recentAlertsCooldown.get(alertCooldownKey) || 0;
+
     const alertDoc = {
       ...alert,
+      id: alert.id || `alert_${alert.tagId || 'tag'}_${(alert.title || 'alert').toLowerCase().replace(/[^a-z0-9]/g, '_').substring(0, 30)}`,
       organizationId,
+      updatedAt: nowIso,
       createdAt: now,
       expireAt: tenDaysLater
     };
-    await upsertDoc('alerts', alertDoc, organizationId);
-    broadcastWebSocketEvent('alert_created', alertDoc, organizationId);
-    broadcastSseEvent('alert_created', alertDoc, organizationId);
+
+    // If less than 3 minutes since last alert of this type for this tag, update existing doc without spamming new WS notifications
+    if (nowMs - lastAlertTime < 180000) {
+      await upsertDoc('alerts', alertDoc, organizationId);
+    } else {
+      recentAlertsCooldown.set(alertCooldownKey, nowMs);
+      await upsertDoc('alerts', alertDoc, organizationId);
+      broadcastWebSocketEvent('alert_created', alertDoc, organizationId);
+      broadcastSseEvent('alert_created', alertDoc, organizationId);
+    }
   }
 
   // 5. Persist Generated Incidents to MongoDB & Broadcast

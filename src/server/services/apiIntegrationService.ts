@@ -127,7 +127,7 @@ export function extractTelemetryFromPayload(data: any, mapping?: ThirdPartyApiCo
     const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.id || `TAG_${Date.now()}_${idx}`;
     const location = item[locKey] || item.Location || item.location || item.LocationName || item.zone || 'Zone 1';
     const timestamp = item[timeKey] || item.Timestamp || item.timestamp || item.EnterTime || new Date().toISOString();
-    const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(' ')[0] || 'Staff';
+    const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(' ')[0] || '';
     const lastName = item.LastName || item.lastName || item.name?.split(' ').slice(1).join(' ') || '';
     const rssi = item[rssiKey] !== undefined ? Number(item[rssiKey]) : (item.rssi || -60);
 

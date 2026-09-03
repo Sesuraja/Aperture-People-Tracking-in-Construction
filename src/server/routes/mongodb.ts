@@ -1,8 +1,28 @@
 import { Router, Request, Response } from 'express';
-import { getMongoStats, testMongoConnection, reconnectDatabase, getMongoUri, isMongoConnected } from '../services/db.js';
+import { getMongoStats, testMongoConnection, reconnectDatabase, getMongoUri, isMongoConnected, pruneDuplicateAlerts, purgeLegacySampleWorkers } from '../services/db.js';
 import { requireAuth, requireRole } from '../middleware/auth.js';
 
 export const mongodbRouter = Router();
+
+// POST /api/mongodb/prune-alerts
+mongodbRouter.post('/prune-alerts', async (_req: Request, res: Response) => {
+  try {
+    const prunedCount = await pruneDuplicateAlerts();
+    return res.json({ success: true, prunedCount });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/mongodb/purge-samples
+mongodbRouter.post('/purge-samples', async (_req: Request, res: Response) => {
+  try {
+    await purgeLegacySampleWorkers();
+    return res.json({ success: true, message: 'Purged legacy sample worker data from MongoDB Atlas' });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 // GET /api/mongodb/status - accessible for system health checks across all tabs
 mongodbRouter.get('/status', async (req: Request, res: Response) => {

@@ -284,7 +284,7 @@ export function getSafetyStatusBadge(status?: string) {
 
 export function parseCertifications(certs: any): string[] {
   if (!certs) {
-    return ['OSHA 30', 'Scaffolding L3'];
+    return [];
   }
   if (Array.isArray(certs)) {
     return certs.map(c => String(c).trim()).filter(Boolean);
@@ -582,7 +582,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       id: p.hardhatTagId || p.id,
       name: p.name,
       role: p.role,
-      company: p.tradeCompany || 'Apex Structural',
+      company: p.tradeCompany || organizationType || 'Operations',
       zone: p.currentZone || 'Off-Site',
       ppe: p.ppeStatus || 'COMPLIANT'
     }));
@@ -644,11 +644,11 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
             hardhatTagId: data.hardhatTagId || d.id,
             name: data.name || 'Unnamed Worker',
             role: role,
-            tradeCompany: data.tradeCompany || data.company || 'Apex Structural',
-            phone: data.phone || '+1 (555) 019-2831',
-            email: data.email || `${(data.name || '').toLowerCase().replace(/\s+/g, '.')}@buildcorp.com`,
-            emergencyContact: data.emergencyContact || 'Site EHS Team (+1 555-992-1100)',
-            certifications: data.certifications || 'OSHA 30, Scaffolding Safety',
+            tradeCompany: data.tradeCompany || data.company || organizationType || 'Operations',
+            phone: data.phone || '',
+            email: data.email || '',
+            emergencyContact: data.emergencyContact || '',
+            certifications: data.certifications || '',
             ppeStatus: data.ppeStatus || 'COMPLIANT',
             shiftStatus: data.shiftStatus || 'ON_SITE',
             trainingStatus: data.trainingStatus || (
@@ -659,8 +659,8 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
             trainingCourse: data.trainingCourse || '',
             trainingExpiry: data.trainingExpiry || '',
             department: data.department || 'Operations',
-            supervisor: data.supervisor || 'Operations Lead',
-            safetyScore: data.safetyScore || 94,
+            supervisor: data.supervisor || '',
+            safetyScore: data.safetyScore !== undefined ? data.safetyScore : 95,
             notes: data.notes || '',
             createdAt: data.createdAt
           });
@@ -843,20 +843,20 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         tagId: w.hardhatTagId || w.id,
         name: w.name,
         role: w.role,
-        tradeCompany: w.tradeCompany || 'Apex Structural',
-        phone: w.phone,
-        email: w.email || `${(w.name || "").toLowerCase().replace(/\s+/g, '.')}@buildcorp.com`,
-        emergencyContact: w.emergencyContact,
-        certifications: w.certifications,
+        tradeCompany: w.tradeCompany || organizationType || 'Operations',
+        phone: w.phone || '',
+        email: w.email || '',
+        emergencyContact: w.emergencyContact || '',
+        certifications: w.certifications || '',
         ppeStatus: w.ppeStatus || 'COMPLIANT',
         shiftStatus: w.shiftStatus || 'ON_SITE',
         trainingStatus: w.trainingStatus || 'COMPLIANT',
-        lastTrainingDate: w.lastTrainingDate || '2026-05-15',
-        trainingCourse: w.trainingCourse || 'OSHA 30 Construction Safety',
-        trainingExpiry: w.trainingExpiry || '2027-05-15',
-        department: w.department || 'Civil Engineering',
-        supervisor: w.supervisor || 'Marcus Vance (EHS Lead)',
-        safetyScore: w.safetyScore || 94,
+        lastTrainingDate: w.lastTrainingDate || '',
+        trainingCourse: w.trainingCourse || '',
+        trainingExpiry: w.trainingExpiry || '',
+        department: w.department || 'Operations',
+        supervisor: w.supervisor || '',
+        safetyScore: w.safetyScore !== undefined ? w.safetyScore : 95,
         currentZone: 'Off-Site / Gate Check-In',
         dwellTime: 0,
         presenceState: w.shiftStatus === 'OFF_SITE' ? 'IDLE' : 'MOVING',
@@ -1198,7 +1198,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         company: finalCompany,
         phone: formData.phone || '+1 (555) 019-2831',
         email: formData.email || `${formData.name.toLowerCase().replace(/\s+/g, '.')}@enterprise.com`,
-        emergencyContact: formData.emergencyContact || 'Emergency Contact (+1 555-992-1100)',
+        emergencyContact: formData.emergencyContact || '',
         certifications: formData.certifications || 'Enterprise Standard Clearance',
         ppeStatus: formData.ppeStatus || 'COMPLIANT',
         shiftStatus: formData.shiftStatus || 'ON_SITE',
@@ -1610,7 +1610,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       tradeCompany: person.tradeCompany || person.company || availableCompanies[0] || 'General Organization',
       phone: person.phone || '+1 (555) 019-2831',
       email: person.email || '',
-      emergencyContact: person.emergencyContact || 'Jane Doe (+1 555-992-1100)',
+      emergencyContact: person.emergencyContact || '',
       certifications: person.certifications || 'Standard Compliance & Safety',
       ppeStatus: person.ppeStatus || 'COMPLIANT',
       shiftStatus: person.shiftStatus || 'ON_SITE',
@@ -2058,7 +2058,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                         <div className="my-2.5 space-y-1.5 text-xs bg-slate-50 dark:bg-slate-800/60 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
                           <div className="flex items-center justify-between">
                             <span className="text-slate-400 text-[11px] font-medium">Trade Company:</span>
-                            <span className="font-bold text-slate-800 dark:text-slate-200">{person.tradeCompany || 'Apex Structural'}</span>
+                            <span className="font-bold text-slate-800 dark:text-slate-200">{person.tradeCompany || organizationType || 'Operations'}</span>
                           </div>
 
                           <div className="flex items-center justify-between">
@@ -2232,7 +2232,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                         </TableCell>
 
                         <TableCell className="text-xs font-medium text-slate-700 dark:text-slate-300">
-                          {person.tradeCompany || 'Apex Structural'}
+                          {person.tradeCompany || organizationType || 'Operations'}
                         </TableCell>
 
                         <TableCell>
@@ -2382,7 +2382,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                   <div className="flex items-center gap-2 text-xs text-slate-500 font-medium">
                     <span className="font-mono text-[#007BC4] font-bold">{selectedPerson.hardhatTagId || selectedPerson.id}</span>
                     <span>•</span>
-                    <span>{selectedPerson.tradeCompany || 'Apex Structural'}</span>
+                    <span>{selectedPerson.tradeCompany || organizationType || 'Operations'}</span>
                   </div>
                 </div>
               </div>

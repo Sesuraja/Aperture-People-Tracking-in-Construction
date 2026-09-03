@@ -20,6 +20,9 @@ let lastSyncMetadata: {
   error: null
 };
 
+let lastBatchFingerprint: string = '';
+let lastAiProcessedAt: number = 0;
+
 /**
  * Dynamically resolves the API host without hardcoding.
  * Priority:
@@ -237,7 +240,7 @@ export async function fetchTagsInRealtime(customHost?: string): Promise<any[]> {
       LocationName: String(tag.Location || tag.location || tag.LocationName || 'Active Zone'),
       Timestamp: tag.Timestamp || tag.timestamp || new Date().toISOString(),
       timestamp: tag.Timestamp || tag.timestamp || new Date().toISOString(),
-      FirstName: tag.FirstName || tag.firstName || 'Staff',
+      FirstName: tag.FirstName || tag.firstName || '',
       LastName: tag.LastName || tag.lastName || ''
     }));
 
@@ -361,8 +364,13 @@ export async function syncPeopleTrackingData(options?: {
     let generatedIncidents = 0;
     let generatedInsights = 0;
 
-    // 5. Run through Multi-AI Engine & MongoDB 10-Day Retention pipeline
-    if (telemetryBatch.length > 0) {
+    // 5. Run through Multi-AI Engine & MongoDB 10-Day Retention pipeline with fingerprint deduplication
+    const currentFingerprint = JSON.stringify(telemetryBatch.map(t => `${t.tagId}_${t.Location}_${t.Timestamp}`));
+    const isUnchanged = currentFingerprint === lastBatchFingerprint && (Date.now() - lastAiProcessedAt < 30000);
+
+    if (telemetryBatch.length > 0 && !isUnchanged) {
+      lastBatchFingerprint = currentFingerprint;
+      lastAiProcessedAt = Date.now();
       const aiResult = await processTelemetryWithAI(
         telemetryBatch,
         `i360 People Tracking UHF API (${host})`,

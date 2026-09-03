@@ -239,6 +239,12 @@ export async function initDatabase(customUri?: string): Promise<void> {
 
     // Initialize database deduplication indexes (safe, non-data-creating)
     await initDatabaseIndexes();
+
+    // Prune legacy bloated duplicate alerts to keep MongoDB query latency ultra-low
+    await pruneDuplicateAlerts();
+
+    // Purge legacy sample worker documents (Staff User, John Miller, etc.) that do not belong to real API/database
+    await purgeLegacySampleWorkers();
   } catch (err: any) {
     console.error('[DB Service] Failed to connect to MongoDB:', err.message);
     console.warn('[DB Service] Operating with in-memory storage fallback.');
@@ -855,8 +861,8 @@ export async function bulkWriteRfidRealtimeEvents(
       TagID: tagId,
       Timestamp: timestampMs,
       Location: location,
-      FirstName: raw.FirstName || raw.firstName || 'Staff',
-      LastName: raw.LastName || raw.lastName || 'Member',
+      FirstName: raw.FirstName || raw.firstName || '',
+      LastName: raw.LastName || raw.lastName || '',
       protocol: raw.protocol || protocol,
       rssi: raw.rssi !== undefined ? Number(raw.rssi) : -60,
       readerId,
@@ -938,8 +944,8 @@ export async function bulkWriteRealtimeTags(
       TagID: tagId,
       Timestamp: rawTag.Timestamp || new Date().toISOString(),
       Location: rawTag.Location || rawTag.LocationName || rawTag.zone || 'Zone1',
-      FirstName: rawTag.FirstName || 'Staff',
-      LastName: rawTag.LastName || 'User',
+      FirstName: rawTag.FirstName || '',
+      LastName: rawTag.LastName || '',
       rssi: rawTag.rssi !== undefined ? Number(rawTag.rssi) : -60,
       status: rawTag.status || 'Active',
       lastSyncAt: new Date().toISOString(),
@@ -1335,6 +1341,81 @@ export async function getDataRetentionStatus(retentionDays = 10) {
     engine: mongoDb ? 'MongoDB Atlas TTL Indexes + Scheduled Background Purge' : 'In-Memory Fallback Retention',
     collections: collectionsStatus
   };
+}
+
+/**
+ * Prunes repetitive identical alerts from MongoDB Atlas, keeping only the latest unique active alerts.
+ * This resolves database lag caused by continuous unthrottled tag detections.
+ */
+export async function pruneDuplicateAlerts(): Promise<number> {
+  if (!mongoDb) return 0;
+  try {
+    const alertsCol = mongoDb.collection('alerts');
+    const allAlerts = await alertsCol.find().sort({ timestamp: -1, createdAt: -1 }).toArray();
+    if (allAlerts.length <= 50) return 0;
+
+    const seenKeys = new Set<string>();
+    const toKeep: any[] = [];
+    const toDeleteIds: any[] = [];
+
+    for (const a of allAlerts) {
+      const key = `${a.tagId || 'tag'}_${(a.title || a.message || 'alert').trim().toLowerCase()}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        toKeep.push(a);
+      } else {
+        toDeleteIds.push(a._id);
+      }
+    }
+
+    if (toDeleteIds.length > 0) {
+      const chunkSize = 1000;
+      for (let i = 0; i < toDeleteIds.length; i += chunkSize) {
+        const chunk = toDeleteIds.slice(i, i + chunkSize);
+        await alertsCol.deleteMany({ _id: { $in: chunk } });
+      }
+      console.log(`[DB Service] Pruned ${toDeleteIds.length} duplicate alerts from MongoDB. Retained ${toKeep.length} unique active alerts.`);
+      invalidateCollectionCache('alerts');
+    }
+    return toDeleteIds.length;
+  } catch (err: any) {
+    console.warn('[DB Service] Alert pruning note:', err.message);
+    return 0;
+  }
+}
+
+/**
+ * Purges fake/mock sample workers (e.g. Staff User, John Miller, TAG_123, W-101) from MongoDB collections.
+ */
+export async function purgeLegacySampleWorkers(): Promise<void> {
+  if (!mongoDb) return;
+  try {
+    const fakeIds = ['TAG_123', 'W-101', 'worker-1', 'worker-2', 'worker-3'];
+    const fakeNames = ['Staff User', 'John Miller'];
+    const filter = {
+      $or: [
+        { id: { $in: fakeIds } },
+        { _id: { $in: fakeIds } },
+        { tagId: { $in: fakeIds } },
+        { hardhatTagId: { $in: fakeIds } },
+        { name: { $in: fakeNames } },
+        { personName: { $in: fakeNames } }
+      ]
+    };
+    await mongoDb.collection('people').deleteMany(filter);
+    await mongoDb.collection('registered_people').deleteMany(filter);
+    await mongoDb.collection('attendance_logs').deleteMany(filter);
+    await mongoDb.collection('alerts').deleteMany({
+      $or: [
+        { tagId: { $in: fakeIds } },
+        { personName: { $in: fakeNames } }
+      ]
+    });
+    invalidateCollectionCache();
+    console.log('[DB Service] Purged legacy sample workers (Staff User, John Miller, etc.) from MongoDB.');
+  } catch (err: any) {
+    console.warn('[DB Service] Note on purgeLegacySampleWorkers:', err.message);
+  }
 }
 
 
