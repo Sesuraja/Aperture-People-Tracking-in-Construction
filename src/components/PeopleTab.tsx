@@ -59,9 +59,135 @@ interface TagHistoryEntry {
   id: string;
   TagID: string;
   name?: string;
+  location?: string;
   fromZone?: string | null;
   toZone?: string;
+  enterTime?: string;
+  leaveTime?: string;
+  duration?: string;
+  durationMins?: number | string;
   timestamp?: any;
+}
+
+function formatDurationMinutes(enterStr?: string, leaveStr?: string, rawDuration?: any): string {
+  if (rawDuration !== undefined && rawDuration !== null && rawDuration !== '') {
+    if (typeof rawDuration === 'number') return `${rawDuration} mins`;
+    const s = String(rawDuration).trim();
+    if (s.toLowerCase().includes('min')) return s;
+    const n = parseFloat(s);
+    if (!isNaN(n)) return `${Math.round(n * 10) / 10} mins`;
+  }
+  if (!enterStr) return 'Active';
+  if (!leaveStr || leaveStr === 'ACTIVE' || leaveStr === 'Present') return 'Active';
+  try {
+    const enterMs = new Date(enterStr.replace(' ', 'T')).getTime();
+    const leaveMs = new Date(leaveStr.replace(' ', 'T')).getTime();
+    if (isNaN(enterMs) || isNaN(leaveMs) || leaveMs <= enterMs) return 'Active';
+    const mins = (leaveMs - enterMs) / (1000 * 60);
+    return `${Math.round(mins * 10) / 10} mins`;
+  } catch {
+    return 'Active';
+  }
+}
+
+function FormattedAiReport({ content }: { content: string }) {
+  if (!content) return null;
+
+  const lines = content.split('\n');
+  const elements: React.ReactNode[] = [];
+
+  const renderInlineText = (text: string) => {
+    const parts = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+    return parts.map((part, idx) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        const inner = part.slice(2, -2);
+        return (
+          <strong key={idx} className="font-extrabold text-slate-900 dark:text-white">
+            {inner}
+          </strong>
+        );
+      }
+      if (part.startsWith('`') && part.endsWith('`')) {
+        const inner = part.slice(1, -1);
+        return (
+          <code key={idx} className="px-1.5 py-0.5 mx-0.5 bg-sky-50 dark:bg-sky-950/60 text-[#007BC4] dark:text-sky-300 font-mono text-[11px] font-bold rounded-md border border-sky-200 dark:border-sky-800/40">
+            {inner}
+          </code>
+        );
+      }
+      return part;
+    });
+  };
+
+  lines.forEach((rawLine, idx) => {
+    const line = rawLine.trim();
+    if (!line) {
+      elements.push(<div key={`empty-${idx}`} className="h-2" />);
+      return;
+    }
+
+    if (line === '---' || line === '***') {
+      elements.push(<hr key={`hr-${idx}`} className="my-3.5 border-slate-200 dark:border-slate-800" />);
+      return;
+    }
+
+    if (line.startsWith('### ')) {
+      elements.push(
+        <div key={`h3-${idx}`} className="pt-2 pb-1.5">
+          <h3 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
+            {renderInlineText(line.slice(4))}
+          </h3>
+        </div>
+      );
+      return;
+    }
+
+    if (line.startsWith('#### ')) {
+      elements.push(
+        <div key={`h4-${idx}`} className="pt-3 pb-1 border-b border-slate-100 dark:border-slate-800/80 mb-2">
+          <h4 className="text-xs font-black uppercase tracking-wider text-[#007BC4] dark:text-sky-400 flex items-center gap-1.5">
+            {renderInlineText(line.slice(5))}
+          </h4>
+        </div>
+      );
+      return;
+    }
+
+    if (line.startsWith('- ') || line.startsWith('* ')) {
+      elements.push(
+        <div key={`bullet-${idx}`} className="flex items-start gap-2.5 py-1 text-xs text-slate-700 dark:text-slate-300">
+          <span className="w-1.5 h-1.5 rounded-full bg-[#007BC4] mt-1.5 shrink-0" />
+          <div className="flex-1 leading-relaxed">
+            {renderInlineText(line.slice(2))}
+          </div>
+        </div>
+      );
+      return;
+    }
+
+    const numMatch = line.match(/^(\d+)\.\s+(.+)$/);
+    if (numMatch) {
+      elements.push(
+        <div key={`num-${idx}`} className="flex items-start gap-2.5 p-3 my-1.5 bg-slate-100/70 dark:bg-slate-800/60 rounded-xl border border-slate-200/80 dark:border-slate-700/60 text-xs shadow-2xs">
+          <span className="w-5 h-5 rounded-full bg-[#007BC4] text-white font-black text-[10px] flex items-center justify-center shrink-0 shadow-xs">
+            {numMatch[1]}
+          </span>
+          <div className="flex-1 text-slate-800 dark:text-slate-200 leading-relaxed font-medium">
+            {renderInlineText(numMatch[2])}
+          </div>
+        </div>
+      );
+      return;
+    }
+
+    elements.push(
+      <p key={`p-${idx}`} className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed py-0.5">
+        {renderInlineText(line)}
+      </p>
+    );
+  });
+
+  return <div className="space-y-1">{elements}</div>;
 }
 
 function QrCodeSvg({ text, size = 120 }: { text: string; size?: number }) {
@@ -593,36 +719,109 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     };
   }, []);
 
-  // 2. Fetch movement history for selected worker from MongoDB tag_history
+  // 2. Fetch movement history for selected worker from MongoDB tag_history and GAO API
   useEffect(() => {
     if (!selectedPerson || profileTab !== 'movement') return;
-    const tagId = (selectedPerson.hardhatTagId || selectedPerson.id).toUpperCase();
+    const tagId = (selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase().trim();
+    const tagIdLower = tagId.toLowerCase();
+    const personName = (selectedPerson.name || '').toLowerCase().trim();
     setIsHistoryLoading(true);
 
-    const q = query(collection(db, 'tag_history'));
-    const unsub = onSnapshot(q, (snapshot) => {
-      const history: TagHistoryEntry[] = [];
-      snapshot.forEach((d) => {
-        const data = d.data();
-        if (data.TagID?.toUpperCase() === tagId || data.tagId?.toUpperCase() === tagId) {
-          history.push({
-            id: d.id,
-            TagID: data.TagID || data.tagId,
-            name: data.name,
-            fromZone: data.fromZone,
-            toZone: data.toZone,
-            timestamp: data.timestamp
-          });
-        }
-      });
-      setWorkerHistory(history.slice(0, 15));
-      setIsHistoryLoading(false);
-    }, (err) => {
-      console.warn("Failed to read worker movement history:", err);
-      setIsHistoryLoading(false);
-    });
+    let isSubscribed = true;
 
-    return () => unsub();
+    const loadMovementHistory = async () => {
+      try {
+        const historyMap = new Map<string, TagHistoryEntry>();
+
+        // 1. Fetch from /api/GetHistoryRecords endpoint
+        try {
+          const res = await fetch('/api/GetHistoryRecords/0/200');
+          if (res.ok) {
+            const records = await res.json();
+            if (Array.isArray(records)) {
+              records.forEach((r: any) => {
+                const rTag = String(r.TagID || r.tagId || '').toUpperCase().trim();
+                const rName = String(r.name || (r.FirstName ? `${r.FirstName} ${r.LastName || ''}`.trim() : '')).toLowerCase().trim();
+                const matches = (rTag && rTag === tagId) || (rTag && rTag === tagIdLower) || (personName && rName === personName);
+                if (matches) {
+                  const enter = r.EnterTime || r.EnterTimeStr || r.timestamp || 'Recent';
+                  const leave = r.LeaveTime || r.LeaveTimeStr || 'ACTIVE';
+                  const zone = r.LocationName || r.Location || r.zone || 'Site Sector';
+                  const duration = formatDurationMinutes(enter, leave, r.Duration || r.durationMins);
+                  const entryId = `hist_${rTag}_${String(enter).replace(/[: ]/g, '_')}`;
+                  historyMap.set(entryId, {
+                    id: entryId,
+                    TagID: rTag || tagId,
+                    name: r.name || selectedPerson.name,
+                    location: zone,
+                    toZone: zone,
+                    fromZone: r.fromZone || null,
+                    enterTime: enter,
+                    leaveTime: leave,
+                    duration,
+                    timestamp: enter
+                  });
+                }
+              });
+            }
+          }
+        } catch {}
+
+        // 2. Fetch from MongoDB tag_history collection
+        try {
+          const dbRes = await fetch('/api/data/tag_history');
+          if (dbRes.ok) {
+            const dbDocs = await dbRes.json();
+            if (Array.isArray(dbDocs)) {
+              dbDocs.forEach((d: any) => {
+                const dTag = String(d.TagID || d.tagId || '').toUpperCase().trim();
+                const dName = String(d.name || '').toLowerCase().trim();
+                const matches = (dTag && dTag === tagId) || (dTag && dTag === tagIdLower) || (personName && dName === personName);
+                if (matches) {
+                  const enter = d.EnterTime || d.EnterTimeStr || d.timestamp || d.createdAt || 'Recent';
+                  const leave = d.LeaveTime || d.LeaveTimeStr || 'ACTIVE';
+                  const zone = d.LocationName || d.Location || d.toZone || d.zone || 'Site Sector';
+                  const duration = formatDurationMinutes(enter, leave, d.Duration || d.durationMins);
+                  const entryId = d.id || `hist_${dTag}_${String(enter).replace(/[: ]/g, '_')}`;
+                  if (!historyMap.has(entryId)) {
+                    historyMap.set(entryId, {
+                      id: entryId,
+                      TagID: dTag || tagId,
+                      name: d.name || selectedPerson.name,
+                      location: zone,
+                      toZone: zone,
+                      fromZone: d.fromZone || null,
+                      enterTime: enter,
+                      leaveTime: leave,
+                      duration,
+                      timestamp: enter
+                    });
+                  }
+                }
+              });
+            }
+          }
+        } catch {}
+
+        if (isSubscribed) {
+          const list = Array.from(historyMap.values());
+          list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+          setWorkerHistory(list.slice(0, 20));
+        }
+      } catch (err) {
+        console.warn('Failed to load worker movement history:', err);
+      } finally {
+        if (isSubscribed) setIsHistoryLoading(false);
+      }
+    };
+
+    loadMovementHistory();
+    const interval = setInterval(loadMovementHistory, 2000);
+
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
   }, [selectedPerson, profileTab]);
 
   // 3. Combine MongoDB registered workers with real-time antenna tag scans (Workers only)
@@ -638,10 +837,10 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       ) {
         return;
       }
-      const tagKey = (w.hardhatTagId || w.id).toUpperCase();
-      map.set(tagKey, {
+      const entry = {
         id: w.id,
         hardhatTagId: w.hardhatTagId || w.id,
+        tagId: w.hardhatTagId || w.id,
         name: w.name,
         role: w.role,
         tradeCompany: w.tradeCompany || 'Apex Structural',
@@ -662,7 +861,12 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         dwellTime: 0,
         presenceState: w.shiftStatus === 'OFF_SITE' ? 'IDLE' : 'MOVING',
         isDbRegistered: true
-      });
+      };
+
+      const tagKey = (w.hardhatTagId || w.id).toUpperCase();
+      map.set(tagKey, entry);
+      if (w.id) map.set(w.id.toUpperCase(), entry);
+      if (w.hardhatTagId) map.set(w.hardhatTagId.toUpperCase(), entry);
     });
 
     // 2. Overlay live positions from antenna scans (ONLY update live telemetry: x, y, currentZone, dwellTime, presenceState, lastSeen)
@@ -679,13 +883,15 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       }
 
       const tagKey = (p.hardhatTagId || p.id).toUpperCase();
-      const existing = map.get(tagKey);
+      const existing = map.get(tagKey) || (p.id ? map.get(p.id.toUpperCase()) : null) || (p.hardhatTagId ? map.get(p.hardhatTagId.toUpperCase()) : null);
       if (existing) {
+        // ALWAYS keep authoritative worker name and role from MongoDB
         existing.currentZone = p.currentZone || existing.currentZone;
         existing.dwellTime = p.dwellTime ?? existing.dwellTime;
         existing.presenceState = p.presenceState || existing.presenceState;
         existing.x = p.x;
         existing.y = p.y;
+        existing.lastSeen = p.lastSeen || existing.lastSeen;
       } else {
         map.set(tagKey, {
           ...p,
@@ -702,7 +908,16 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       }
     });
 
-    return Array.from(map.values());
+    // Deduplicate by primary hardhatTagId / id
+    const dedupedMap = new Map<string, any>();
+    map.forEach(item => {
+      const primaryKey = (item.hardhatTagId || item.id).toUpperCase();
+      if (!dedupedMap.has(primaryKey)) {
+        dedupedMap.set(primaryKey, item);
+      }
+    });
+
+    return Array.from(dedupedMap.values());
   }, [dbWorkers, people]);
 
   // Filtered workers list
@@ -799,6 +1014,11 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       const tagUpper = (tagId || "").toUpperCase().trim();
       const todayDate = new Date().toISOString().split('T')[0];
       await setDoc(doc(db, 'registered_people', tagUpper), {
+        trainingStatus: newStatus,
+        lastTrainingDate: todayDate,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
+      await setDoc(doc(db, 'people', tagUpper), {
         trainingStatus: newStatus,
         lastTrainingDate: todayDate,
         updatedAt: serverTimestamp()
@@ -1032,8 +1252,16 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
   // Edit existing worker in MongoDB
   const handleUpdateWorker = async () => {
-    if (!formData.id || !formData.hardhatTagId) return;
+    if (!formData.name?.trim()) {
+      showToast('error', `Please provide a name for this ${personnelSingular}.`);
+      return;
+    }
     const tagId = (formData.hardhatTagId || formData.id || "").toUpperCase().trim();
+    const rawId = (formData.id || tagId).trim();
+    if (!tagId) {
+      showToast('error', 'Cannot update worker without an identifier.');
+      return;
+    }
     const finalRole = isCustomRole ? (customRoleInput.trim() || formData.role) : (formData.role || 'Staff');
     const finalCompany = isCustomCompany ? (customCompanyInput.trim() || formData.tradeCompany) : (formData.tradeCompany || 'General Organization');
 
@@ -1047,40 +1275,71 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     try {
       const updatedRecord: DBWorker = {
         ...formData,
-        id: tagId,
+        id: rawId,
         hardhatTagId: tagId,
+        tagId: tagId,
+        name: formData.name.trim(),
         role: finalRole,
         tradeCompany: finalCompany,
         company: finalCompany,
         department: formData.department || finalCompany,
+        currentZone: formData.currentZone,
+        location: formData.currentZone,
+        trainingStatus: formData.trainingStatus || 'COMPLIANT',
+        certifications: formData.certifications || '',
         updatedAt: serverTimestamp()
       } as any;
 
+      // Update both registered_people AND people collections in MongoDB
       await setDoc(doc(db, 'registered_people', tagId), updatedRecord, { merge: true });
-      await fetch('/api/data/registered_people', {
+      await setDoc(doc(db, 'people', tagId), updatedRecord, { merge: true });
+
+      fetch(`/api/data/registered_people/${encodeURIComponent(tagId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updatedRecord)
+      }).catch(() => {});
+      fetch(`/api/data/people/${encodeURIComponent(tagId)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updatedRecord)
       }).catch(() => {});
 
-      // Optimistically update dbWorkers
-      setDbWorkers(prev => prev.map(w => {
-        if ((w.id || '').toUpperCase() === tagId || (w.hardhatTagId || '').toUpperCase() === tagId) {
-          return { ...w, ...updatedRecord };
+      if (rawId && rawId.toUpperCase() !== tagId) {
+        await setDoc(doc(db, 'registered_people', rawId), updatedRecord, { merge: true });
+        await setDoc(doc(db, 'people', rawId), updatedRecord, { merge: true });
+      }
+
+      // Optimistically update dbWorkers state
+      setDbWorkers(prev => {
+        const exists = prev.some(w => {
+          const wIdUpper = (w.id || '').toUpperCase();
+          const wTagUpper = (w.hardhatTagId || '').toUpperCase();
+          return wIdUpper === tagId || wTagUpper === tagId || (rawId && (wIdUpper === rawId.toUpperCase() || wTagUpper === rawId.toUpperCase()));
+        });
+        if (exists) {
+          return prev.map(w => {
+            const wIdUpper = (w.id || '').toUpperCase();
+            const wTagUpper = (w.hardhatTagId || '').toUpperCase();
+            if (wIdUpper === tagId || wTagUpper === tagId || (rawId && (wIdUpper === rawId.toUpperCase() || wTagUpper === rawId.toUpperCase()))) {
+              return { ...w, ...updatedRecord };
+            }
+            return w;
+          });
         }
-        return w;
-      }));
+        return [updatedRecord, ...prev];
+      });
 
       await addDoc(collection(db, 'alerts'), {
         type: 'info',
-        message: `Updated ${personnelSingular} record in MongoDB: ${formData.name} (${tagId})`,
+        message: `Updated ${personnelSingular} record in MongoDB: ${formData.name.trim()} (${tagId})`,
         timestamp: new Date()
       });
 
       window.dispatchEvent(new CustomEvent('gao_refresh_data'));
       window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 
-      showToast('success', `Updated profile for "${formData.name}" in MongoDB.`);
+      showToast('success', `Updated profile for "${formData.name.trim()}" in MongoDB.`);
       setIsEditModalOpen(false);
       setIsCustomRole(false);
       setCustomRoleInput('');
@@ -1090,7 +1349,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         setSelectedPerson(prev => prev ? { ...prev, ...updatedRecord } : null);
       }
     } catch (err) {
-      console.error("Failed to update worker:", err);
+      console.error("Failed to update worker in MongoDB:", err);
       showToast('error', `Failed to update ${personnelSingular} in MongoDB.`);
     }
   };
@@ -1154,6 +1413,10 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         ppeStatus: newPpe,
         updatedAt: serverTimestamp()
       }, { merge: true });
+      await setDoc(doc(db, 'people', tagUpper), {
+        ppeStatus: newPpe,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
 
       // Optimistically update dbWorkers state
       setDbWorkers(prev => prev.map(w => {
@@ -1191,6 +1454,10 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         shiftStatus: newShift,
         updatedAt: serverTimestamp()
       }, { merge: true });
+      await setDoc(doc(db, 'people', tagUpper), {
+        shiftStatus: newShift,
+        updatedAt: serverTimestamp()
+      }, { merge: true });
 
       // Optimistically update dbWorkers state
       setDbWorkers(prev => prev.map(w => {
@@ -1213,6 +1480,8 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       showToast('error', "Failed to update shift status in MongoDB.");
     }
   };
+
+
 
   // Reset form data
   const resetFormData = () => {
@@ -2219,35 +2488,74 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
               {/* Tab 3: Zone Movement Log */}
               {profileTab === 'movement' && (
                 <div className="space-y-4">
-                  <div className="p-3 bg-blue-50 text-blue-900 border border-blue-200 rounded-xl flex items-center justify-between text-xs">
-                    <span>Active Sector: <strong>{selectedPerson.currentZone || 'Off-Site'}</strong></span>
-                    <span>Current Dwell: <strong>{Math.floor((selectedPerson.dwellTime || 0) / 60)}m</strong></span>
+                  <div className="p-3.5 bg-gradient-to-r from-sky-50 to-blue-50 dark:from-sky-950/40 dark:to-blue-950/30 text-blue-900 dark:text-blue-200 border border-blue-200 dark:border-blue-800/60 rounded-2xl flex items-center justify-between text-xs shadow-xs">
+                    <div className="flex items-center gap-2">
+                      <span className="p-1.5 bg-[#007BC4]/10 text-[#007BC4] rounded-lg">
+                        <MapPin size={15} />
+                      </span>
+                      <span>Active Sector: <strong className="text-slate-900 dark:text-white">{selectedPerson.currentZone || 'Off-Site / Gate Portal'}</strong></span>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <span className="font-medium text-slate-600 dark:text-slate-400">Current Dwell: <strong className="text-[#007BC4]">{Math.floor((selectedPerson.dwellTime || 0) / 60)} mins</strong></span>
+                      <span className="px-2 py-0.5 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 font-black text-[10px] rounded-full border border-emerald-500/20">
+                        {selectedPerson.presenceState || 'ACTIVE'}
+                      </span>
+                    </div>
                   </div>
 
-                  <h4 className="font-bold text-slate-900 dark:text-white text-xs">Recent Zone Entry / Exit History (MongoDB)</h4>
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-extrabold text-slate-900 dark:text-white text-xs flex items-center gap-1.5">
+                      <Clock size={14} className="text-[#007BC4]" /> Historical Zone & Antenna Access Ledger
+                    </h4>
+                    <span className="text-[10px] font-mono text-slate-400">Tag: {selectedPerson.hardhatTagId || selectedPerson.id}</span>
+                  </div>
 
-                  {isHistoryLoading ? (
+                  {isHistoryLoading && workerHistory.length === 0 ? (
                     <div className="py-8 text-center text-slate-400 font-bold flex items-center justify-center gap-2">
-                      <Loader2 size={16} className="animate-spin text-[#007BC4]" /> Loading movement history...
+                      <Loader2 size={16} className="animate-spin text-[#007BC4]" /> Loading live movement logs...
                     </div>
                   ) : (
-                    <div className="space-y-2 max-h-[220px] overflow-y-auto">
+                    <div className="space-y-2.5 max-h-[260px] overflow-y-auto pr-1">
                       {workerHistory.map((h, i) => (
-                        <div key={i} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl flex justify-between items-center text-xs">
-                          <div className="flex items-center gap-2">
-                            <Clock size={14} className="text-[#007BC4]" />
-                            <span className="font-bold text-slate-800 dark:text-white">To: {h.toZone || 'Unassigned'}</span>
-                            {h.fromZone && <span className="text-[#007BC4]"> (From: {h.fromZone})</span>}
+                        <div key={h.id || i} className="p-3 bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-2xl flex flex-col sm:flex-row justify-between sm:items-center gap-2 text-xs transition">
+                          <div className="flex items-center gap-2.5">
+                            <div className="p-1.5 bg-[#007BC4]/10 text-[#007BC4] rounded-xl shrink-0">
+                              <MapPin size={14} />
+                            </div>
+                            <div>
+                              <div className="font-extrabold text-slate-900 dark:text-white">
+                                {h.location || h.toZone || 'Site Sector'}
+                                {h.fromZone && <span className="text-slate-400 font-normal text-[11px]"> (From: {h.fromZone})</span>}
+                              </div>
+                              <div className="text-[10px] text-slate-500 font-mono flex items-center gap-2 mt-0.5">
+                                <span>Enter: <strong className="text-slate-700 dark:text-slate-300">{h.enterTime || h.timestamp}</strong></span>
+                                {h.leaveTime && h.leaveTime !== 'ACTIVE' && (
+                                  <>
+                                    <span>•</span>
+                                    <span>Leave: <strong className="text-slate-700 dark:text-slate-300">{h.leaveTime}</strong></span>
+                                  </>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                          <span className="font-mono text-[10px] text-slate-400">
-                            {h.timestamp ? new Date(h.timestamp?.seconds ? h.timestamp.seconds * 1000 : (h.timestamp?.toDate ? h.timestamp.toDate() : h.timestamp)).toLocaleTimeString() : 'Recent'}
-                          </span>
+
+                          <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                            {h.duration && (
+                              <span className="px-2.5 py-1 bg-sky-50 dark:bg-sky-950/60 text-[#007BC4] dark:text-sky-300 font-bold text-[11px] rounded-lg border border-sky-200 dark:border-sky-800/50">
+                                ⏱️ {h.duration}
+                              </span>
+                            )}
+                            <span className="font-mono text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
+                              {h.timestamp ? new Date(h.timestamp).toLocaleTimeString() : 'Logged'}
+                            </span>
+                          </div>
                         </div>
                       ))}
 
                       {workerHistory.length === 0 && (
-                        <div className="text-center py-6 text-slate-400 text-xs">
-                          No recent zone movements logged in MongoDB for Tag {selectedPerson.hardhatTagId || selectedPerson.id}.
+                        <div className="text-center py-8 text-slate-400 text-xs bg-slate-50 dark:bg-slate-900 rounded-2xl border border-dashed border-slate-200 dark:border-slate-800">
+                          <MapPin className="w-8 h-8 mx-auto mb-2 text-slate-300 dark:text-slate-600" />
+                          No recent zone movements logged in database for Tag {selectedPerson.hardhatTagId || selectedPerson.id}.
                         </div>
                       )}
                     </div>
@@ -2327,15 +2635,34 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
               {/* Tab 5: AI Worker Summary */}
               {profileTab === 'ai' && (
-                <div>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-4 h-4 text-[#007BC4]" />
+                      <span className="text-xs font-bold text-slate-700 dark:text-slate-300">
+                        Gemini & Industry Intelligence Safety Audit
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => handleGenerateAiWorkerSummary(selectedPerson)}
+                      disabled={isGeneratingAi}
+                      className="px-3 py-1 bg-[#007BC4] hover:bg-blue-700 text-white rounded-lg text-[11px] font-bold flex items-center gap-1 shadow transition cursor-pointer disabled:opacity-60"
+                    >
+                      {isGeneratingAi ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                      Regenerate Audit
+                    </button>
+                  </div>
+
                   {isGeneratingAi ? (
-                    <div className="py-12 flex flex-col items-center justify-center gap-2">
+                    <div className="py-12 flex flex-col items-center justify-center gap-2.5 bg-slate-50 dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
                       <Loader2 className="w-8 h-8 text-[#007BC4] animate-spin" />
-                      <span className="text-xs text-slate-500 font-bold">Querying Gemini AI for Worker Dwell & Safety Intelligence...</span>
+                      <span className="text-xs text-slate-600 dark:text-slate-400 font-bold">
+                        Generating AI Safety & Dwell Intelligence Report...
+                      </span>
                     </div>
                   ) : (
-                    <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-2xl font-sans text-xs text-slate-800 dark:text-slate-200 whitespace-pre-line border border-slate-200 dark:border-slate-700 leading-relaxed">
-                      {aiSummary}
+                    <div className="bg-slate-50 dark:bg-slate-900/90 p-5 rounded-2xl border border-slate-200 dark:border-slate-700/80 shadow-xs max-h-[360px] overflow-y-auto">
+                      <FormattedAiReport content={aiSummary || ''} />
                     </div>
                   )}
                 </div>

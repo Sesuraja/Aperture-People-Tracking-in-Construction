@@ -18,6 +18,10 @@ export interface TelemetryContextItem {
   [key: string]: any;
 }
 
+let geminiCooldownUntil = 0;
+let chatgptCooldownUntil = 0;
+let claudeCooldownUntil = 0;
+
 export interface GeneratedAlert {
   id?: string;
   type: string;
@@ -219,24 +223,29 @@ Return strictly valid JSON with this exact schema:
   "incident": { "category": string, "title": string, "description": string, "severity": "Critical" | "High" | "Medium" | "Low" } | null
 }`;
 
-  const candidateModels = [model, 'gemini-2.5-flash', 'gemini-1.5-flash'].filter((v, i, a) => a.indexOf(v) === i);
+  const candidateModels = [model || 'gemini-2.5-flash', 'gemini-2.0-flash'].filter((v, i, a) => a.indexOf(v) === i);
   let lastError: any = null;
 
   for (const m of candidateModels) {
     try {
-      const response = await ai.models.generateContent({
+      const responsePromise = ai.models.generateContent({
         model: m,
         contents: prompt,
         config: { responseMimeType: 'application/json' }
       });
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini API timeout')), 2500));
+      const response = await Promise.race([responsePromise, timeoutPromise]) as any;
       const parsed = parseCleanJsonResponse(response.text || '');
       return aiEngineDecisionSchema.parse(parsed);
     } catch (err: any) {
       lastError = err;
+      if (err.message && (err.message.includes('404') || err.message.includes('API_KEY_INVALID') || err.message.includes('401') || err.message.includes('403'))) {
+        break; // Quick break on auth/model invalid errors
+      }
     }
   }
 
-  throw lastError || new Error('All Gemini candidate models failed');
+  throw lastError || new Error('Gemini candidate models failed');
 }
 
 /**
@@ -405,22 +414,25 @@ export async function analyzeTelemetryItemWithAI(
   try {
     if (active.provider === 'gemini') {
       const apiKey = runtimeGeminiKey || process.env.GEMINI_API_KEY || '';
-      if (apiKey) {
+      if (apiKey && Date.now() > geminiCooldownUntil) {
         decision = await callGeminiEngine(apiKey, active.model, eventContext);
       }
     } else if (active.provider === 'chatgpt') {
       const apiKey = runtimeOpenAiKey || process.env.OPENAI_API_KEY || '';
-      if (apiKey) {
+      if (apiKey && Date.now() > chatgptCooldownUntil) {
         decision = await callChatGptEngine(apiKey, active.model, eventContext);
       }
     } else if (active.provider === 'claude') {
       const apiKey = runtimeClaudeKey || process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY || '';
-      if (apiKey) {
+      if (apiKey && Date.now() > claudeCooldownUntil) {
         decision = await callClaudeEngine(apiKey, active.model, eventContext);
       }
     }
   } catch (err: any) {
-    console.warn(`[AI Engine] ${active.provider} generation fallback to deterministic engine:`, err.message);
+    if (active.provider === 'gemini') geminiCooldownUntil = Date.now() + 60000;
+    if (active.provider === 'chatgpt') chatgptCooldownUntil = Date.now() + 60000;
+    if (active.provider === 'claude') claudeCooldownUntil = Date.now() + 60000;
+    console.warn(`[AI Engine] ${active.provider} generation fallback to deterministic engine (cooldown active 60s):`, err.message);
     aiEngineUsed = 'deterministic (fallback)';
     modelUsed = 'industry-rule-engine-v2';
   }

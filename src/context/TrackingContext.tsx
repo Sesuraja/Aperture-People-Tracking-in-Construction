@@ -512,11 +512,15 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
   const getZoneByNameOrId = useCallback((nameOrId: string): MapZoneDefinition | undefined => {
     if (!nameOrId) return undefined;
     const lower = nameOrId.toLowerCase().trim();
+    const cleanLower = lower.replace(/[^a-z0-9]/g, '');
     return zones.find(z => 
       z.zoneId.toLowerCase() === lower || 
       z.id.toLowerCase() === lower || 
       z.name.toLowerCase() === lower ||
-      (z.aliasNames && z.aliasNames.some(a => a.toLowerCase() === lower || lower.includes(a.toLowerCase())))
+      z.name.toLowerCase().replace(/[^a-z0-9]/g, '') === cleanLower ||
+      (z.aliasNames && z.aliasNames.some(a => a.toLowerCase() === lower || lower.includes(a.toLowerCase()))) ||
+      lower.includes(z.name.toLowerCase()) ||
+      z.name.toLowerCase().includes(lower)
     );
   }, [zones]);
 
@@ -1070,11 +1074,13 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
       if (personIdx >= 0) {
         const existing = prev[personIdx];
         const hasExplicitCoords = tagUpdate.x !== undefined && tagUpdate.y !== undefined;
+        const newZoneName = matchedZone ? matchedZone.name : locName;
+        const zoneChanged = existing.currentZone !== newZoneName;
         const updatedPerson = {
           ...existing,
-          currentZone: matchedZone ? matchedZone.name : locName,
-          x: hasExplicitCoords ? targetX : (existing.x || targetX),
-          y: hasExplicitCoords ? targetY : (existing.y || targetY),
+          currentZone: newZoneName,
+          x: hasExplicitCoords ? targetX : (zoneChanged ? targetX : (existing.x || targetX)),
+          y: hasExplicitCoords ? targetY : (zoneChanged ? targetY : (existing.y || targetY)),
           rssi,
           lastReader: readerId || existing.lastReader,
           lastSeen: new Date(timestamp)
@@ -1270,7 +1276,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
 
     const pollInterval = setInterval(() => {
       refreshLiveStateRef.current();
-    }, 30000);
+    }, 1000);
 
     return () => clearInterval(pollInterval);
   }, [wsConnected]);

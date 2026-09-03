@@ -103,12 +103,20 @@ export default function DirectHardwareIntegrationSection() {
     status: "ACTIVE"
   });
 
+  const getAuthHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const token = typeof window !== 'undefined' ? (localStorage.getItem("gao_jwt_token") || localStorage.getItem("aperture_token") || localStorage.getItem("token") || localStorage.getItem("auth_token")) : null;
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return headers;
+  };
+
   const fetchHardwareData = async () => {
     try {
       setLoading(true);
+      const headers = getAuthHeaders();
       const [rRes, mRes] = await Promise.all([
-        fetch("/api/hardware/readers"),
-        fetch("/api/hardware/mappings")
+        fetch("/api/hardware/readers", { headers }),
+        fetch("/api/hardware/mappings", { headers })
       ]);
       const rData = await rRes.json();
       const mData = await mRes.json();
@@ -130,7 +138,7 @@ export default function DirectHardwareIntegrationSection() {
     try {
       const res = await fetch("/api/hardware/readers", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify(newReader)
       });
       const data = await res.json();
@@ -146,7 +154,7 @@ export default function DirectHardwareIntegrationSection() {
   const handleDeleteReader = async (id: string) => {
     if (!window.confirm("Remove this hardware reader configuration?")) return;
     try {
-      await fetch(`/api/hardware/readers/${id}`, { method: "DELETE" });
+      await fetch(`/api/hardware/readers/${encodeURIComponent(id)}`, { method: "DELETE", headers: getAuthHeaders() });
       await fetchHardwareData();
     } catch (err) {
       console.error("Delete reader failed:", err);
@@ -157,7 +165,7 @@ export default function DirectHardwareIntegrationSection() {
     try {
       const res = await fetch("/api/hardware/mappings", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: getAuthHeaders(),
         body: JSON.stringify(newTag)
       });
       const data = await res.json();
@@ -173,7 +181,7 @@ export default function DirectHardwareIntegrationSection() {
   const handleDeleteTag = async (id: string) => {
     if (!window.confirm("Remove this tag mapping?")) return;
     try {
-      await fetch(`/api/hardware/mappings/${id}`, { method: "DELETE" });
+      await fetch(`/api/hardware/mappings/${encodeURIComponent(id)}`, { method: "DELETE", headers: getAuthHeaders() });
       await fetchHardwareData();
     } catch (err) {
       console.error("Delete tag failed:", err);

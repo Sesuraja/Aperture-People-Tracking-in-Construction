@@ -369,9 +369,9 @@ export async function syncPeopleTrackingData(options?: {
         orgId
       );
       aiProcessedCount = aiResult.processedCount;
-      generatedAlerts = aiResult.alertsCreated;
-      generatedIncidents = aiResult.incidentsCreated;
-      generatedInsights = aiResult.insightsCreated;
+      generatedAlerts = aiResult.alerts?.length || 0;
+      generatedIncidents = aiResult.incidents?.length || 0;
+      generatedInsights = aiResult.insights?.length || 0;
     }
 
     const latencyMs = Date.now() - startTime;

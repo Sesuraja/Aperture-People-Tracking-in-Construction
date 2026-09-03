@@ -52,68 +52,12 @@ function formatIncidentTimestamp(ts: any): string {
   }
 }
 
-import { INDUSTRY_PRESET_PROFILES } from '../types/industryIntelligence';
-
-function getIncidentsForIndustry(industryId: string = 'construction'): EnterpriseIncident[] {
-  const profile = INDUSTRY_PRESET_PROFILES[industryId as keyof typeof INDUSTRY_PRESET_PROFILES] || INDUSTRY_PRESET_PROFILES.construction;
-  const firstCat = profile.incidentCategories[0] || { category: 'Restricted Incursion', defaultSeverity: 'Critical', description: 'Monitored threshold breach.' };
-  const firstZone = profile.functionalAreas[0]?.name || 'Monitored Operational Zone';
-
-  return [
-    {
-      id: 'INC-2026-0814',
-      title: `${firstCat.category} in ${firstZone}`,
-      category: (firstCat.category as IncidentCategory) || 'Exclusion Zone Breach',
-      severity: firstCat.defaultSeverity,
-      workflowStatus: 'Investigation',
-      locationZone: firstZone,
-      reportedBy: 'Operations Safety Lead',
-      assignedOfficer: 'Operations Duty Lead',
-      assignedRole: 'Safety Lead',
-      reportedAt: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-      description: `${firstCat.description} Automated RFID sensor gate logged threshold crossing within 1.2 seconds.`,
-      correctiveActions: [
-        {
-          id: 'CAPA-01',
-          actionItem: `Conduct review of perimeter sensor threshold at ${firstZone}`,
-          assignedTo: 'Shift Lead',
-          dueDate: new Date(Date.now() + 2 * 86400 * 1000).toISOString().split('T')[0],
-          isCompleted: false
-        }
-      ],
-      witnessStatements: [],
-      attachments: [],
-      timeline: [
-        {
-          id: 'TL-01',
-          timestamp: new Date(Date.now() - 2 * 3600 * 1000).toISOString(),
-          title: 'RFID Incursion Triggered',
-          description: `Entity transponder detected inside ${firstZone}.`,
-          actor: 'GAO RFID Gateway'
-        }
-      ],
-      aiAnalysis: {
-        aiSummary: `Operational threshold notification logged for ${firstZone}. Automated hardware intervention engaged.`,
-        probableRootCause: 'Access pathway variance.',
-        contributingFactors: ['High traffic density'],
-        capaRecommendations: ['Verify RFID sensor gateway volume at 95 dB'],
-        severityScore: 85,
-        regulatoryImpact: profile.complianceFramework || 'Enterprise Operations Compliance'
-      }
-    }
-  ];
-}
-
 const DEFAULT_INCIDENTS: EnterpriseIncident[] = [];
 
 export default function IncidentsTab() {
   const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
   const activeIndustry = config?.industryId || intelligenceProfile?.industry || 'construction';
-  const [incidents, setIncidents] = useState<EnterpriseIncident[]>(() => getIncidentsForIndustry(activeIndustry));
-
-  useEffect(() => {
-    setIncidents(prev => prev.length <= 1 ? getIncidentsForIndustry(config?.industryId || intelligenceProfile?.industry) : prev);
-  }, [config?.industryId, intelligenceProfile?.industry]);
+  const [incidents, setIncidents] = useState<EnterpriseIncident[]>([]);
 
   const [selectedIncident, setSelectedIncident] = useState<EnterpriseIncident | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -282,6 +226,30 @@ export default function IncidentsTab() {
       if (unsubStandard) unsubStandard();
     };
   }, []);
+
+  const handleSyncApiIncidents = async () => {
+    setIsRefreshing(true);
+    try {
+      const res = await fetch('/api/external-tracking/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ syncRealtime: true, syncHistory: true, historyTake: 50 })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setNotification({
+          type: 'success',
+          text: `📡 Real-Time API Ingested: ${data.realtimeTagsCount || 0} live tags & ${data.historyRecordsCount || 0} history records evaluated with AI! Generated ${data.generatedIncidents || 0} live incidents into MongoDB Atlas.`
+        });
+      } else {
+        setNotification({ type: 'error', text: 'Live API sync request returned non-OK status.' });
+      }
+    } catch (err: any) {
+      setNotification({ type: 'error', text: `API sync error: ${err.message}` });
+    } finally {
+      setIsRefreshing(false);
+    }
+  };
 
   const handleManualRefresh = async () => {
     setIsRefreshing(true);
@@ -995,9 +963,19 @@ export default function IncidentsTab() {
         {/* Action Controls */}
         <div className="flex items-center gap-2 flex-wrap">
           <button
+            onClick={handleSyncApiIncidents}
+            disabled={isRefreshing}
+            className="px-3.5 py-2 bg-gradient-to-r from-[#007BC4] to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white rounded-xl text-xs font-black shadow-md transition flex items-center gap-1.5 cursor-pointer"
+            title="Ingest and process real-time UHF antenna events from Live API into MongoDB Incidents"
+          >
+            <Activity size={14} className={isRefreshing ? 'animate-spin' : ''} />
+            <span>Ingest Live API Incidents</span>
+          </button>
+
+          <button
             onClick={handleManualRefresh}
             disabled={isRefreshing}
-            className="p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl hover:bg-slate-50 transition flex items-center gap-1.5 text-xs font-bold"
+            className="p-2.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl hover:bg-slate-50 transition flex items-center gap-1.5 text-xs font-bold cursor-pointer"
             title="Refresh from MongoDB"
           >
             <RefreshCw size={14} className={isRefreshing ? 'animate-spin text-[#007BC4]' : ''} />
@@ -1006,9 +984,9 @@ export default function IncidentsTab() {
 
           <button
             onClick={() => setIsNewIncidentOpen(true)}
-            className="px-4 py-2 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-2"
+            className="px-4 py-2 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-2 cursor-pointer"
           >
-            <Plus size={15} /> Log New Incident
+            <Plus size={15} /> Log Incident
           </button>
 
           <button

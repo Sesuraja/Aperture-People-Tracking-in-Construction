@@ -199,17 +199,42 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
     
     const registeredQuery = query(collection(db, 'registered_people'));
     const unsubscribeRegistered = onSnapshot(registeredQuery, (snapshot) => {
-       const mapped: Record<string, {name: string, role: string}> = {};
+       const mapped: Record<string, {name: string, role: string}> = { ...registeredPeopleRef.current };
        const registeredList: Person[] = [];
        snapshot.forEach(doc => {
           const data = doc.data();
-          mapped[doc.id] = { name: data.name, role: data.role || data.department || 'Employee' };
+          const pName = data.name || data.workerName || data.personName || '';
+          const pRole = data.role || data.tradeCompany || data.department || 'Employee';
+          if (pName) {
+            const entry = { name: pName, role: pRole };
+            if (doc.id) {
+              mapped[doc.id] = entry;
+              mapped[doc.id.toLowerCase()] = entry;
+              mapped[doc.id.toUpperCase()] = entry;
+            }
+            if (data.hardhatTagId) {
+              mapped[String(data.hardhatTagId)] = entry;
+              mapped[String(data.hardhatTagId).toLowerCase()] = entry;
+              mapped[String(data.hardhatTagId).toUpperCase()] = entry;
+            }
+            if (data.tagId) {
+              mapped[String(data.tagId)] = entry;
+              mapped[String(data.tagId).toLowerCase()] = entry;
+              mapped[String(data.tagId).toUpperCase()] = entry;
+            }
+            if (data.TagID) {
+              mapped[String(data.TagID)] = entry;
+              mapped[String(data.TagID).toLowerCase()] = entry;
+              mapped[String(data.TagID).toUpperCase()] = entry;
+            }
+          }
           const zName = data.currentZone || 'Site Office';
           const rect = getZoneRect(zName, activeProjectId, dynamicZones);
           registeredList.push({
             id: doc.id,
-            name: data.name || `Tag ${doc.id.substring(0, 8).toUpperCase()}`,
-            role: data.role || data.tradeCompany || 'Field Personnel',
+            hardhatTagId: data.hardhatTagId || doc.id,
+            name: pName || `Tag ${doc.id.substring(0, 8).toUpperCase()}`,
+            role: pRole,
             currentZone: zName,
             presenceState: data.presenceState || 'IDLE',
             dwellTime: data.dwellTime || 0,
@@ -225,21 +250,52 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
          if (prev.length === 0 && registeredList.length > 0) {
            return registeredList;
          }
-         return prev;
+         return prev.map(p => {
+           const key = p.id;
+           const tagKey = p.hardhatTagId || p.id;
+           const reg = mapped[key] || mapped[key?.toLowerCase()] || mapped[key?.toUpperCase()] ||
+                       mapped[tagKey] || mapped[tagKey?.toLowerCase()] || mapped[tagKey?.toUpperCase()];
+           if (reg && reg.name) {
+             return { ...p, name: reg.name, role: reg.role || p.role };
+           }
+           return p;
+         });
        });
     }, (err) => handleDbError(err, OperationType.LIST, 'registered_people'));
 
     const peopleColQuery = query(collection(db, 'people'));
     const unsubscribePeople = onSnapshot(peopleColQuery, (snapshot) => {
       if (!snapshot.empty) {
+        const mapped: Record<string, {name: string, role: string}> = { ...registeredPeopleRef.current };
         const pList: Person[] = snapshot.docs.map(doc => {
           const d = doc.data();
+          const pName = d.name || d.workerName || d.personName || '';
+          const pRole = d.role || d.tradeCompany || 'Field Personnel';
+          if (pName) {
+            const entry = { name: pName, role: pRole };
+            if (doc.id) {
+              mapped[doc.id] = entry;
+              mapped[doc.id.toLowerCase()] = entry;
+              mapped[doc.id.toUpperCase()] = entry;
+            }
+            if (d.hardhatTagId) {
+              mapped[String(d.hardhatTagId)] = entry;
+              mapped[String(d.hardhatTagId).toLowerCase()] = entry;
+              mapped[String(d.hardhatTagId).toUpperCase()] = entry;
+            }
+            if (d.tagId) {
+              mapped[String(d.tagId)] = entry;
+              mapped[String(d.tagId).toLowerCase()] = entry;
+              mapped[String(d.tagId).toUpperCase()] = entry;
+            }
+          }
           const zName = d.currentZone || 'Site Office';
           const rect = getZoneRect(zName, activeProjectId, dynamicZones);
           return {
             id: doc.id,
-            name: d.name || `Tag ${doc.id.substring(0, 8).toUpperCase()}`,
-            role: d.role || 'Field Personnel',
+            hardhatTagId: d.hardhatTagId || doc.id,
+            name: pName || `Tag ${doc.id.substring(0, 8).toUpperCase()}`,
+            role: pRole,
             currentZone: zName,
             presenceState: d.presenceState || 'IDLE',
             dwellTime: d.dwellTime || 0,
@@ -250,7 +306,20 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
             trail: []
           };
         });
-        setPeople(prev => prev.length === 0 ? pList : prev);
+        registeredPeopleRef.current = mapped;
+        setPeople(prev => {
+          if (prev.length === 0) return pList;
+          return prev.map(p => {
+            const key = p.id;
+            const tagKey = p.hardhatTagId || p.id;
+            const reg = mapped[key] || mapped[key?.toLowerCase()] || mapped[key?.toUpperCase()] ||
+                        mapped[tagKey] || mapped[tagKey?.toLowerCase()] || mapped[tagKey?.toUpperCase()];
+            if (reg && reg.name) {
+              return { ...p, name: reg.name, role: reg.role || p.role };
+            }
+            return p;
+          });
+        });
       }
     }, (err) => handleDbError(err, OperationType.LIST, 'people'));
     
@@ -373,8 +442,8 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
         };
 
         syncRealtime();
-        // Calm fallback interval (every 30s instead of aggressive 3s duplicate loop)
-        interval = setInterval(syncRealtime, 30000);
+        // 1-second real-time update loop
+        interval = setInterval(syncRealtime, 1000);
     }
 
      return () => {

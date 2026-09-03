@@ -177,6 +177,11 @@ export function evaluateDeterministicRules(
   let triggeredAlert: DeterministicEvaluationResult['triggeredAlert'] = null;
   let triggeredIncident: DeterministicEvaluationResult['triggeredIncident'] = null;
 
+  const eventHour = new Date(nowIso).getHours();
+  const isAfterHours = eventHour < 7 || eventHour >= 19;
+  const isMeetingOrOffice = /meeting|conference|boardroom|suite|office|executive|room/i.test(location || '') || 
+                            Boolean(matchedArea && /meeting|conference|office|restricted/i.test(matchedArea.name));
+
   if (matchedArea) {
     aiActivityInferred = `Operations in ${matchedArea.name}`;
 
@@ -241,54 +246,236 @@ export function evaluateDeterministicRules(
       aiInsight = `${matchedArea.name} telemetry verified. Standard operational protocols active.`;
     }
 
-    // 2. Dwell & Loitering Threshold Breach
-    if (matchedArea.maxDwellMinutes && dwellMinutes > matchedArea.maxDwellMinutes) {
-      aiRiskScore = Math.max(aiRiskScore, 68);
-      aiRiskLevel = aiRiskLevel === 'CRITICAL' ? 'CRITICAL' : 'MEDIUM';
-      aiComplianceScore = Math.min(aiComplianceScore, 82);
+    // 2. AI Rules: After-Hours Meeting Room / Facility Entry (🔴 Critical)
+    if (isAfterHours && isMeetingOrOffice && !triggeredAlert) {
+      aiRiskScore = Math.max(aiRiskScore, 90);
+      aiRiskLevel = 'CRITICAL';
+      aiComplianceScore = Math.min(aiComplianceScore, 70);
       aiAnomaly = {
-        title: `Extended Dwell Duration in ${matchedArea.name}`,
-        description: `${personName} exceeded permitted dwell limit (${dwellMinutes}m > ${matchedArea.maxDwellMinutes}m max).`,
-        severity: 'MEDIUM'
+        title: 'After-hours meeting room entry',
+        description: `Personnel ${personName} entered ${location} outside authorized operational hours (${eventHour}:00). Security alert initiated.`,
+        severity: 'CRITICAL'
       };
-      aiInsight = `Dwell Alert: Stagnation detected in ${matchedArea.name}. Automated welfare check recommended.`;
-      if (!triggeredAlert) {
-        triggeredAlert = {
-          title: `${matchedArea.name} Dwell Alert`,
-          category: 'Operational',
-          priority: 'Medium',
-          description: `Continuous dwell duration exceeded threshold in ${matchedArea.name}.`,
-          targetZone: matchedArea.name,
-          triggerSiren: false
-        };
-      }
+      aiInsight = `Critical Protocol Violation: After-hours access detected in ${location}. Immediate audit and security camera verification initiated.`;
+      triggeredAlert = {
+        title: 'After-hours meeting room entry',
+        category: 'Security',
+        priority: 'Critical',
+        description: `Unauthorized after-hours entry into ${location} by ${personName} (${tagId}).`,
+        targetZone: location,
+        triggerSiren: true
+      };
     }
 
-    // 3. Occupancy Capacity Limit Breach
-    if (matchedArea.maxOccupancy && currentOccupancy > matchedArea.maxOccupancy) {
+    // 3. AI Rules: Capacity Exceeded (🔴 Critical)
+    const effectiveMaxCap = matchedArea?.maxOccupancy || 6;
+    if (currentOccupancy > effectiveMaxCap && !triggeredAlert) {
+      aiRiskScore = Math.max(aiRiskScore, 85);
+      aiRiskLevel = 'CRITICAL';
+      aiComplianceScore = Math.min(aiComplianceScore, 72);
+      aiAnomaly = {
+        title: 'Capacity exceeded',
+        description: `Current occupancy in ${location} (${currentOccupancy} persons) exceeds safety limit of ${effectiveMaxCap}.`,
+        severity: 'CRITICAL'
+      };
+      aiInsight = `Safety Overcrowding: Headcount in ${location} exceeded by ${currentOccupancy - effectiveMaxCap} people. Ventilation and emergency egress compromised.`;
+      triggeredAlert = {
+        title: 'Capacity exceeded',
+        category: 'Safety',
+        priority: 'Critical',
+        description: `Room capacity exceeded in ${location} (${currentOccupancy}/${effectiveMaxCap} people).`,
+        targetZone: location,
+        triggerSiren: true
+      };
+    }
+
+    // 4. AI Rules: Unknown/Unassigned Tag Detected (🔴 Critical)
+    const isUnknownTag = !personName || personName.toLowerCase().includes('unknown') || personName.toLowerCase().includes('unassigned') || tagId.startsWith('UNKNOWN_');
+    if (isUnknownTag && !triggeredAlert) {
+      aiRiskScore = Math.max(aiRiskScore, 88);
+      aiRiskLevel = 'CRITICAL';
+      aiComplianceScore = Math.min(aiComplianceScore, 65);
+      aiAnomaly = {
+        title: 'Unknown/unassigned tag detected',
+        description: `Unregistered UHF RFID tag [${tagId}] detected at ${location} with no assigned personnel profile.`,
+        severity: 'CRITICAL'
+      };
+      aiInsight = `Security Anomaly: Unrecognized badge ${tagId} in ${location}. Potential rogue tag or security boundary bypass.`;
+      triggeredAlert = {
+        title: 'Unknown/unassigned tag detected',
+        category: 'Security',
+        priority: 'Critical',
+        description: `Unidentified RFID badge ${tagId} detected in ${location}. Guard dispatch recommended.`,
+        targetZone: location,
+        triggerSiren: true
+      };
+    }
+
+    // 5. AI Rules: Persistent Zone Detection Conflict (🔴 Critical)
+    if (input.zoneConflict && !triggeredAlert) {
+      aiRiskScore = Math.max(aiRiskScore, 82);
+      aiRiskLevel = 'CRITICAL';
+      aiComplianceScore = Math.min(aiComplianceScore, 75);
+      aiAnomaly = {
+        title: 'Persistent zone detection conflict',
+        description: `Badge ${tagId} detected across contradictory antenna portals simultaneously without valid transition path.`,
+        severity: 'CRITICAL'
+      };
+      aiInsight = `Telemetry Failure / Ghosting: Conflicting simultaneous reader pings on tag ${tagId}. Possible tag cloning or RF reflection loop.`;
+      triggeredAlert = {
+        title: 'Persistent zone detection conflict',
+        category: 'System',
+        priority: 'Critical',
+        description: `Simultaneous contradictory zone detections for tag ${tagId}.`,
+        targetZone: location,
+        triggerSiren: false
+      };
+    }
+
+    // 6. AI Rules: Meeting Room Overstay (🟠 Warning)
+    const maxAllowedDwell = matchedArea?.maxDwellMinutes || 60;
+    if (isMeetingOrOffice && dwellMinutes > maxAllowedDwell && !triggeredAlert) {
+      aiRiskScore = Math.max(aiRiskScore, 65);
+      aiRiskLevel = 'MEDIUM';
+      aiComplianceScore = Math.min(aiComplianceScore, 80);
+      aiAnomaly = {
+        title: 'Meeting room overstay',
+        description: `${personName} has occupied ${location} for ${dwellMinutes} mins (permitted reservation: ${maxAllowedDwell}m).`,
+        severity: 'MEDIUM'
+      };
+      aiInsight = `Space Utilization Warning: ${location} overstay detected. Schedule notification dispatched.`;
+      triggeredAlert = {
+        title: 'Meeting room overstay',
+        category: 'Operational',
+        priority: 'Medium',
+        description: `Meeting duration overstay in ${location} (${dwellMinutes}m > ${maxAllowedDwell}m).`,
+        targetZone: location,
+        triggerSiren: false
+      };
+    }
+
+    // 7. AI Rules: Repeated Zone Movement (🟠 Warning)
+    if (input.repeatedMovement && !triggeredAlert) {
       aiRiskScore = Math.max(aiRiskScore, 60);
-      aiRiskLevel = aiRiskLevel === 'CRITICAL' || aiRiskLevel === 'HIGH' ? aiRiskLevel : 'MEDIUM';
-      aiComplianceScore = Math.min(aiComplianceScore, 85);
-      if (!aiAnomaly) {
-        aiAnomaly = {
-          title: `Capacity Limit Exceeded in ${matchedArea.name}`,
-          description: `Current headcount (${currentOccupancy}) exceeds designated threshold (${matchedArea.maxOccupancy}).`,
-          severity: 'MEDIUM'
-        };
-      }
+      aiRiskLevel = 'MEDIUM';
+      aiComplianceScore = Math.min(aiComplianceScore, 84);
+      aiAnomaly = {
+        title: 'Repeated zone movement',
+        description: `Rapid oscillation of tag ${tagId} between ${location} and adjacent sector detected.`,
+        severity: 'MEDIUM'
+      };
+      aiInsight = `Movement Anomaly: Personnel ${personName} exhibiting rapid repetitive zone crossing. Check work order task.`;
+      triggeredAlert = {
+        title: 'Repeated zone movement',
+        category: 'Worker',
+        priority: 'Medium',
+        description: `Repeated rapid zone transitions detected for ${personName} at ${location}.`,
+        targetZone: location,
+        triggerSiren: false
+      };
+    }
+
+    // 8. AI Rules: Unusual Movement Pattern (🟠 Warning)
+    if (input.speed && input.speed > 3.0 && !triggeredAlert) {
+      aiRiskScore = Math.max(aiRiskScore, 58);
+      aiRiskLevel = 'MEDIUM';
+      aiComplianceScore = Math.min(aiComplianceScore, 86);
+      aiAnomaly = {
+        title: 'Unusual movement pattern',
+        description: `High velocity telemetry (${input.speed.toFixed(1)} m/s) detected for ${personName} in pedestrian sector ${location}.`,
+        severity: 'MEDIUM'
+      };
+      aiInsight = `Kinematic Anomaly: Abnormal movement speed in ${location}. Possible running, equipment ride-on, or vehicle proximity.`;
+      triggeredAlert = {
+        title: 'Unusual movement pattern',
+        category: 'Safety',
+        priority: 'Medium',
+        description: `Abnormal velocity pattern detected in ${location} (${input.speed.toFixed(1)} m/s).`,
+        targetZone: location,
+        triggerSiren: false
+      };
+    }
+
+    // 9. AI Rules: Zone Detection Overlap (🟠 Warning)
+    if (rssi && rssi > -45 && input.secondaryRssi && input.secondaryRssi > -50 && !triggeredAlert) {
+      aiRiskScore = Math.max(aiRiskScore, 50);
+      aiRiskLevel = 'LOW';
+      aiComplianceScore = Math.min(aiComplianceScore, 90);
+      aiAnomaly = {
+        title: 'Zone detection overlap',
+        description: `Dual high-power antenna pings registered for tag ${tagId} across boundary edge.`,
+        severity: 'LOW'
+      };
+      aiInsight = `Antenna Beam Overlap: Tag ${tagId} in overlapping RFID beam lobes near ${location}. Signal filtering applied.`;
+      triggeredAlert = {
+        title: 'Zone detection overlap',
+        category: 'Reader',
+        priority: 'Medium',
+        description: `Boundary detection overlap on antenna portals for tag ${tagId}.`,
+        targetZone: location,
+        triggerSiren: false
+      };
     }
   }
 
-  // 4. Signal Attenuation & Hardware Anomaly
-  if (rssi && rssi < -84) {
-    aiRiskScore = Math.min(100, aiRiskScore + 10);
-    if (!aiAnomaly) {
-      aiAnomaly = {
-        title: 'Weak RFID Antenna Gateway Signal',
-        description: `Signal strength of ${rssi} dBm detected near perimeter of ${location}. Check antenna alignment.`,
-        severity: 'LOW'
+  // 10. AI Rules: Informational Alerts (🔵 Information)
+  if (!triggeredAlert) {
+    if (input.isEntryEvent && isMeetingOrOffice) {
+      triggeredAlert = {
+        title: 'Person entered meeting room',
+        category: 'Worker',
+        priority: 'Low',
+        description: `${personName} entered ${location}.`,
+        targetZone: location,
+        triggerSiren: false
+      };
+    } else if (input.isExitEvent && isMeetingOrOffice) {
+      triggeredAlert = {
+        title: 'Person left meeting room',
+        category: 'Worker',
+        priority: 'Low',
+        description: `${personName} exited ${location}. Dwell duration: ${dwellMinutes}m.`,
+        targetZone: location,
+        triggerSiren: false
+      };
+    } else if (isMeetingOrOffice && dwellMinutes > 0 && dwellMinutes <= (matchedArea?.maxDwellMinutes || 60)) {
+      triggeredAlert = {
+        title: 'Person currently in meeting room',
+        category: 'Worker',
+        priority: 'Low',
+        description: `${personName} is active in ${location} (dwell: ${dwellMinutes}m).`,
+        targetZone: location,
+        triggerSiren: false
+      };
+    } else if (input.occupancyChanged) {
+      triggeredAlert = {
+        title: 'Occupancy changed',
+        category: 'Operational',
+        priority: 'Low',
+        description: `Occupancy in ${location} updated to ${currentOccupancy} persons.`,
+        targetZone: location,
+        triggerSiren: false
+      };
+    } else {
+      triggeredAlert = {
+        title: 'Tag detected',
+        category: 'Worker',
+        priority: 'Low',
+        description: `Hardware scan verified for tag ${tagId} (${personName}) at ${location}.`,
+        targetZone: location,
+        triggerSiren: false
       };
     }
+  }
+
+  // Hardware Weak Signal Anomaly
+  if (rssi && rssi < -84 && !aiAnomaly) {
+    aiRiskScore = Math.min(100, aiRiskScore + 10);
+    aiAnomaly = {
+      title: 'Weak RFID Antenna Gateway Signal',
+      description: `Signal strength of ${rssi} dBm detected near perimeter of ${location}. Check antenna alignment.`,
+      severity: 'LOW'
+    };
   }
 
   return {

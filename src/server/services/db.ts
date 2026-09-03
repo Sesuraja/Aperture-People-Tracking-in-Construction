@@ -194,6 +194,8 @@ export async function initDatabaseIndexes(): Promise<void> {
   }
 
   console.log('[DB Service] MongoDB deduplication, uniqueness, and 10-day retention TTL indexes initialized.');
+
+  // Database indexes successfully initialized without auto-injecting mock/default data
 }
 
 export async function initDatabase(customUri?: string): Promise<void> {
@@ -468,6 +470,8 @@ export async function getCollectionDocs(
   return result;
 }
 
+export const DEFAULT_ORGS = ['default', 'demo', 'org_main', 'org_aperture_default'];
+
 export async function getDocById(colName: string, id: string, organizationId?: string): Promise<any | null> {
   if (mongoDb) {
     try {
@@ -477,7 +481,8 @@ export async function getDocById(colName: string, id: string, organizationId?: s
         { id: idStr.toUpperCase() },
         { id: idStr.toLowerCase() },
         { hardhatTagId: idStr },
-        { hardhatTagId: idStr.toUpperCase() }
+        { hardhatTagId: idStr.toUpperCase() },
+        { hardhatTagId: idStr.toLowerCase() }
       ];
       if (ObjectId.isValid(idStr) && idStr.length === 24) {
         try {
@@ -489,24 +494,25 @@ export async function getDocById(colName: string, id: string, organizationId?: s
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
         const isSpatialConfig = (colName === 'map_configurations' || colName === 'zones' || colName === 'projects' || colName === 'sites');
         if (!isSpatialConfig) {
-          if (organizationId === 'default' || organizationId === 'demo' || organizationId === 'org_main') {
+          if (DEFAULT_ORGS.includes(organizationId)) {
             query = {
               $and: [
                 { $or: orClauses },
                 {
                   $or: [
-                    { organizationId: 'default' },
-                    { organizationId: 'demo' },
-                    { organizationId: 'org_main' },
-                    { organizationId: { $exists: false } },
-                    { organizationId: null },
-                    { organizationId: '' }
+                    { organizationId: { $in: [...DEFAULT_ORGS, null, ''] } },
+                    { organizationId: { $exists: false } }
                   ]
                 }
               ]
             };
           } else {
-            query.organizationId = organizationId;
+            query = {
+              $and: [
+                { $or: orClauses },
+                { organizationId: organizationId }
+              ]
+            };
           }
         }
       }
@@ -532,8 +538,9 @@ export async function getDocById(colName: string, id: string, organizationId?: s
   if (!doc) return null;
   if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
     const docOrg = doc.organizationId;
-    if (docOrg && docOrg !== organizationId && !(docOrg === 'default' && organizationId === 'demo') && !(docOrg === 'demo' && organizationId === 'default')) {
-      return null; // IDOR protected: do not return other tenant's document
+    if (docOrg && docOrg !== organizationId) {
+      const isBothDefault = DEFAULT_ORGS.includes(docOrg) && DEFAULT_ORGS.includes(organizationId);
+      if (!isBothDefault) return null; // IDOR protected: do not return other tenant's document
     }
   }
   return doc;
@@ -573,24 +580,62 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
   if (mongoDb) {
     try {
       const idStr = String(cleanDoc.id || '').trim();
-      const matchFilter: any = {
-        $or: [
-          { id: idStr },
-          { id: idStr.toUpperCase() },
-          { id: idStr.toLowerCase() },
-          { hardhatTagId: idStr },
-          { hardhatTagId: idStr.toUpperCase() }
-        ]
-      };
-      if (cleanDoc.organizationId && colName !== 'organizations') {
-        matchFilter.organizationId = cleanDoc.organizationId;
+      const orClauses: any[] = [
+        { id: idStr },
+        { id: idStr.toUpperCase() },
+        { id: idStr.toLowerCase() },
+        { hardhatTagId: idStr },
+        { hardhatTagId: idStr.toUpperCase() },
+        { hardhatTagId: idStr.toLowerCase() }
+      ];
+      if (ObjectId.isValid(idStr) && idStr.length === 24) {
+        try {
+          orClauses.push({ _id: new ObjectId(idStr) });
+        } catch {}
       }
 
-      await mongoDb.collection(colName).updateOne(
-        matchFilter,
-        { $set: cleanDoc },
-        { upsert: true }
-      );
+      let matchFilter: any;
+      if (cleanDoc.organizationId && colName !== 'organizations') {
+        if (DEFAULT_ORGS.includes(cleanDoc.organizationId)) {
+          matchFilter = {
+            $and: [
+              { $or: orClauses },
+              {
+                $or: [
+                  { organizationId: { $in: [...DEFAULT_ORGS, null, ''] } },
+                  { organizationId: { $exists: false } }
+                ]
+              }
+            ]
+          };
+        } else {
+          matchFilter = {
+            $and: [
+              { $or: orClauses },
+              { organizationId: cleanDoc.organizationId }
+            ]
+          };
+        }
+      } else {
+        matchFilter = { $or: orClauses };
+      }
+
+      const existingInDb = await mongoDb.collection(colName).findOne(matchFilter);
+      if (existingInDb) {
+        if (existingInDb.organizationId) {
+          cleanDoc.organizationId = existingInDb.organizationId;
+        }
+        await mongoDb.collection(colName).updateOne(
+          { _id: existingInDb._id },
+          { $set: cleanDoc }
+        );
+      } else {
+        await mongoDb.collection(colName).updateOne(
+          { id: cleanDoc.id },
+          { $set: cleanDoc },
+          { upsert: true }
+        );
+      }
       return cleanDoc;
     } catch (err) {
       console.error(`[DB Service] Error upserting doc in ${colName}:`, err);
@@ -622,13 +667,45 @@ export async function deleteDocById(colName: string, id: string, organizationId?
   if (mongoDb) {
     try {
       const idStr = String(id || '').trim();
+      const idLower = idStr.toLowerCase();
+      const idUpper = idStr.toUpperCase();
       const orClauses: any[] = [
         { id: idStr },
-        { id: idStr.toLowerCase() },
-        { id: idStr.toUpperCase() },
+        { id: idLower },
+        { id: idUpper },
+        { _id: idStr },
+        { readerId: idStr },
+        { readerId: idLower },
+        { readerId: idUpper },
+        { serialno: idStr },
+        { serialno: idLower },
+        { serialno: idUpper },
+        { customcode: idStr },
+        { customcode: idLower },
+        { customcode: idUpper },
+        { macAddress: idStr },
+        { macAddress: idLower },
+        { macAddress: idUpper },
+        { mac: idStr },
+        { mac: idLower },
+        { mac: idUpper },
+        { ipAddress: idStr },
+        { ip: idStr },
         { hardhatTagId: idStr },
-        { hardhatTagId: idStr.toUpperCase() },
-        { hardhatTagId: idStr.toLowerCase() }
+        { hardhatTagId: idUpper },
+        { hardhatTagId: idLower },
+        { tagId: idStr },
+        { tagId: idUpper },
+        { tagId: idLower },
+        { TagID: idStr },
+        { TagID: idUpper },
+        { TagID: idLower },
+        { epc: idStr },
+        { epc: idUpper },
+        { epc: idLower },
+        { badgeId: idStr },
+        { workerId: idStr },
+        { entityId: idStr }
       ];
       if (ObjectId.isValid(idStr) && idStr.length === 24) {
         try {
@@ -637,7 +714,11 @@ export async function deleteDocById(colName: string, id: string, organizationId?
       }
       const filter: any = { $or: orClauses };
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-        filter.organizationId = organizationId;
+        if (DEFAULT_ORGS.includes(organizationId)) {
+          filter.organizationId = { $in: [...DEFAULT_ORGS, null, ''] };
+        } else {
+          filter.organizationId = organizationId;
+        }
       }
       const result = await mongoDb.collection(colName).deleteMany(filter);
       return (result.deletedCount || 0) > 0;
@@ -650,11 +731,26 @@ export async function deleteDocById(colName: string, id: string, organizationId?
     const initLen = inMemoryStore[colName].length;
     const idLower = String(id || '').toLowerCase().trim();
     inMemoryStore[colName] = inMemoryStore[colName].filter((item: any) => {
-      const matchesId = (
-        item.id === id || 
-        String(item.id || '').toLowerCase().trim() === idLower || 
-        String(item.hardhatTagId || '').toLowerCase().trim() === idLower
-      );
+      const itemFields = [
+        item.id,
+        item._id,
+        item.readerId,
+        item.serialno,
+        item.customcode,
+        item.macAddress,
+        item.mac,
+        item.ipAddress,
+        item.ip,
+        item.hardhatTagId,
+        item.tagId,
+        item.TagID,
+        item.epc,
+        item.badgeId,
+        item.workerId,
+        item.entityId
+      ].filter(Boolean).map(v => String(v).toLowerCase().trim());
+
+      const matchesId = itemFields.includes(idLower);
       if (!matchesId) return true; // keep
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
         const itemOrg = item.organizationId;

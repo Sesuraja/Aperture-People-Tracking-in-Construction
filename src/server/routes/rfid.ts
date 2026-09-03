@@ -95,13 +95,103 @@ const handleGetHistory = async (req: Request, res: Response) => {
   const rawTake = parseInt(req.params.TakeCount || req.params.take || (req.query.take as string) || '50', 10);
   const takeCount = Math.min(Math.max(1, rawTake), 200); // Max value is 200 per GAO spec
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
+  const filterDate = (req.query.date as string) || '';
 
   try {
+    // Fetch registered people and visitors to enrich real names and roles
+    const [peopleList, visitorsList] = await Promise.all([
+      getCollectionDocs('registered_people', undefined, orgId).catch(() => []),
+      getCollectionDocs('visitors', undefined, orgId).catch(() => [])
+    ]);
+
+    const personMap = new Map<string, any>();
+    peopleList.forEach((p: any) => {
+      if (p.id) personMap.set(String(p.id).toLowerCase(), p);
+      if (p.hardhatTagId) personMap.set(String(p.hardhatTagId).toLowerCase(), p);
+      if (p.tagId) personMap.set(String(p.tagId).toLowerCase(), p);
+      if (p.TagID) personMap.set(String(p.TagID).toLowerCase(), p);
+    });
+    visitorsList.forEach((v: any) => {
+      if (v.id) personMap.set(String(v.id).toLowerCase(), v);
+      if (v.badgeId) personMap.set(String(v.badgeId).toLowerCase(), v);
+      if (v.tagId) personMap.set(String(v.tagId).toLowerCase(), v);
+      if (v.TagID) personMap.set(String(v.TagID).toLowerCase(), v);
+    });
+
+    // Helper to calculate duration in minutes
+    const calcDurationMins = (enter: string, leave: string, fallback?: number | string): number => {
+      if (enter && leave && leave !== 'ACTIVE') {
+        const eD = new Date(enter).getTime();
+        const lD = new Date(leave).getTime();
+        if (!isNaN(eD) && !isNaN(lD) && lD >= eD) {
+          return Math.round(((lD - eD) / 60000) * 10) / 10;
+        }
+      }
+      if (fallback !== undefined && fallback !== null) {
+        const num = parseFloat(String(fallback));
+        if (!isNaN(num)) {
+          return num < 5 ? Math.round(num * 60 * 10) / 10 : Math.round(num * 10) / 10;
+        }
+      }
+      return 0.5;
+    };
+
     // 1. Check live external cloud server first
     try {
       const liveRecords = await fetchHistoryRecords(skipCount, takeCount);
       if (Array.isArray(liveRecords) && liveRecords.length > 0) {
-        return res.json(liveRecords);
+        const enrichedLive: any[] = [];
+        for (const rec of liveRecords) {
+          const tagKey = String(rec.TagID || rec.tagId || '').toLowerCase();
+          const matched = personMap.get(tagKey);
+
+          const fullName = matched?.name || (rec.FirstName ? `${rec.FirstName} ${rec.LastName || ''}`.trim() : (rec.name || `Personnel ${rec.TagID}`));
+          const parts = fullName.split(' ');
+          const fName = matched?.firstName || rec.FirstName || parts[0] || '';
+          const lName = matched?.lastName || rec.LastName || parts.slice(1).join(' ') || '';
+          const role = matched?.role || (matched?.badgeId || matched?.isVisitor ? 'Visitor' : (rec.role || 'Field Personnel'));
+          const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes('visitor'));
+
+          const enter = rec.EnterTime || rec.enterTime || new Date().toISOString();
+          const leave = rec.LeaveTime || rec.leaveTime || 'ACTIVE';
+          const durationMins = calcDurationMins(enter, leave, rec.Duration);
+
+          const formattedRec = {
+            TagID: rec.TagID || rec.tagId || '',
+            FirstName: fName,
+            LastName: lName,
+            name: fullName,
+            role,
+            isVisitor,
+            category: isVisitor ? 'visitors' : 'workers',
+            LocationName: rec.LocationName || rec.Location || rec.location || 'Site Area',
+            EnterTime: enter,
+            LeaveTime: leave,
+            EnterTimeStr: enter,
+            LeaveTimeStr: leave,
+            Duration: durationMins,
+            durationMins
+          };
+          enrichedLive.push(formattedRec);
+
+          // Persist API log to MongoDB tag_history so real-time API logs are stored and queryable by date
+          const docId = `hist_${rec.TagID}_${String(enter).replace(/[: ]/g, '_')}`;
+          upsertDoc('tag_history', {
+            id: docId,
+            organizationId: orgId,
+            ...formattedRec,
+            timestamp: enter,
+            createdAt: new Date()
+          }, orgId).catch(() => {});
+        }
+
+        // Apply date filter if specified
+        let filtered = enrichedLive;
+        if (filterDate) {
+          filtered = enrichedLive.filter(r => (r.EnterTime && r.EnterTime.includes(filterDate)) || (r.LeaveTime && r.LeaveTime.includes(filterDate)));
+        }
+
+        return res.json(filtered);
       }
     } catch (upstreamErr) {
       // Fall through to local DB
@@ -110,40 +200,51 @@ const handleGetHistory = async (req: Request, res: Response) => {
     const dbHistory = await getCollectionDocs('tag_history', undefined, orgId);
     const records = dbHistory;
 
-    // Ensure all records strictly match the GAO specification fields
+    // Ensure all records strictly match the GAO specification fields with real names and minute durations
     const formattedRecords = records.map((item: any) => {
       const enter = item.EnterTime || item.EnterTimeStr || item.enterTime || item.timestamp || item.createdTime || new Date().toISOString();
-      const leave = item.LeaveTime || item.LeaveTimeStr || item.leaveTime || new Date().toISOString();
-      
-      const enterDate = new Date(enter);
-      const leaveDate = new Date(leave);
-      const diffMs = Math.max(0, leaveDate.getTime() - enterDate.getTime());
-      const durationHours = item.Duration !== undefined ? Number(item.Duration) : Math.round((diffMs / 3600000) * 10) / 10;
+      const leave = item.LeaveTime || item.LeaveTimeStr || item.leaveTime || 'ACTIVE';
+      const durationMins = calcDurationMins(enter, leave, item.Duration);
 
-      const firstName = item.FirstName || item.firstName || (item.name ? item.name.split(' ')[0] : '');
-      const lastName = item.LastName || item.lastName || (item.name ? item.name.split(' ').slice(1).join(' ') : '');
+      const tagKey = String(item.TagID || item.tagId || item.epc || '').toLowerCase();
+      const matched = personMap.get(tagKey);
 
-      const enterStr = formatUtcDateTime(enterDate);
-      const leaveStr = formatUtcDateTime(leaveDate);
+      const fullName = matched?.name || item.name || item.personName || (item.FirstName ? `${item.FirstName} ${item.LastName || ''}`.trim() : `Personnel ${item.TagID || item.id}`);
+      const parts = fullName.split(' ');
+      const firstName = matched?.firstName || item.FirstName || item.firstName || parts[0] || '';
+      const lastName = matched?.lastName || item.LastName || item.lastName || parts.slice(1).join(' ') || '';
+      const role = matched?.role || item.role || (matched?.badgeId || matched?.isVisitor ? 'Visitor' : 'Field Personnel');
+      const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes('visitor'));
 
       return {
         TagID: item.TagID || item.tagId || item.epc || '',
         FirstName: firstName,
         LastName: lastName,
-        LocationName: item.LocationName || item.locationName || item.zone || item.Location || '',
-        EnterTime: enterStr,
-        LeaveTime: leaveStr,
-        EnterTimeStr: enterStr,
-        LeaveTimeStr: leaveStr,
-        Duration: durationHours
+        name: fullName,
+        role,
+        isVisitor,
+        category: isVisitor ? 'visitors' : 'workers',
+        LocationName: item.LocationName || item.locationName || item.zone || item.Location || 'Site Area',
+        EnterTime: enter,
+        LeaveTime: leave,
+        EnterTimeStr: enter,
+        LeaveTimeStr: leave,
+        Duration: durationMins,
+        durationMins
       };
     });
 
     // Order history data by generated time / EnterTime in descending order
     formattedRecords.sort((a, b) => new Date(b.EnterTime).getTime() - new Date(a.EnterTime).getTime());
 
+    // Filter by date if requested
+    let result = formattedRecords;
+    if (filterDate) {
+      result = formattedRecords.filter(r => (r.EnterTime && r.EnterTime.includes(filterDate)) || (r.LeaveTime && r.LeaveTime.includes(filterDate)));
+    }
+
     // Skip & Take slicing
-    const paginated = formattedRecords.slice(skipCount, skipCount + takeCount);
+    const paginated = result.slice(skipCount, skipCount + takeCount);
 
     return res.json(paginated);
   } catch (err: any) {
@@ -162,35 +263,68 @@ const handleGetRealtime = async (req: Request, res: Response) => {
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
 
   try {
-    // 1. Check live external cloud server first
+    // 1. Fetch registered people and visitors from MongoDB to map worker names by TagID
+    const [peopleList, visitorsList] = await Promise.all([
+      getCollectionDocs('registered_people', undefined, orgId).catch(() => []),
+      getCollectionDocs('visitors', undefined, orgId).catch(() => [])
+    ]);
+
+    const personMap = new Map<string, any>();
+    peopleList.forEach((p: any) => {
+      if (p.id) personMap.set(String(p.id).toLowerCase(), p);
+      if (p.hardhatTagId) personMap.set(String(p.hardhatTagId).toLowerCase(), p);
+      if (p.tagId) personMap.set(String(p.tagId).toLowerCase(), p);
+      if (p.TagID) personMap.set(String(p.TagID).toLowerCase(), p);
+    });
+    visitorsList.forEach((v: any) => {
+      if (v.id) personMap.set(String(v.id).toLowerCase(), v);
+      if (v.badgeId) personMap.set(String(v.badgeId).toLowerCase(), v);
+      if (v.tagId) personMap.set(String(v.tagId).toLowerCase(), v);
+      if (v.TagID) personMap.set(String(v.TagID).toLowerCase(), v);
+    });
+
+    let rawTags: any[] = [];
+
+    // 2. Check live external cloud server first
     try {
       const upstreamTags = await fetchTagsInRealtime();
       if (Array.isArray(upstreamTags) && upstreamTags.length > 0) {
-        return res.json(upstreamTags);
+        rawTags = upstreamTags;
       }
     } catch (upstreamErr) {
       // Fall through to local DB
     }
 
-    const liveTags = await getCollectionDocs('live_tags', undefined, orgId);
-    const tagsToProcess = liveTags;
+    if (rawTags.length === 0) {
+      rawTags = await getCollectionDocs('live_tags', undefined, orgId);
+    }
 
-    const formattedTags = tagsToProcess.map((item: any) => {
+    const formattedTags = rawTags.map((item: any) => {
       const ts = item.Timestamp || item.timestamp || item.lastSeen || new Date().toISOString();
+      const tagKey = String(item.TagID || item.tagId || item.epc || '').toLowerCase();
+      const matched = personMap.get(tagKey);
+      const fullName = matched?.name || item.personName || item.name || '';
+      const role = matched?.role || item.role || (matched?.badgeId || matched?.isVisitor ? 'Visitor' : 'Field Personnel');
+      const company = matched?.tradeCompany || matched?.company || item.tradeCompany || '';
+
       return {
         TagID: item.TagID || item.tagId || item.epc || '',
         Timestamp: formatUtcTimestampMs(ts),
-        Location: item.Location || item.location || item.LocationName || item.zone || '',
-        LocationName: item.LocationName || item.Location || item.zone || '',
-        personName: item.personName || item.name || '',
-        personId: item.personId || null,
+        Location: item.Location || item.location || item.LocationName || item.zone || 'Active Zone',
+        LocationName: item.LocationName || item.Location || item.zone || 'Active Zone',
+        personName: fullName,
+        name: fullName,
+        role,
+        tradeCompany: company,
+        company,
+        personId: matched?.id || item.personId || null,
         zoneId: item.zoneId || null,
-        zoneName: item.zoneName || item.Location || '',
+        zoneName: item.zoneName || item.Location || item.LocationName || '',
         x: item.x,
         y: item.y,
-        rssi: item.rssi,
-        readerId: item.readerId,
-        antennaId: item.antennaId
+        rssi: item.rssi || -60,
+        readerId: item.readerId || 'READER-01',
+        antennaId: item.antennaId || 1
       };
     });
 

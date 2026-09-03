@@ -94,7 +94,7 @@ function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   let token: string | null = null;
   if (typeof window !== 'undefined') {
-    token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('token') || localStorage.getItem('auth_token');
+    token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || localStorage.getItem('auth_token');
   }
   if (!token) {
     token = 'demo';
@@ -109,7 +109,7 @@ function getAuthHeaders(): Record<string, string> {
 const inFlightGetRequests = new Map<string, Promise<any>>();
 // Client-side response cache (2.5 seconds) to prevent redundant queries across sibling components
 const clientResponseCache = new Map<string, { data: any; cachedAt: number }>();
-const CLIENT_CACHE_TTL_MS = 2500;
+const CLIENT_CACHE_TTL_MS = 300;
 
 async function safeJsonFetch(url: string, options?: RequestInit): Promise<any> {
   const method = (options?.method || 'GET').toUpperCase();
@@ -173,7 +173,7 @@ export async function setDoc(docRef: any, data: any, _options?: any): Promise<vo
   const { colName, docId } = getRefInfo(docRef);
   if (!colName || !docId) return;
   try {
-    const response = await fetch(`/api/data/${colName}/${docId}`, {
+    const response = await fetch(`/api/data/${colName}/${encodeURIComponent(docId)}`, {
       method: 'POST',
       headers: getAuthHeaders(),
       body: JSON.stringify(data)
@@ -207,7 +207,7 @@ export async function addDoc(colRef: any, data: any): Promise<any> {
 export async function getDoc(docRef: any): Promise<any> {
   const { colName, docId } = getRefInfo(docRef);
   try {
-    const result = await safeJsonFetch(`/api/data/${colName}/${docId}`);
+    const result = await safeJsonFetch(`/api/data/${colName}/${encodeURIComponent(docId || '')}`);
     const docObj = result?.doc || (result?.id ? result : null);
     if (docObj) return createDocSnapshot(docObj);
   } catch {}
@@ -236,7 +236,7 @@ export async function deleteDoc(docRef: any): Promise<void> {
   const { colName, docId } = getRefInfo(docRef);
   if (!colName || !docId) return;
   try {
-    await fetch(`/api/data/${colName}/${docId}`, { method: 'DELETE', headers: getAuthHeaders() });
+    await fetch(`/api/data/${colName}/${encodeURIComponent(docId)}`, { method: 'DELETE', headers: getAuthHeaders() });
     notifyDataUpdated(colName);
   } catch {}
 }

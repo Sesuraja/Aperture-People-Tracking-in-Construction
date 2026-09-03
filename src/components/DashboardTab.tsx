@@ -545,7 +545,7 @@ export default function DashboardTab({
     let rawPeopleList: any[] = [];
 
     const syncCombinedPeople = () => {
-      const combined = [...rawRegisteredList, ...rawPeopleList];
+      const combined = [...(rawRegisteredList || []), ...(rawPeopleList || []), ...(people || [])];
       const map = new Map<string, any>();
       const nameToKeyMap = new Map<string, string>();
       const tagToKeyMap = new Map<string, string>();
@@ -553,7 +553,7 @@ export default function DashboardTab({
       combined.forEach(p => {
         if (!p) return;
         const rawId = String(p.id || p.hardhatTagId || p.tagId || '').trim();
-        const rawTag = String(p.hardhatTagId || p.tagId || p.rfidTag || (p.id?.length > 10 ? p.id : '')).trim().toUpperCase();
+        const rawTag = String(p.hardhatTagId || p.tagId || p.rfidTag || (typeof p.id === 'string' && p.id.length > 10 ? p.id : '')).trim().toUpperCase();
         const rawName = String(p.name || '').trim().toLowerCase();
 
         let canonicalKey = '';
@@ -614,6 +614,9 @@ export default function DashboardTab({
       setRegisteredPeopleList(unique);
       setContractorsCount(contractors);
     };
+
+    // Initial immediate sync from props
+    syncCombinedPeople();
 
     unsubs.push(onSnapshot(collection(db, 'registered_people'), (snapshot) => {
       rawRegisteredList = [];
@@ -844,9 +847,63 @@ export default function DashboardTab({
        setSiteSensors(sList);
     }, (error) => console.warn("Failed sensors subscription:", error)));
 
-    return () => unsubs.forEach(fn => {
-       if (typeof fn === 'function') fn();
-     });
+    // Direct Real-time REST Sync from MongoDB & GAO UHF API
+    const fetchDirectStats = async () => {
+      try {
+        const [regRes, pplRes, visRes, devRes, hwRes, alertRes, liveTagsRes, vhcRes, astRes] = await Promise.all([
+          fetch('/api/data/registered_people').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/people').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/visitors').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/devices').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/hardware_readers').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/alerts').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/GetTagsInRealtime').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/vehicles').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/assets').then(r => r.ok ? r.json() : []).catch(() => [])
+        ]);
+
+        if (Array.isArray(regRes) || Array.isArray(pplRes)) {
+          if (Array.isArray(regRes) && regRes.length > 0) rawRegisteredList = regRes;
+          if (Array.isArray(pplRes) && pplRes.length > 0) rawPeopleList = pplRes;
+          syncCombinedPeople();
+        }
+
+        if (Array.isArray(visRes)) {
+          setVisitorsList(visRes);
+          setVisitorsCount(visRes.length);
+        }
+
+        if (Array.isArray(devRes) || Array.isArray(hwRes)) {
+          if (Array.isArray(devRes)) stdDevs = devRes;
+          if (Array.isArray(hwRes)) hwDevs = hwRes;
+          updateAllDevices();
+        }
+
+        if (Array.isArray(alertRes)) {
+          setDbAlerts(alertRes);
+        }
+
+        if (Array.isArray(liveTagsRes)) {
+          setLiveTagsList(liveTagsRes);
+          setLiveTagsCount(liveTagsRes.length);
+        }
+
+        if (Array.isArray(vhcRes)) setVehiclesList(vhcRes);
+        if (Array.isArray(astRes)) setAssetsList(astRes);
+      } catch (err) {
+        console.warn('Dashboard direct REST sync note:', err);
+      }
+    };
+
+    fetchDirectStats();
+    const restPollInterval = setInterval(fetchDirectStats, 2000);
+
+    return () => {
+      clearInterval(restPollInterval);
+      unsubs.forEach(fn => {
+        if (typeof fn === 'function') fn();
+      });
+    };
   }, []);
 
   // Fetch customizable layout configurations from MongoDB / LocalStorage
@@ -1106,12 +1163,13 @@ export default function DashboardTab({
 
     switch (id) {
       case 'site_monitoring_view': {
-        const totalRosterCount = registeredPeopleList.length > 0 ? registeredPeopleList.length : (registeredCount || 53);
-        const resolvedActive = (activeOnsiteWorkersList.length > 0 && activeOnsiteWorkersList.length < totalRosterCount)
+        const resolvedActive = (activeOnsiteWorkersList.length > 0)
           ? activeOnsiteWorkersList
-          : (activeOnsiteCount && activeOnsiteCount < totalRosterCount
-              ? people.slice(0, activeOnsiteCount)
-              : people.slice(0, 33));
+          : (liveTagsList.length > 0
+              ? liveTagsList
+              : (people.filter(p => p.presenceState !== 'EXITED').length > 0
+                  ? people.filter(p => p.presenceState !== 'EXITED')
+                  : (registeredPeopleList.length > 0 ? registeredPeopleList : people)));
         const filteredWorkers = resolvedActive;
         const filteredAlerts = uniqueAlerts.filter(a => a.priority === 'Critical' || a.priority === 'High' || a.type === 'security' || a.type === 'warning');
 
@@ -2117,8 +2175,12 @@ export default function DashboardTab({
     switch (id) {
       case 'total_workers':
       case 'total_people': {
-        const totalRoster = Math.max(registeredPeopleList.length, registeredCount, people.length, 1);
-        const activeCount = Math.max(activeOnsiteCount, activeOnsiteWorkersList.length, liveTagsCount, 1);
+        const totalRoster = registeredPeopleList.length || registeredCount || people.length || 0;
+        const activeCount = liveTagsList.length > 0 
+          ? liveTagsList.length 
+          : (activeOnsiteWorkersList.length > 0 
+              ? activeOnsiteWorkersList.length 
+              : (activeOnsiteCount > 0 ? activeOnsiteCount : people.filter(p => p.presenceState !== 'EXITED').length));
         const cardTitle = (title && title !== 'Total Workers on Site') ? title : (personnelPlural ? `Active Onsite ${personnelPlural}` : "Active Onsite Personnel");
         const cardSub = (subOverride && subOverride.includes('•')) 
           ? subOverride 
@@ -2137,9 +2199,13 @@ export default function DashboardTab({
       }
       case 'active_workers':
       case 'on_site': {
-        const totalRoster = Math.max(registeredPeopleList.length, registeredCount, people.length, 1);
-        const activeCount = Math.max(activeOnsiteCount, activeOnsiteWorkersList.length, liveTagsCount, 1);
-        const moving = Math.max(movingCount || 0, people.filter(p => p.presenceState === 'MOVING').length, 1);
+        const totalRoster = registeredPeopleList.length || registeredCount || people.length || 0;
+        const activeCount = liveTagsList.length > 0 
+          ? liveTagsList.length 
+          : (activeOnsiteWorkersList.length > 0 
+              ? activeOnsiteWorkersList.length 
+              : (activeOnsiteCount > 0 ? activeOnsiteCount : people.filter(p => p.presenceState !== 'EXITED').length));
+        const moving = movingCount || people.filter(p => p.presenceState === 'MOVING').length || (activeCount > 0 ? 1 : 0);
         const cardTitle = title || (personnelPlural ? `Active ${personnelPlural}` : "Active Personnel");
         const cardSub = (subOverride && subOverride.includes('•')) 
           ? subOverride 
@@ -2172,14 +2238,13 @@ export default function DashboardTab({
       }
       case 'contractors_count': {
         const cCount = contractorsCount || (registeredPeopleList.length > 0 ? registeredPeopleList.filter(p => (p.role || '').toLowerCase().includes('contractor') || (p.role || '').toLowerCase().includes('sub') || (p.department || '').toLowerCase().includes('logistics') || (p.department || '').toLowerCase().includes('steel') || (p.tradeCompany || '').toLowerCase().includes('contractor') || (p.company || '').toLowerCase().includes('contractor')).length : 0);
-        const resolvedContractors = cCount > 0 ? cCount : (registeredPeopleList.length > 0 ? 1 : 0);
         const cardTitle = title || (organizationType || "Contractors / Units");
         return (
           <KpiCard 
             key={id} 
             title={cardTitle} 
-            value={resolvedContractors.toString()} 
-            sub={subOverride || `${resolvedContractors} external ${organizationType.toLowerCase()} on site`} 
+            value={cCount.toString()} 
+            sub={subOverride || `${cCount} external ${organizationType.toLowerCase()} on site`} 
             icon={renderKpiIcon(kpi?.iconName || 'HardHat')} 
             iconColor={iconColorOverride || "bg-indigo-600"} 
             onClick={() => navigate('/people')} 
@@ -2189,8 +2254,12 @@ export default function DashboardTab({
       case 'active_tags': {
         const totalEquipment = vehiclesList.length + assetsList.length;
         const totalRoster = registeredPeopleList.length || registeredCount || people.length || 0;
-        const totalFleetTags = Math.max(totalRoster + visitorsList.length + totalEquipment, 1);
-        const activeLiveTransmitting = Math.max(liveTagsCount, liveTagsList.length, activeOnsiteCount, totalRoster > 0 ? 1 : 0);
+        const totalFleetTags = totalRoster + visitorsList.length + totalEquipment;
+        const activeLiveTransmitting = liveTagsList.length > 0 
+          ? liveTagsList.length 
+          : (liveTagsCount > 0 
+              ? liveTagsCount 
+              : (activeOnsiteCount > 0 ? activeOnsiteCount : people.filter(p => p.presenceState !== 'EXITED').length));
         const cardTitle = title || (idBadgeLabel ? `Active ${idBadgeLabel}s` : "Active RFID Tags");
         const cardSub = (subOverride && subOverride.includes('•')) 
           ? subOverride 
@@ -2208,8 +2277,8 @@ export default function DashboardTab({
         );
       }
       case 'online_readers': {
-        const totalReaders = Math.max(deviceList.length, 2);
-        const onlineReadersCount = Math.max(deviceStats.online, 2);
+        const totalReaders = deviceList.length;
+        const onlineReadersCount = deviceStats.online;
         return (
           <KpiCard 
             key={id} 

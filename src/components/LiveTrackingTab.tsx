@@ -482,21 +482,37 @@ export default function LiveTrackingTab({
     return propVehicles || [];
   }, [trackingCtx?.vehicles, dbVehicles, propVehicles]);
 
-  // Real MongoDB-backed RFID Portal Readers
+  // Real MongoDB-backed RFID Portal Readers & Hardware Devices
   const readers: ReaderDevice[] = useMemo(() => {
-    if (dbReaders && dbReaders.length > 0) {
-      return dbReaders.map((r: any, idx: number) => ({
-        id: r.id || `RDR-${idx + 1}`,
-        name: r.name || r.location || `Gate Portal ${idx + 1}`,
-        x: r.x !== undefined ? r.x : ((idx * 28) % 85 + 8),
-        y: r.y !== undefined ? r.y : ((idx * 24) % 80 + 10),
-        range: r.range || (r.antennaGainDbi ? Math.max(8, r.antennaGainDbi * 1.5) : 12),
-        health: r.status === 'Online' || r.status === 'online' ? 98 : 0,
-        status: (r.status === 'Online' || r.status === 'online') ? 'online' : 'offline'
-      }));
-    }
-    return [];
-  }, [dbReaders]);
+    const all = [...(dbReaders || []), ...(dbDevices || [])];
+    const map = new Map<string, any>();
+    all.forEach(r => {
+      if (!r) return;
+      const id = String(r.id || r.readerId || r._id || '').trim();
+      if (!id) return;
+      const isReader = r.category === 'rfid' || r.category === 'infrastructure' || 
+        (r.type || '').toLowerCase().includes('reader') || 
+        (r.type || '').toLowerCase().includes('portal') || 
+        (r.type || '').toLowerCase().includes('antenna') || 
+        (r.name || '').toLowerCase().includes('antenna') || 
+        (r.name || '').toLowerCase().includes('reader') ||
+        (r.x !== undefined && r.y !== undefined);
+
+      if (isReader && !map.has(id)) {
+        map.set(id, r);
+      }
+    });
+
+    return Array.from(map.values()).map((r: any, idx: number) => ({
+      id: r.id || `RDR-${idx + 1}`,
+      name: r.name || r.location || `Gate Portal ${idx + 1}`,
+      x: r.x !== undefined ? r.x : ((idx * 28) % 85 + 8),
+      y: r.y !== undefined ? r.y : ((idx * 24) % 80 + 10),
+      range: r.range || (r.antennaGainDbi ? Math.max(8, r.antennaGainDbi * 1.5) : 12),
+      health: (r.status === 'Online' || r.status === 'online' || r.status === 'ONLINE') ? 98 : 0,
+      status: (r.status === 'Online' || r.status === 'online' || r.status === 'ONLINE') ? 'online' : 'offline'
+    }));
+  }, [dbReaders, dbDevices]);
 
   // Real Gate access points derived from readers/devices
   const gates: AccessGate[] = useMemo(() => {
@@ -530,6 +546,54 @@ export default function LiveTrackingTab({
           floorplanUrl: data.floorplanUrl || prev?.floorplanUrl,
           svgSource: data.svgSource || prev?.svgSource,
           customZones: data.zones || prev?.customZones
+        }));
+      }
+    });
+
+    const unsubZones = onSnapshot(collection(db, 'zones'), (snap: any) => {
+      const zItems = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+      if (zItems.length > 0) {
+        const zDict: Record<string, any> = {};
+        zItems.forEach((z: any) => {
+          zDict[z.name || z.id] = {
+            x: z.x,
+            y: z.y,
+            width: z.width || 20,
+            height: z.height || 20,
+            category: z.category || 'GENERAL',
+            hazardLevel: z.hazardLevel || 'normal',
+            capacity: z.capacity || 10,
+            polygonPoints: z.polygonPoints,
+            proximityAlertEnabled: z.proximityAlertEnabled
+          };
+        });
+        setLocalProjectProps((prev: any) => ({
+          ...prev,
+          customZones: { ...(prev?.customZones || {}), ...zDict }
+        }));
+      }
+    });
+
+    const unsubGeofences = onSnapshot(collection(db, 'geofences'), (snap: any) => {
+      const gfItems = snap.docs.map((d: any) => ({ id: d.id, ...d.data() }));
+      if (gfItems.length > 0) {
+        const gfDict: Record<string, any> = {};
+        gfItems.forEach((gf: any) => {
+          gfDict[gf.name || gf.id] = {
+            x: gf.x,
+            y: gf.y,
+            width: gf.width || 20,
+            height: gf.height || 20,
+            category: gf.category || 'CUSTOM GEOFENCE',
+            hazardLevel: gf.hazardLevel || 'normal',
+            capacity: gf.capacity || 10,
+            polygonPoints: gf.polygonPoints,
+            proximityAlertEnabled: gf.proximityAlertEnabled
+          };
+        });
+        setLocalProjectProps((prev: any) => ({
+          ...prev,
+          customZones: { ...(prev?.customZones || {}), ...gfDict }
         }));
       }
     });
@@ -572,8 +636,78 @@ export default function LiveTrackingTab({
     const unsubCameras = onSnapshot(collection(db, 'cameras'), (snap: any) => setCameras(snap.docs.map((d: any) => ({ id: d.id, ...d.data() }))));
     const unsubSensors = onSnapshot(collection(db, 'sensors'), (snap: any) => setSensors(snap.docs.map((d: any) => ({ id: d.id, ...d.data() }))));
 
+    // Direct REST Poller for Instant Real-Time Updates
+    const fetchDirectMapEntities = async () => {
+      try {
+        const [hwRes, devRes, zRes, gfRes] = await Promise.all([
+          fetch('/api/data/hardware_readers').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/devices').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/zones').then(r => r.ok ? r.json() : []).catch(() => []),
+          fetch('/api/data/geofences').then(r => r.ok ? r.json() : []).catch(() => [])
+        ]);
+
+        if (Array.isArray(hwRes) && hwRes.length > 0) setDbReaders(hwRes);
+        if (Array.isArray(devRes) && devRes.length > 0) setDbDevices(devRes);
+
+        const mergedZones: Record<string, any> = {};
+        if (Array.isArray(zRes)) {
+          zRes.forEach((z: any) => {
+            if (z.name || z.id) {
+              mergedZones[z.name || z.id] = {
+                x: z.x,
+                y: z.y,
+                width: z.width || 20,
+                height: z.height || 20,
+                category: z.category || 'GENERAL',
+                hazardLevel: z.hazardLevel || 'normal',
+                capacity: z.capacity || 10,
+                polygonPoints: z.polygonPoints
+              };
+            }
+          });
+        }
+        if (Array.isArray(gfRes)) {
+          gfRes.forEach((gf: any) => {
+            if (gf.name || gf.id) {
+              mergedZones[gf.name || gf.id] = {
+                x: gf.x,
+                y: gf.y,
+                width: gf.width || 20,
+                height: gf.height || 20,
+                category: gf.category || 'CUSTOM GEOFENCE',
+                hazardLevel: gf.hazardLevel || 'normal',
+                capacity: gf.capacity || 10,
+                polygonPoints: gf.polygonPoints
+              };
+            }
+          });
+        }
+
+        if (Object.keys(mergedZones).length > 0) {
+          setLocalProjectProps((prev: any) => ({
+            ...prev,
+            customZones: { ...(prev?.customZones || {}), ...mergedZones }
+          }));
+        }
+      } catch (err) {
+        console.warn('Live map REST sync note:', err);
+      }
+    };
+
+    fetchDirectMapEntities();
+    const intervalId = setInterval(fetchDirectMapEntities, 2000);
+
+    const handleDataUpdateEvent = () => {
+      fetchDirectMapEntities();
+    };
+    window.addEventListener('gao_map_data_updated', handleDataUpdateEvent);
+    window.addEventListener('gao_project_updated', handleDataUpdateEvent);
+
     return () => {
-      unsubProject(); unsubMapConfig(); unsubPeople(); unsubRegistered(); unsubAssets(); unsubVehicles(); unsubAlerts(); unsubReaders(); unsubDevices(); unsubCameras(); unsubSensors();
+      clearInterval(intervalId);
+      window.removeEventListener('gao_map_data_updated', handleDataUpdateEvent);
+      window.removeEventListener('gao_project_updated', handleDataUpdateEvent);
+      unsubProject(); unsubMapConfig(); unsubZones(); unsubGeofences(); unsubPeople(); unsubRegistered(); unsubAssets(); unsubVehicles(); unsubAlerts(); unsubReaders(); unsubDevices(); unsubCameras(); unsubSensors();
     };
   }, [activeProject]);
 

@@ -16,7 +16,7 @@ import {
   parseGaoNativeBody,
 } from '../services/gaoEventMapper.js';
 
-import { requireAuth, verifyToken } from '../middleware/auth.js';
+import { optionalAuth, verifyToken } from '../middleware/auth.js';
 
 export const hardwareRouter = Router();
 
@@ -119,9 +119,9 @@ hardwareRouter.post('/scan', async (req: Request, res: Response) => {
 });
 
 // ===========================================================================
-// 2. PROTECTED MANAGEMENT & ADMIN ROUTES (Requires User Authentication)
+// 2. MANAGEMENT & ADMIN ROUTES (Supports optional auth / tenant session)
 // ===========================================================================
-hardwareRouter.use(requireAuth);
+hardwareRouter.use(optionalAuth);
 
 // GET /api/hardware/readers
 hardwareRouter.get('/readers', async (req: Request, res: Response) => {
@@ -145,7 +145,7 @@ hardwareRouter.post('/readers', async (req: Request, res: Response) => {
 
     const nowIso = new Date().toISOString();
     const savedReader: HardwareReader = {
-      id: reader.id || `reader_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      id: reader.id || reader.readerId || `reader_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
       readerId: reader.readerId,
       name: reader.name,
       model: reader.model || 'GAO UHF 4-Port Fixed Reader',
@@ -166,6 +166,33 @@ hardwareRouter.post('/readers', async (req: Request, res: Response) => {
     };
 
     await upsertDoc('hardware_readers', savedReader, orgId);
+    await upsertDoc('devices', {
+      id: savedReader.id,
+      name: savedReader.name,
+      category: 'rfid',
+      type: savedReader.model,
+      location: savedReader.antennas?.[0]?.zoneName || 'Facility Portal',
+      zoneId: savedReader.antennas?.[0]?.zoneId || 'portal-1',
+      status: savedReader.status.toLowerCase(),
+      ip: savedReader.ipAddress,
+      mac: savedReader.readerId,
+      firmware: 'v4.19.2',
+      latestFirmware: 'v4.19.2',
+      signalRssi: -50,
+      coverageRadiusMeters: 35,
+      temperatureC: 38,
+      cpuUsagePct: 20,
+      memoryUsagePct: 35,
+      pingMs: 8,
+      uptime: 'Active',
+      lastPing: 'Just now',
+      calibrationStatus: 'Calibrated',
+      otaStatus: 'Up to Date',
+      powerSource: 'PoE',
+      organizationId: orgId,
+      updatedAt: nowIso
+    }, orgId).catch(() => {});
+
     return res.json({ success: true, message: 'Hardware reader saved in MongoDB', reader: savedReader });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
@@ -176,9 +203,14 @@ hardwareRouter.post('/readers', async (req: Request, res: Response) => {
 hardwareRouter.delete('/readers/:id', async (req: Request, res: Response) => {
   const orgId = getReqOrgId(req);
   try {
-    const { id } = req.params;
-    const deleted = await deleteDocById('hardware_readers', id, orgId);
-    return res.json({ success: deleted, message: deleted ? 'Reader deleted' : 'Reader not found' });
+    const rawId = req.params.id;
+    const id = decodeURIComponent(rawId);
+    const deletedHw = await deleteDocById('hardware_readers', id, orgId);
+    const deletedDev = await deleteDocById('devices', id, orgId);
+    await deleteDocById('hardware_tag_mappings', id, orgId).catch(() => {});
+    await deleteDocById('live_tags', id, orgId).catch(() => {});
+    const deleted = deletedHw || deletedDev;
+    return res.json({ success: deleted, message: deleted ? 'Reader deleted successfully' : 'Reader not found' });
   } catch (err: any) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -214,7 +246,6 @@ hardwareRouter.post('/mappings', async (req: Request, res: Response) => {
       roleOrTrade: mapping.roleOrTrade || 'General Staff',
       department: mapping.department || 'Operations',
       assignedZone: mapping.assignedZone || 'All Zones',
-      ppeRequired: mapping.ppeRequired || ['Hard Hat', 'Safety Boots'],
       status: mapping.status || 'ACTIVE',
       createdAt: mapping.createdAt || nowIso
     };
@@ -230,7 +261,8 @@ hardwareRouter.post('/mappings', async (req: Request, res: Response) => {
 hardwareRouter.delete('/mappings/:id', async (req: Request, res: Response) => {
   const orgId = getReqOrgId(req);
   try {
-    const { id } = req.params;
+    const rawId = req.params.id;
+    const id = decodeURIComponent(rawId);
     const deleted = await deleteDocById('hardware_tag_mappings', id, orgId);
     return res.json({ success: deleted, message: deleted ? 'Mapping removed' : 'Mapping not found' });
   } catch (err: any) {

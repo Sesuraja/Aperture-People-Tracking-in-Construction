@@ -8,12 +8,12 @@ import {
   logAuditEvent,
   getPlaybackFrames
 } from '../services/db.js';
-import { requireAuth, AuthRequest } from '../middleware/auth.js';
+import { optionalAuth, AuthRequest } from '../middleware/auth.js';
 
 export const dataRouter = Router();
 
-// Require authenticated session for all /api/data/* endpoints
-dataRouter.use(requireAuth);
+// Allow authenticated session or default tenant session for /api/data/* endpoints
+dataRouter.use(optionalAuth);
 
 // GET /api/data/playback_frames?date=YYYY-MM-DD
 // Returns all chronological tag position snapshots for the given date (used by PlaybackTab)
@@ -211,6 +211,38 @@ dataRouter.post('/:collection', async (req: AuthRequest, res: Response) => {
   try {
     const saved = await upsertDoc(collection, body, orgId);
 
+    // Sync dual workforce collections: registered_people <-> people in MongoDB
+    if (collection === 'registered_people') {
+      await upsertDoc('people', { ...body, id: body.id || saved.id }, orgId).catch(() => {});
+    } else if (collection === 'people') {
+      await upsertDoc('registered_people', { ...body, id: body.id || saved.id }, orgId).catch(() => {});
+    } else if (collection === 'devices') {
+      if (body.category === 'rfid' || String(body.type || '').toLowerCase().includes('reader')) {
+        await upsertDoc('hardware_readers', {
+          id: body.id || saved.id,
+          readerId: body.id || saved.id,
+          name: body.name,
+          location: body.location,
+          zone: body.location,
+          status: (body.status || 'ONLINE').toUpperCase(),
+          type: body.type || 'UHF Fixed Portal',
+          ipAddress: body.ip || body.ipAddress,
+          macAddress: body.mac || body.macAddress
+        }, orgId).catch(() => {});
+      }
+    } else if (collection === 'hardware_readers') {
+      await upsertDoc('devices', {
+        id: body.id || saved.id,
+        name: body.name || `GAO Reader ${body.id || saved.id}`,
+        category: 'rfid',
+        type: body.type || 'UHF RFID Reader Gateway',
+        location: body.location || body.zone || 'Site Portal',
+        status: (body.status || 'online').toLowerCase(),
+        ip: body.ipAddress || body.ip || '192.168.1.101',
+        mac: body.macAddress || body.mac || '00:1A:79:39:63:43'
+      }, orgId).catch(() => {});
+    }
+
     await logAuditEvent({
       userId: user?.id || 'client',
       userEmail: user?.email || 'client',
@@ -239,7 +271,9 @@ dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
   if (!isSpatialConfig) {
     const existingDoc = await getDocById(collection, id, orgId);
     const allExisting = await getDocById(collection, id, 'ALL');
-    if (allExisting && (!existingDoc || (allExisting.organizationId && allExisting.organizationId !== orgId && !(allExisting.organizationId === 'default' && orgId === 'demo')))) {
+    const DEFAULT_ORGS = ['default', 'demo', 'org_main', 'org_aperture_default'];
+    const isBothDefault = DEFAULT_ORGS.includes(allExisting?.organizationId) && DEFAULT_ORGS.includes(orgId);
+    if (allExisting && !existingDoc && !isBothDefault && allExisting.organizationId && allExisting.organizationId !== orgId) {
       return res.status(404).json({ error: 'Document not found or belongs to another organization' });
     }
   }
@@ -249,6 +283,38 @@ dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
 
   try {
     const saved = await upsertDoc(collection, body, orgId);
+
+    // Sync dual workforce collections: registered_people <-> people in MongoDB
+    if (collection === 'registered_people') {
+      await upsertDoc('people', { ...body, id: id || body.id }, orgId).catch(() => {});
+    } else if (collection === 'people') {
+      await upsertDoc('registered_people', { ...body, id: id || body.id }, orgId).catch(() => {});
+    } else if (collection === 'devices') {
+      if (body.category === 'rfid' || String(body.type || '').toLowerCase().includes('reader')) {
+        await upsertDoc('hardware_readers', {
+          id: id || body.id,
+          readerId: id || body.id,
+          name: body.name,
+          location: body.location,
+          zone: body.location,
+          status: (body.status || 'ONLINE').toUpperCase(),
+          type: body.type || 'UHF Fixed Portal',
+          ipAddress: body.ip || body.ipAddress,
+          macAddress: body.mac || body.macAddress
+        }, orgId).catch(() => {});
+      }
+    } else if (collection === 'hardware_readers') {
+      await upsertDoc('devices', {
+        id: id || body.id,
+        name: body.name || `GAO Reader ${id || body.id}`,
+        category: 'rfid',
+        type: body.type || 'UHF RFID Reader Gateway',
+        location: body.location || body.zone || 'Site Portal',
+        status: (body.status || 'online').toLowerCase(),
+        ip: body.ipAddress || body.ip || '192.168.1.101',
+        mac: body.macAddress || body.mac || '00:1A:79:39:63:43'
+      }, orgId).catch(() => {});
+    }
 
     await logAuditEvent({
       userId: user?.id || 'client',
@@ -269,12 +335,28 @@ dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
 
 // DELETE /api/data/:collection/:id
 dataRouter.delete('/:collection/:id', async (req: AuthRequest, res: Response) => {
-  const { collection, id } = req.params;
+  const collection = req.params.collection;
+  const rawId = req.params.id;
+  const id = decodeURIComponent(rawId);
   const user = req.user;
   const orgId = user?.organizationId || 'default';
 
   try {
-    const deleted = await deleteDocById(collection, id, orgId);
+    let deleted = await deleteDocById(collection, id, orgId);
+
+    // Sync deletion across mirror/related collections
+    if (collection === 'registered_people') {
+      const pDel = await deleteDocById('people', id, orgId).catch(() => false);
+      if (pDel) deleted = true;
+    } else if (collection === 'people') {
+      const rDel = await deleteDocById('registered_people', id, orgId).catch(() => false);
+      if (rDel) deleted = true;
+    } else if (collection === 'devices' || collection === 'hardware_readers') {
+      const mirrorDel = await deleteDocById(collection === 'devices' ? 'hardware_readers' : 'devices', id, orgId).catch(() => false);
+      const tagMapDel = await deleteDocById('hardware_tag_mappings', id, orgId).catch(() => false);
+      const liveDel = await deleteDocById('live_tags', id, orgId).catch(() => false);
+      if (mirrorDel || tagMapDel || liveDel) deleted = true;
+    }
 
     await logAuditEvent({
       userId: user?.id || 'client',

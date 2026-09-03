@@ -117,7 +117,7 @@ export async function syncPollingSchedules(): Promise<void> {
       const isEnabled = conn.enabled !== false && conn.pollingEnabled === true && !isMockOrDemo;
       if (isEnabled) {
         activeIds.add(conn.id);
-        const currentIntervalMs = Math.max((conn.pollingIntervalSeconds || 30) * 1000, 10000);
+        const currentIntervalMs = Math.max((conn.pollingIntervalSeconds || 1) * 1000, 1000);
 
         // Schedule if not already active
         if (!activePollers.has(conn.id)) {
@@ -180,9 +180,9 @@ export function stopPollingService(): void {
 /**
  * Periodically syncs live tags and history records from the People Tracking UHF API
  */
-export function startPeopleTrackingPolling(intervalSeconds = 20): void {
+export function startPeopleTrackingPolling(intervalSeconds = 1): void {
   if (peopleTrackingPollerInterval) return;
-  const ms = Math.max(intervalSeconds * 1000, 10000);
+  const ms = Math.max(intervalSeconds * 1000, 1000);
   console.log(`[Connection Poller] Starting periodic sync for People Tracking UHF API every ${ms / 1000}s`);
 
   // Run initial sync after server has stabilized
@@ -190,7 +190,7 @@ export function startPeopleTrackingPolling(intervalSeconds = 20): void {
     syncPeopleTrackingData().catch(err => {
       console.warn('[PeopleTracking Poller] Initial sync note:', err.message);
     });
-  }, 3000);
+  }, 1000);
 
   peopleTrackingPollerInterval = setInterval(() => {
     syncPeopleTrackingData().catch(err => {

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { upsertDoc, getCollectionDocs } from './db.js';
+import { upsertDoc, getCollectionDocs, getDocById } from './db.js';
 import { generateEventHash, validateTelemetrySource } from './dataPolicy.js';
 import {
   analyzeTelemetryBatchWithAI,
@@ -204,35 +204,27 @@ export async function processTelemetryWithAI(
       expireAt: tenDaysLater
     }, orgId);
 
-    // 3b. Persist to registered_people & people (so People tab & Live Floor Map display live personnel)
-    const personName = item.fullName || (item.firstName ? `${item.firstName} ${item.lastName || ''}`.trim() : `Personnel ${tagId.slice(-6)}`);
-    const registeredPersonDoc = {
-      id: tagId,
-      hardhatTagId: tagId,
-      tagId: tagId,
-      name: personName,
-      firstName: item.firstName || 'Staff',
-      lastName: item.lastName || '',
-      role: item.role || 'Field Personnel',
-      tradeCompany: item.company || 'i360 People Tracking Contractor',
-      company: item.company || 'i360 People Tracking Contractor',
-      currentZone: item.location || 'Site Perimeter',
-      location: item.location || 'Site Perimeter',
-      shiftStatus: 'ON_SITE',
-      presenceState: 'ACTIVE',
-      status: 'ACTIVE',
-      ppeStatus: (tagAnalysis?.aiRiskLevel === 'CRITICAL' || tagAnalysis?.aiRiskLevel === 'HIGH') ? 'NON_COMPLIANT' : 'COMPLIANT',
-      trainingStatus: 'COMPLIANT',
-      safetyScore: tagAnalysis?.aiComplianceScore || 98,
-      lastSeen: item.timestamp || nowIso,
-      organizationId: orgId,
-      createdAt: now,
-      expireAt: tenDaysLater
-    };
-    await upsertDoc('registered_people', registeredPersonDoc, orgId);
-    await upsertDoc('people', registeredPersonDoc, orgId);
+    // 3b. Update registered_people & people ONLY if the person already exists in MongoDB (Do NOT auto-create fake/new workers)
+    const existingPerson = (await getDocById('registered_people', tagId, orgId)) || (await getDocById('people', tagId, orgId));
+    const personName = existingPerson?.name || item.personName || item.name || (item.fullName || (item.firstName && item.firstName !== 'Staff' ? `${item.firstName} ${item.lastName || ''}`.trim() : `Tag ${tagId}`));
+    const personRole = existingPerson?.role || (item.role && item.role !== 'General Staff' ? item.role : 'Field Specialist');
+    const personCompany = existingPerson?.tradeCompany || existingPerson?.company || item.company || 'Direct RFID / Ingested Data';
 
-    // 3c. Persist to attendance_logs (so Attendance tab displays live on-site workforce logs)
+    if (existingPerson) {
+      const updatedPersonDoc = {
+        ...existingPerson,
+        currentZone: item.location || existingPerson.currentZone || 'Site Perimeter',
+        location: item.location || existingPerson.location || 'Site Perimeter',
+        shiftStatus: existingPerson.shiftStatus || 'ON_SITE',
+        presenceState: 'ACTIVE',
+        lastSeen: item.timestamp || nowIso,
+        updatedAt: nowIso
+      };
+      await upsertDoc('registered_people', updatedPersonDoc, orgId);
+      await upsertDoc('people', updatedPersonDoc, orgId);
+    }
+
+    // 3c. Persist to attendance_logs (so Attendance tab displays live on-site workforce telemetry)
     const enterDate = new Date(item.timestamp || now);
     const timeStr = enterDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     const attendanceDoc = {
@@ -240,8 +232,8 @@ export async function processTelemetryWithAI(
       personId: tagId,
       rfidTagId: tagId,
       name: personName,
-      role: registeredPersonDoc.role,
-      company: registeredPersonDoc.tradeCompany,
+      role: personRole,
+      company: personCompany,
       department: 'Operations',
       siteZone: item.location || 'Site Perimeter',
       shift: 'Day Shift (07:00-15:30)',
@@ -293,6 +285,46 @@ export async function processTelemetryWithAI(
       expireAt: tenDaysLater
     };
     await upsertDoc('incidents', incDoc, organizationId);
+
+    // Also persist with normalized enterprise structure for IncidentsTab
+    const enterpriseIncDoc = {
+      id: incident.id,
+      title: incident.title || 'Live Telemetry Incident',
+      category: incident.category || 'Exclusion Zone Breach',
+      severity: incident.severity || 'Medium',
+      workflowStatus: incident.status === 'Closed' ? 'Closed' : 'Open',
+      locationZone: incident.locationZone || 'Site Perimeter',
+      reportedBy: 'GAO RFID Live AI Telemetry',
+      assignedOfficer: 'Operations Duty Lead',
+      assignedRole: 'Safety Lead',
+      reportedAt: incident.timestamp || nowIso,
+      description: incident.description || 'Live hardware telemetry incident detected from external API.',
+      correctiveActions: [],
+      witnessStatements: [],
+      attachments: [],
+      timeline: [
+        {
+          id: `tl_${Date.now()}`,
+          timestamp: incident.timestamp || nowIso,
+          title: 'Live API Telemetry Triggered',
+          description: incident.description || 'Hardware scan registered threshold event.',
+          actor: 'Live UHF RFID Stream'
+        }
+      ],
+      aiAnalysis: {
+        aiSummary: incident.description || 'Real-time telemetry incident processed by AI Rule Engine.',
+        probableRootCause: 'Zone threshold event detected by live antenna portal.',
+        contributingFactors: ['Live worker presence'],
+        capaRecommendations: ['Verify zone clearance and badge status'],
+        severityScore: incident.severity === 'Critical' ? 90 : incident.severity === 'High' ? 75 : 50,
+        regulatoryImpact: 'Standard Safety Protocol Review'
+      },
+      organizationId,
+      createdAt: now,
+      expireAt: tenDaysLater
+    };
+    await upsertDoc('incidents_enterprise', enterpriseIncDoc, organizationId);
+
     broadcastWebSocketEvent('incident_created', incDoc, organizationId);
     broadcastSseEvent('incident_created', incDoc, organizationId);
   }

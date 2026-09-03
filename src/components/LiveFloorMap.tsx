@@ -338,7 +338,29 @@ export default function LiveFloorMap({
     return (people.length > 8 || zoom < 1.15);
   }, [markerDensityMode, people.length, zoom]);
 
-  // Dispersal algorithm: Fan out overlapping or clustered workers so every worker marker is distinct and visible
+  const activeZones = useMemo(() => {
+    const raw = customZones || zones || {};
+    const clean: Record<string, any> = {};
+    const seenNames = new Set<string>();
+
+    Object.entries(raw).forEach(([k, bounds]: [string, any]) => {
+      if (!k) return;
+      const name = k.trim();
+      const isSyntheticNum = /^ZONE_\d+$/i.test(name);
+      const normalizedKey = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+      if (seenNames.has(normalizedKey) || (isSyntheticNum && Object.keys(clean).length >= 5)) {
+        return;
+      }
+
+      seenNames.add(normalizedKey);
+      clean[name] = bounds;
+    });
+
+    return Object.keys(clean).length > 0 ? clean : raw;
+  }, [customZones, zones]);
+
+  // Dispersal algorithm: Fan out overlapping or clustered workers so every worker marker is distinct and positioned in their designated zone
   const dispersedPeople = useMemo(() => {
     if (!people || people.length === 0) return [];
     
@@ -354,15 +376,58 @@ export default function LiveFloorMap({
       }
     });
 
+    // Map each worker's coordinate into their active zone geometry
+    const positionedPeople = uniquePeople.map((p) => {
+      let resolvedX = p.x;
+      let resolvedY = p.y;
+      
+      const zoneName = (p.currentZone || '').trim();
+      if (zoneName && activeZones && Object.keys(activeZones).length > 0) {
+        const zoneMatch = Object.entries(activeZones).find(([zName]) => 
+          zName.toLowerCase() === zoneName.toLowerCase() ||
+          zName.toLowerCase().replace(/[^a-z0-9]/g, '') === zoneName.toLowerCase().replace(/[^a-z0-9]/g, '') ||
+          zName.toLowerCase().includes(zoneName.toLowerCase()) ||
+          zoneName.toLowerCase().includes(zName.toLowerCase())
+        );
+
+        if (zoneMatch) {
+          const [_, bounds] = zoneMatch;
+          if (bounds && typeof bounds.x === 'number') {
+            const bWidth = bounds.width || 18;
+            const bHeight = bounds.height || 18;
+            const minX = bounds.x + Math.min(3, bWidth * 0.15);
+            const maxX = bounds.x + bWidth - Math.min(3, bWidth * 0.15);
+            const minY = bounds.y + Math.min(3, bHeight * 0.15);
+            const maxY = bounds.y + bHeight - Math.min(3, bHeight * 0.15);
+            
+            const isInside = p.x >= bounds.x && p.x <= bounds.x + bWidth && p.y >= bounds.y && p.y <= bounds.y + bHeight;
+            if (!isInside || p.x === 0 || p.x === 50 || p.presenceState === 'IDLE') {
+              const hash = (p.id || p.hardhatTagId || p.name || '').split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+              const spanX = Math.max(3, maxX - minX);
+              const spanY = Math.max(3, maxY - minY);
+              resolvedX = minX + (hash % spanX);
+              resolvedY = minY + ((hash * 7) % spanY);
+            }
+          }
+        }
+      }
+
+      return {
+        ...p,
+        x: resolvedX,
+        y: resolvedY
+      };
+    });
+
     const visited = new Set<string>();
     const clusters: Person[][] = [];
 
-    uniquePeople.forEach((p, idx) => {
+    positionedPeople.forEach((p, idx) => {
       if (!p || visited.has(p.id)) return;
       const cluster: Person[] = [p];
       visited.add(p.id);
 
-      uniquePeople.forEach((otherP, otherIdx) => {
+      positionedPeople.forEach((otherP, otherIdx) => {
         if (otherP && idx !== otherIdx && !visited.has(otherP.id)) {
           const dist = Math.hypot(p.x - otherP.x, p.y - otherP.y);
           if (dist < 3.8) {
@@ -390,7 +455,6 @@ export default function LiveFloorMap({
         const centerY = cluster.reduce((sum, item) => sum + item.y, 0) / cluster.length;
 
         cluster.forEach((item, posIdx) => {
-          // If worker is moving, maintain their precise walking coordinates
           if (item.presenceState === 'MOVING') {
             result.push({
               ...item,
@@ -399,7 +463,6 @@ export default function LiveFloorMap({
               clusterSize: cluster.length
             });
           } else {
-            // Subtle micro-offset for idle workers in the exact same spot (max 1.5%)
             const radius = Math.min(1.6, 0.6 + cluster.length * 0.2);
             const angle = posIdx * (2 * Math.PI / cluster.length);
             const dx = Math.cos(angle) * radius;
@@ -416,30 +479,7 @@ export default function LiveFloorMap({
     });
 
     return result;
-  }, [people]);
-
-  const activeZones = useMemo(() => {
-    const raw = customZones || zones || {};
-    const clean: Record<string, any> = {};
-    const seenNames = new Set<string>();
-
-    Object.entries(raw).forEach(([k, bounds]: [string, any]) => {
-      if (!k) return;
-      const name = k.trim();
-      // Filter out duplicate or synthetic names (e.g. ZONE_0, ZONE_1) when labeled zones are present
-      const isSyntheticNum = /^ZONE_\d+$/i.test(name);
-      const normalizedKey = name.toLowerCase().replace(/[^a-z0-9]/g, '');
-
-      if (seenNames.has(normalizedKey) || (isSyntheticNum && Object.keys(clean).length >= 5)) {
-        return;
-      }
-
-      seenNames.add(normalizedKey);
-      clean[name] = bounds;
-    });
-
-    return Object.keys(clean).length > 0 ? clean : raw;
-  }, [customZones, zones]);
+  }, [people, activeZones]);
   const totalZoneCount = Object.keys(activeZones).length;
   const visibleZoneCount = totalZoneCount - Object.keys(hiddenZones).filter(k => hiddenZones[k]).length;
 

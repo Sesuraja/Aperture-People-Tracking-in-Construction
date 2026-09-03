@@ -52,7 +52,7 @@ const DEFAULT_SITE_DEVICES: DeviceItem[] = [];
 
 export default function DevicesTab() {
   const navigate = useNavigate();
-  const { zones } = useTracking();
+  const { zones, people, liveTags } = useTracking();
   const {
     personnelSingular,
     personnelPlural,
@@ -161,20 +161,219 @@ export default function DevicesTab() {
   const [isScanning, setIsScanning] = useState(false);
   const [scanResults, setScanResults] = useState<{ totalScanned: number; issuesFound: number; logs: string[] } | null>(null);
 
-  // Sync with MongoDB (devices + registered worker RFID tags)
+  // Sync with MongoDB (devices + hardware_readers + live antenna tags + registered worker RFID tags)
   useEffect(() => {
     setLoading(true);
     let devList: DeviceItem[] = [];
     let hardwareReadersList: DeviceItem[] = [];
+    let liveTagsList: DeviceItem[] = [];
     let workerTagsList: DeviceItem[] = [];
+    let isMounted = true;
 
     const mergeAndSet = () => {
-      const activeDevs = devList;
-      const combined = [...activeDevs, ...hardwareReadersList, ...workerTagsList];
-      setDevices(combined);
+      if (!isMounted) return;
+      const devMap = new Map<string, DeviceItem>();
+      // 1. Hardware readers from MongoDB
+      hardwareReadersList.forEach(d => devMap.set(d.id, d));
+      // 2. Devices collection
+      devList.forEach(d => devMap.set(d.id, d));
+      // 3. Real-time active RFID tags & hardware badges
+      workerTagsList.forEach(d => devMap.set(d.id, d));
+      liveTagsList.forEach(d => {
+        if (!devMap.has(d.id)) devMap.set(d.id, d);
+      });
+
+      setDevices(Array.from(devMap.values()));
       setLoading(false);
       setDbSynced(true);
     };
+
+    // Direct REST API Fallback & Continuous Poller for MongoDB Devices & Hardware Readers
+    const fetchDirectFromApi = async () => {
+      try {
+        const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || localStorage.getItem('auth_token') || 'demo';
+        const authHeaders: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+
+        // Fetch devices from MongoDB
+        const [devRes, readerRes, tagRes, regRes, peopleRes] = await Promise.allSettled([
+          fetch('/api/data/devices', { headers: authHeaders }),
+          fetch('/api/data/hardware_readers', { headers: authHeaders }),
+          fetch('/api/GetTagsInRealtime', { headers: authHeaders }),
+          fetch('/api/data/registered_people', { headers: authHeaders }),
+          fetch('/api/data/people', { headers: authHeaders })
+        ]);
+
+        if (devRes.status === 'fulfilled' && devRes.value.ok) {
+          const dbDevices = await devRes.value.json();
+          if (Array.isArray(dbDevices) && dbDevices.length > 0) {
+            devList = dbDevices.map(d => ({
+              id: d.id,
+              name: d.name || 'Unnamed Device',
+              category: d.category || 'rfid',
+              type: d.type || 'Reader Gateway',
+              location: d.location || d.zone || 'Site Location',
+              zoneId: (d.zoneId || d.zone || d.location || 'zone-a').toLowerCase().replace(/\s+/g, '-'),
+              status: (d.status || 'online').toLowerCase() as any,
+              ip: d.ipAddress || d.ip || '192.168.10.100',
+              mac: d.macAddress || d.mac || '00:1A:2B:3C:4D:FE',
+              firmware: d.firmware || 'v2.0.0',
+              latestFirmware: d.latestFirmware || 'v2.0.0',
+              signalRssi: d.signalRssi !== undefined ? Number(d.signalRssi) : -60,
+              coverageRadiusMeters: d.coverageRadiusMeters || d.range || 20,
+              temperatureC: d.temperatureC || 36,
+              cpuUsagePct: d.cpuUsagePct || 20,
+              memoryUsagePct: d.memoryUsagePct || 40,
+              pingMs: d.pingMs || 10,
+              uptime: d.uptime || '1d 0h',
+              lastPing: d.lastPing || 'Just now',
+              calibrationStatus: d.calibrationStatus || 'Calibrated',
+              otaStatus: d.otaStatus || 'Up to Date',
+              powerSource: d.powerSource || 'PoE',
+              notes: d.notes || '',
+              battery: d.battery !== undefined ? d.battery : 100
+            }));
+          }
+        }
+
+        if (readerRes.status === 'fulfilled' && readerRes.value.ok) {
+          const dbReaders = await readerRes.value.json();
+          if (Array.isArray(dbReaders) && dbReaders.length > 0) {
+            hardwareReadersList = dbReaders.map(d => {
+              const readerId = d.id || d.readerId || d.serialno || 'portal-reader';
+              return {
+                id: readerId,
+                name: d.name || (d.model ? `GAO ${d.model} Reader (${d.serialno || readerId})` : `Hardware Reader Gateway (${d.serialno || readerId})`),
+                category: 'rfid',
+                type: d.type || 'UHF Fixed Portal',
+                location: d.location || d.zone || 'Facility Portal / Access Point',
+                zoneId: (d.zoneId || d.zone || d.location || 'portal-1').toLowerCase().replace(/\s+/g, '-'),
+                status: (d.status || 'online').toLowerCase() as any,
+                ip: d.ipAddress || d.ip || '192.168.1.101',
+                mac: d.macAddress || d.mac || '00:1A:79:39:63:43',
+                firmware: d.firmware || 'v4.19.2',
+                latestFirmware: 'v4.19.2',
+                signalRssi: d.powerDbm ? -Number(d.powerDbm) : (d.rssi !== undefined ? Number(d.rssi) : -50),
+                coverageRadiusMeters: d.range || 35,
+                temperatureC: d.temperatureC || 38,
+                cpuUsagePct: d.cpuUsagePct || 24,
+                memoryUsagePct: d.memoryUsagePct || 40,
+                pingMs: d.pingMs || 8,
+                uptime: 'Active',
+                lastPing: 'Just now',
+                calibrationStatus: 'Calibrated',
+                otaStatus: 'Up to Date',
+                powerSource: 'PoE',
+                notes: d.notes || `Hardware Reader Serial: ${d.serialno || readerId}. Antennas: ${(d.antennas || []).length || 1}.`
+              };
+            });
+          }
+        }
+
+        // Merge Registered Workers as Hardware Wearable RFID Badges
+        const registeredMap = new Map<string, any>();
+        if (regRes.status === 'fulfilled' && regRes.value.ok) {
+          const regArr = await regRes.value.json();
+          if (Array.isArray(regArr)) {
+            regArr.forEach(p => {
+              const tag = (p.hardhatTagId || p.tagId || p.id || '').toUpperCase();
+              if (tag) registeredMap.set(tag, p);
+            });
+          }
+        }
+        if (peopleRes.status === 'fulfilled' && peopleRes.value.ok) {
+          const pArr = await peopleRes.value.json();
+          if (Array.isArray(pArr)) {
+            pArr.forEach(p => {
+              const tag = (p.hardhatTagId || p.tagId || p.id || '').toUpperCase();
+              if (tag && !registeredMap.has(tag)) registeredMap.set(tag, p);
+            });
+          }
+        }
+
+        if (registeredMap.size > 0) {
+          workerTagsList = Array.from(registeredMap.values()).map(p => {
+            const tagId = (p.hardhatTagId || p.tagId || p.id || '').toUpperCase();
+            return {
+              id: tagId,
+              name: `${p.name || personnelSingular} (${idBadgeLabel})`,
+              workerName: p.name || `Active ${personnelSingular}`,
+              workerRole: p.role || p.tradeCompany || roleLabel,
+              ppeStatus: p.ppeStatus || 'COMPLIANT',
+              presenceState: p.presenceState || 'IDLE',
+              battery: p.battery !== undefined ? Number(p.battery) : 88,
+              category: 'rfid_tag' as const,
+              type: `${personnelSingular} Smart Badge / UHF ${idBadgeLabel}`,
+              location: p.currentZone || 'Site Area',
+              zoneId: (p.currentZone || 'zone-a').toLowerCase().replace(/\s+/g, '-'),
+              status: p.shiftStatus === 'OFF_SITE' ? ('offline' as const) : (p.battery !== undefined && Number(p.battery) < 20 ? ('warning' as const) : ('online' as const)),
+              ip: p.tradeCompany || organizationType || 'Operations',
+              mac: tagId,
+              firmware: 'v2.4.0',
+              latestFirmware: 'v2.4.0',
+              signalRssi: p.speed ? -48 : -58,
+              coverageRadiusMeters: 15,
+              temperatureC: 33.2,
+              cpuUsagePct: 6,
+              memoryUsagePct: 15,
+              pingMs: 4,
+              uptime: p.presenceState === 'MOVING' ? 'Active / In Transit' : 'Stationary / Working',
+              lastPing: p.lastSeen ? new Date(p.lastSeen).toLocaleTimeString() : 'Just now',
+              calibrationStatus: 'Calibrated' as const,
+              otaStatus: 'Up to Date' as const,
+              powerSource: 'Li-Ion Battery' as const,
+              notes: `Assigned Personnel: ${p.name || 'Unknown'} | ${roleLabel}: ${p.role || 'Operator'} | ${organizationType}: ${p.tradeCompany || 'Internal'}`
+            };
+          });
+        }
+
+        // Live Real-Time Telemetry UHF Tag Scans
+        if (tagRes.status === 'fulfilled' && tagRes.value.ok) {
+          const rawTags = await tagRes.value.json();
+          if (Array.isArray(rawTags) && rawTags.length > 0) {
+            liveTagsList = rawTags.map(t => {
+              const tagId = (t.TagID || t.tagId || t.id || '').toUpperCase();
+              const matchedWorker = registeredMap.get(tagId);
+              const workerName = t.personName || t.name || (matchedWorker ? matchedWorker.name : `Active Tag (${tagId})`);
+              return {
+                id: tagId,
+                name: `${workerName} (UHF Tag)`,
+                workerName,
+                workerRole: t.role || (matchedWorker ? matchedWorker.role : 'Field Specialist'),
+                category: 'rfid_tag' as const,
+                type: 'UHF RFID Personnel Tag',
+                location: t.LocationName || t.Location || t.zone || 'Site Sector',
+                zoneId: (t.LocationName || t.Location || 'zone-1').toLowerCase().replace(/\s+/g, '-'),
+                status: 'online' as const,
+                ip: t.AntennaID ? `Antenna ${t.AntennaID}` : 'Portal Reader',
+                mac: tagId,
+                firmware: 'v2.4.0',
+                latestFirmware: 'v2.4.0',
+                signalRssi: t.RSSI !== undefined ? Number(t.RSSI) : -55,
+                coverageRadiusMeters: 15,
+                temperatureC: 32,
+                cpuUsagePct: 5,
+                memoryUsagePct: 12,
+                pingMs: 5,
+                uptime: 'Active In Telemetry',
+                lastPing: t.EnterTime || t.timestamp || 'Just now',
+                calibrationStatus: 'Calibrated' as const,
+                otaStatus: 'Up to Date' as const,
+                powerSource: 'Li-Ion Battery' as const,
+                battery: 92,
+                notes: `Live UHF Antenna Telemetry Scan | Reader: Gate Portal`
+              };
+            });
+          }
+        }
+
+        mergeAndSet();
+      } catch (err) {
+        console.warn('[DevicesTab] Poller notice:', err);
+      }
+    };
+
+    fetchDirectFromApi();
+    const interval = setInterval(fetchDirectFromApi, 2000);
 
     const unsubDevices = onSnapshot(collection(db, 'devices'), async (snapshot) => {
       devList = [];
@@ -185,15 +384,15 @@ export default function DevicesTab() {
           name: data.name || 'Unnamed Device',
           category: data.category || 'rfid',
           type: data.type || 'Reader Gateway',
-          location: data.location || 'Site Location',
-          zoneId: data.zoneId || 'zone-a',
-          status: data.status || 'online',
-          ip: data.ip || '192.168.10.100',
-          mac: data.mac || '00:1A:2B:3C:4D:FE',
+          location: data.location || data.zone || 'Site Location',
+          zoneId: (data.zoneId || data.zone || data.location || 'zone-a').toLowerCase().replace(/\s+/g, '-'),
+          status: (data.status || 'online').toLowerCase() as any,
+          ip: data.ipAddress || data.ip || '192.168.10.100',
+          mac: data.macAddress || data.mac || '00:1A:2B:3C:4D:FE',
           firmware: data.firmware || 'v2.0.0',
           latestFirmware: data.latestFirmware || 'v2.0.0',
           signalRssi: data.signalRssi !== undefined ? Number(data.signalRssi) : -60,
-          coverageRadiusMeters: data.coverageRadiusMeters || 20,
+          coverageRadiusMeters: data.coverageRadiusMeters || data.range || 20,
           temperatureC: data.temperatureC || 36,
           cpuUsagePct: data.cpuUsagePct || 20,
           memoryUsagePct: data.memoryUsagePct || 40,
@@ -217,35 +416,74 @@ export default function DevicesTab() {
       hardwareReadersList = [];
       snapshot.forEach(d => {
         const data = d.data();
+        const readerId = d.id || data.serialno || data.readerId || 'portal-reader';
         hardwareReadersList.push({
-          id: d.id || data.serialno || data.readerId,
-          name: data.model ? `GAO ${data.model} Reader (${data.serialno || d.id})` : `Hardware Reader Gateway (${data.serialno || d.id})`,
+          id: readerId,
+          name: data.name || (data.model ? `GAO ${data.model} Reader (${data.serialno || readerId})` : `Hardware Reader Gateway (${data.serialno || readerId})`),
           category: 'rfid',
-          type: 'GAO Fixed Multi-Antenna Reader Gateway',
-          location: data.location || 'Facility Portal / Access Point',
-          zoneId: (data.location || 'portal-1').toLowerCase().replace(/\s+/g, '-'),
-          status: 'online',
-          ip: data.ip || '192.168.1.120',
-          mac: data.mac || '00:1A:2B:3C:4D:01',
+          type: data.type || 'UHF Fixed Portal',
+          location: data.location || data.zone || 'Facility Portal / Access Point',
+          zoneId: (data.zoneId || data.zone || data.location || 'portal-1').toLowerCase().replace(/\s+/g, '-'),
+          status: (data.status || 'online').toLowerCase() as any,
+          ip: data.ipAddress || data.ip || '192.168.1.101',
+          mac: data.macAddress || data.mac || '00:1A:79:39:63:43',
           firmware: data.firmware || 'v4.19.2',
           latestFirmware: 'v4.19.2',
-          signalRssi: data.rssi !== undefined ? Number(data.rssi) : -50,
-          coverageRadiusMeters: 35,
-          temperatureC: 38,
-          cpuUsagePct: 24,
-          memoryUsagePct: 40,
-          pingMs: 8,
+          signalRssi: data.powerDbm ? -Number(data.powerDbm) : (data.rssi !== undefined ? Number(data.rssi) : -50),
+          coverageRadiusMeters: data.range || 35,
+          temperatureC: data.temperatureC || 38,
+          cpuUsagePct: data.cpuUsagePct || 24,
+          memoryUsagePct: data.memoryUsagePct || 40,
+          pingMs: data.pingMs || 8,
           uptime: 'Active',
           lastPing: 'Just now',
           calibrationStatus: 'Calibrated',
           otaStatus: 'Up to Date',
           powerSource: 'PoE',
-          notes: `Hardware Reader Serial: ${data.serialno || d.id}. Antennas: ${(data.antennas || []).length || 1}.`
+          notes: data.notes || `Hardware Reader Serial: ${data.serialno || readerId}. Antennas: ${(data.antennas || []).length || 1}.`
         });
       });
       mergeAndSet();
     }, (err) => {
       console.warn('hardware_readers listener notice:', err);
+    });
+
+    const unsubLiveTags = onSnapshot(collection(db, 'live_tags'), (snapshot) => {
+      liveTagsList = [];
+      snapshot.forEach(d => {
+        const data = d.data();
+        const tagId = (data.TagID || data.tagId || d.id || '').toUpperCase();
+        if (!tagId) return;
+        liveTagsList.push({
+          id: tagId,
+          name: data.name ? `${data.name} (UHF Tag)` : `Active RFID Tag (${tagId})`,
+          workerName: data.name || 'Active Tag',
+          category: 'rfid_tag',
+          type: 'UHF RFID Personnel Tag',
+          location: data.location || data.zone || 'Site Perimeter',
+          zoneId: (data.location || data.zone || 'zone-1').toLowerCase().replace(/\s+/g, '-'),
+          status: 'online',
+          ip: data.antennaId ? `Antenna ${data.antennaId}` : (data.readerId || 'Portal Reader'),
+          mac: tagId,
+          firmware: 'v2.4.0',
+          latestFirmware: 'v2.4.0',
+          signalRssi: data.rssi !== undefined ? Number(data.rssi) : -55,
+          coverageRadiusMeters: 15,
+          temperatureC: 32,
+          cpuUsagePct: 5,
+          memoryUsagePct: 12,
+          pingMs: 5,
+          uptime: 'Active In Telemetry',
+          lastPing: data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : 'Just now',
+          calibrationStatus: 'Calibrated',
+          otaStatus: 'Up to Date',
+          powerSource: 'Li-Ion Battery',
+          notes: `Telemetry Source: ${data.source || 'GAO Cloud Stream'} | Reader: ${data.readerId || 'Portal'}`
+        });
+      });
+      mergeAndSet();
+    }, (err) => {
+      console.warn('live_tags listener notice:', err);
     });
 
     let regPeopleMap = new Map<string, any>();
@@ -260,7 +498,7 @@ export default function DevicesTab() {
 
       workerTagsList = [];
       mergedMap.forEach((p, dId) => {
-        const tagId = p.hardhatTagId || p.tagId || dId || p.id;
+        const tagId = (p.hardhatTagId || p.tagId || dId || p.id || '').toUpperCase();
         workerTagsList.push({
           id: tagId,
           name: `${p.name || personnelSingular} (${idBadgeLabel})`,
@@ -316,16 +554,115 @@ export default function DevicesTab() {
     });
 
     return () => {
+      isMounted = false;
+      clearInterval(interval);
       unsubDevices();
       unsubHwReaders();
+      unsubLiveTags();
       unsubRegPeople();
       unsubPeople();
     };
   }, []);
 
+  // Compute reactive worker badge devices from TrackingContext / MongoDB
+  const workerBadgeDevices: DeviceItem[] = useMemo(() => {
+    if (!people || people.length === 0) return [];
+    return people.map(p => {
+      const tagId = (p.hardhatTagId || p.tagId || p.id || '').toUpperCase();
+      const workerFullName = p.name || `${(p as any).firstName || ''} ${(p as any).lastName || ''}`.trim() || 'Active Personnel';
+      return {
+        id: tagId || `TAG-${p.id}`,
+        name: `${workerFullName} (${idBadgeLabel})`,
+        workerName: workerFullName,
+        workerRole: p.role || p.tradeCompany || roleLabel,
+        ppeStatus: p.ppeStatus || 'COMPLIANT',
+        presenceState: p.presenceState || 'IDLE',
+        battery: (p as any).battery !== undefined ? Number((p as any).battery) : 88,
+        category: 'rfid_tag' as const,
+        type: `${personnelSingular} Smart Badge / UHF ${idBadgeLabel}`,
+        location: p.currentZone || (p as any).location || 'Site Area',
+        zoneId: (p.currentZone || (p as any).location || 'zone-a').toLowerCase().replace(/\s+/g, '-'),
+        status: p.shiftStatus === 'OFF_SITE' ? ('offline' as const) : ((p as any).battery !== undefined && Number((p as any).battery) < 20 ? ('warning' as const) : ('online' as const)),
+        ip: p.tradeCompany || organizationType || 'Operations',
+        mac: tagId,
+        firmware: 'v2.4.0',
+        latestFirmware: 'v2.4.0',
+        signalRssi: (p as any).speed ? -48 : -58,
+        coverageRadiusMeters: 15,
+        temperatureC: 33.2,
+        cpuUsagePct: 6,
+        memoryUsagePct: 15,
+        pingMs: 4,
+        uptime: p.presenceState === 'MOVING' ? 'Active / In Transit' : 'Stationary / Working',
+        lastPing: p.lastSeen ? new Date(p.lastSeen).toLocaleTimeString() : 'Just now',
+        calibrationStatus: 'Calibrated' as const,
+        otaStatus: 'Up to Date' as const,
+        powerSource: 'Li-Ion Battery' as const,
+        notes: `Assigned Personnel: ${workerFullName} | ${roleLabel}: ${p.role || 'Operator'} | ${organizationType}: ${p.tradeCompany || 'Internal'}`
+      };
+    });
+  }, [people, personnelSingular, idBadgeLabel, roleLabel, organizationType]);
+
+  // Compute reactive real-time antenna scans from live UHF stream
+  const liveTagDevices: DeviceItem[] = useMemo(() => {
+    if (!liveTags || liveTags.length === 0) return [];
+    return liveTags.map(t => {
+      const tagId = (t.TagID || (t as any).tagId || (t as any).id || '').toUpperCase();
+      const workerFullName = (t as any).name || (t as any).personName || `${t.FirstName || ''} ${t.LastName || ''}`.trim() || `Active Tag (${tagId})`;
+      return {
+        id: tagId,
+        name: `${workerFullName} (UHF Tag)`,
+        workerName: workerFullName,
+        workerRole: (t as any).role || 'Field Specialist',
+        category: 'rfid_tag' as const,
+        type: 'UHF RFID Personnel Tag',
+        location: t.LocationName || t.Location || (t as any).zone || 'Site Sector',
+        zoneId: (t.LocationName || t.Location || 'zone-1').toLowerCase().replace(/\s+/g, '-'),
+        status: 'online' as const,
+        ip: t.AntennaID ? `Antenna ${t.AntennaID}` : 'Portal Reader',
+        mac: tagId,
+        firmware: 'v2.4.0',
+        latestFirmware: 'v2.4.0',
+        signalRssi: t.RSSI !== undefined ? Number(t.RSSI) : -55,
+        coverageRadiusMeters: 15,
+        temperatureC: 32,
+        cpuUsagePct: 5,
+        memoryUsagePct: 12,
+        pingMs: 5,
+        uptime: 'Active In Telemetry',
+        lastPing: t.EnterTime || t.Timestamp || 'Just now',
+        calibrationStatus: 'Calibrated' as const,
+        otaStatus: 'Up to Date' as const,
+        powerSource: 'Li-Ion Battery' as const,
+        battery: 92,
+        notes: `Live UHF Antenna Telemetry Scan | Reader: Gate Portal`
+      };
+    });
+  }, [liveTags]);
+
+  // Combined master list of Hardware Readers + Worker RFID Badges + Real-time Tags
+  const allDevices: DeviceItem[] = useMemo(() => {
+    const devMap = new Map<string, DeviceItem>();
+    // 1. Hardware Readers & Configured Gateways
+    devices.forEach(d => {
+      if (d.id) devMap.set(d.id.toUpperCase(), d);
+    });
+    // 2. Worker Wearable RFID Tags & Badges
+    workerBadgeDevices.forEach(d => {
+      if (d.id) devMap.set(d.id.toUpperCase(), d);
+    });
+    // 3. Live Active Tag Telemetry
+    liveTagDevices.forEach(d => {
+      if (d.id && !devMap.has(d.id.toUpperCase())) {
+        devMap.set(d.id.toUpperCase(), d);
+      }
+    });
+    return Array.from(devMap.values());
+  }, [devices, workerBadgeDevices, liveTagDevices]);
+
   // Filtered Devices
   const filteredDevices = useMemo(() => {
-    return devices.filter(dev => {
+    return allDevices.filter(dev => {
       const matchesCategory = selectedCategory === 'all' || dev.category === selectedCategory;
       const matchesStatus = selectedStatus === 'all' || dev.status === selectedStatus;
       const matchesSearch =
@@ -334,28 +671,77 @@ export default function DevicesTab() {
         (dev.ip || "").toLowerCase().includes((searchTerm || "").toLowerCase()) ||
         (dev.mac || "").toLowerCase().includes((searchTerm || "").toLowerCase()) ||
         (dev.location || "").toLowerCase().includes((searchTerm || "").toLowerCase()) ||
+        (dev.workerName || "").toLowerCase().includes((searchTerm || "").toLowerCase()) ||
         (dev.type || "").toLowerCase().includes((searchTerm || "").toLowerCase());
       return matchesCategory && matchesStatus && matchesSearch;
     });
-  }, [devices, selectedCategory, selectedStatus, searchTerm]);
+  }, [allDevices, selectedCategory, selectedStatus, searchTerm]);
 
   // Summary Metrics
   const metrics = useMemo(() => {
-    const total = devices.length;
-    const online = devices.filter(d => d.status === 'online').length;
-    const warning = devices.filter(d => d.status === 'warning').length;
-    const critical = devices.filter(d => d.status === 'critical').length;
-    const offline = devices.filter(d => d.status === 'offline').length;
-    const otaPending = devices.filter(d => d.otaStatus === 'Update Available').length;
-    const needsCalib = devices.filter(d => d.calibrationStatus === 'Needs Calibration').length;
+    const total = allDevices.length;
+    const online = allDevices.filter(d => d.status === 'online').length;
+    const warning = allDevices.filter(d => d.status === 'warning').length;
+    const critical = allDevices.filter(d => d.status === 'critical').length;
+    const offline = allDevices.filter(d => d.status === 'offline').length;
+    const otaPending = allDevices.filter(d => d.otaStatus === 'Update Available').length;
+    const needsCalib = allDevices.filter(d => d.calibrationStatus === 'Needs Calibration').length;
 
     return { total, online, warning, critical, offline, otaPending, needsCalib };
-  }, [devices]);
+  }, [allDevices]);
 
   // Helper to save single device to MongoDB
   const saveDeviceToMongo = async (device: DeviceItem) => {
     try {
+      // 1. Direct MongoDB REST endpoints
+      await fetch('/api/data/devices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(device)
+      }).catch(() => {});
+
+      if (device.category === 'rfid' || (device.type || '').toLowerCase().includes('reader') || (device.type || '').toLowerCase().includes('portal')) {
+        await fetch('/api/data/hardware_readers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            id: device.id,
+            readerId: device.id,
+            name: device.name,
+            location: device.location,
+            zone: device.location,
+            ipAddress: device.ip,
+            macAddress: device.mac,
+            status: (device.status || 'online').toUpperCase(),
+            type: device.type,
+            range: device.coverageRadiusMeters || 25,
+            powerDbm: 30,
+            antennaGainDbi: 9,
+            frequencyBand: 'US 902-928 MHz UHF'
+          })
+        }).catch(() => {});
+      }
+
+      // 2. Client cache / Firestore snapshot
       await setDoc(doc(db, 'devices', device.id), device);
+      if (device.category === 'rfid' || (device.type || '').toLowerCase().includes('reader') || (device.type || '').toLowerCase().includes('portal')) {
+        await setDoc(doc(db, 'hardware_readers', device.id), {
+          id: device.id,
+          readerId: device.id,
+          name: device.name,
+          location: device.location,
+          zone: device.location,
+          ipAddress: device.ip,
+          macAddress: device.mac,
+          status: (device.status || 'online').toUpperCase(),
+          type: device.type,
+          range: device.coverageRadiusMeters || 25,
+          powerDbm: 30,
+          antennaGainDbi: 9,
+          frequencyBand: 'US 902-928 MHz UHF'
+        });
+      }
+
       setDevices(prev => {
         const idx = prev.findIndex(d => d.id === device.id);
         if (idx >= 0) {
@@ -365,6 +751,7 @@ export default function DevicesTab() {
         }
         return [device, ...prev];
       });
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
     } catch (err) {
       console.error('Failed saving device to MongoDB:', err);
     }
@@ -373,9 +760,36 @@ export default function DevicesTab() {
   // Helper to delete device from MongoDB
   const deleteDeviceFromMongo = async (deviceId: string) => {
     try {
-      await deleteDoc(doc(db, 'devices', deviceId));
-      setDevices(prev => prev.filter(d => d.id !== deviceId));
-      setSelectedDeviceIds(prev => prev.filter(id => id !== deviceId));
+      const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || localStorage.getItem('auth_token');
+      const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) authHeaders['Authorization'] = `Bearer ${token}`;
+
+      const encodedId = encodeURIComponent(deviceId);
+
+      // 1. Direct MongoDB REST endpoints
+      await Promise.allSettled([
+        fetch(`/api/data/devices/${encodedId}`, { method: 'DELETE', headers: authHeaders }),
+        fetch(`/api/data/hardware_readers/${encodedId}`, { method: 'DELETE', headers: authHeaders }),
+        fetch(`/api/hardware/readers/${encodedId}`, { method: 'DELETE', headers: authHeaders }),
+        fetch(`/api/data/hardware_tag_mappings/${encodedId}`, { method: 'DELETE', headers: authHeaders }),
+        fetch(`/api/hardware/mappings/${encodedId}`, { method: 'DELETE', headers: authHeaders }),
+        fetch(`/api/data/live_tags/${encodedId}`, { method: 'DELETE', headers: authHeaders })
+      ]);
+
+      // 2. Client cache / Firestore snapshot
+      await deleteDoc(doc(db, 'devices', deviceId)).catch(() => {});
+      await deleteDoc(doc(db, 'hardware_readers', deviceId)).catch(() => {});
+      await deleteDoc(doc(db, 'hardware_tag_mappings', deviceId)).catch(() => {});
+      await deleteDoc(doc(db, 'live_tags', deviceId)).catch(() => {});
+
+      const idLower = String(deviceId || '').toLowerCase().trim();
+      setDevices(prev => prev.filter(d => {
+        const dId = String(d.id || '').toLowerCase().trim();
+        const dMac = String(d.mac || '').toLowerCase().trim();
+        return dId !== idLower && dMac !== idLower;
+      }));
+      setSelectedDeviceIds(prev => prev.filter(id => String(id || '').toLowerCase().trim() !== idLower));
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
     } catch (err) {
       console.error('Failed deleting device from MongoDB:', err);
     }
@@ -1475,7 +1889,7 @@ export default function DevicesTab() {
                 <HardHat size={13} className="text-amber-500" /> Active {personnelSingular} Badges
               </div>
               <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">
-                {devices.filter(d => d.category === 'rfid_tag').length}
+                {allDevices.filter(d => d.category === 'rfid_tag').length}
               </div>
               <div className="text-[10px] font-semibold text-emerald-600 mt-0.5">Assigned to Personnel</div>
             </div>
@@ -1485,7 +1899,7 @@ export default function DevicesTab() {
                 <Radio size={13} className="text-blue-500" /> Transmitting Link
               </div>
               <div className="text-2xl font-black text-blue-600 dark:text-blue-400 mt-1">
-                {devices.filter(d => d.category === 'rfid_tag' && d.status === 'online').length}
+                {allDevices.filter(d => d.category === 'rfid_tag' && d.status === 'online').length}
               </div>
               <div className="text-[10px] font-semibold text-slate-500 mt-0.5">Online Real-time Telemetry</div>
             </div>
@@ -1495,7 +1909,7 @@ export default function DevicesTab() {
                 <Battery size={13} className="text-rose-500" /> Low Battery (&lt;25%)
               </div>
               <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
-                {devices.filter(d => d.category === 'rfid_tag' && (d.battery || 100) < 25).length}
+                {allDevices.filter(d => d.category === 'rfid_tag' && (d.battery || 100) < 25).length}
               </div>
               <div className="text-[10px] font-semibold text-rose-500 mt-0.5">Requires Recharge</div>
             </div>
@@ -1505,7 +1919,7 @@ export default function DevicesTab() {
                 <ShieldCheck size={13} className="text-emerald-500" /> PPE Compliant
               </div>
               <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-                {devices.filter(d => d.category === 'rfid_tag' && d.ppeStatus !== 'NON_COMPLIANT').length}
+                {allDevices.filter(d => d.category === 'rfid_tag' && d.ppeStatus !== 'NON_COMPLIANT').length}
               </div>
               <div className="text-[10px] font-semibold text-emerald-600 mt-0.5">Safety Gear Verified</div>
             </div>
@@ -1525,13 +1939,13 @@ export default function DevicesTab() {
             </div>
 
             <div className="text-xs font-bold text-slate-500">
-              Showing <span className="text-slate-900 dark:text-white font-black">{devices.filter(d => d.category === 'rfid_tag').length}</span> Worker Wearable RFID / BLE Badges
+              Showing <span className="text-slate-900 dark:text-white font-black">{allDevices.filter(d => d.category === 'rfid_tag').length}</span> Worker Wearable RFID / BLE Badges
             </div>
           </div>
 
           {/* Worker Badges Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {devices.filter(d => {
+            {allDevices.filter(d => {
               if (d.category !== 'rfid_tag') return false;
               if (!searchTerm) return true;
               const s = searchTerm.toLowerCase();

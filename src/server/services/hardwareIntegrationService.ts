@@ -83,22 +83,22 @@ export async function processDirectHardwareScan(
       id: scan.readerId,
       readerId: scan.readerId,
       name: `GAO Fixed Reader (${scan.readerId})`,
-      model: scan.readerModel || 'GAO-216031A',
+      model: (scan as any).readerModel || 'GAO-216031A',
       ipAddress: '192.168.1.120',
       port: 8080,
       protocol: 'HTTP Push',
       powerDbm: 30,
       sensitivityDbm: -70,
       status: 'ONLINE',
-      location: 'Main Facility Portal',
+      zone: 'Main Facility Portal',
       antennas: [
         { port: Number(scan.antennaId || 1), name: `Antenna ${scan.antennaId || 1}`, zoneId: 'main-portal', zoneName: 'Main Facility Portal', direction: 'BIDIRECTIONAL', powerDbm: 30 }
       ],
       totalScans: 1,
       createdAt: nowIso,
       updatedAt: nowIso
-    };
-    await upsertDoc('hardware_readers', scan.readerId, matchedReader, organizationId);
+    } as any;
+    await upsertDoc('hardware_readers', matchedReader, organizationId);
   }
 
   let resolvedZone = 'Main Facility Perimeter';
