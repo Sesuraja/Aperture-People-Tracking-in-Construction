@@ -671,7 +671,7 @@ export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps)
 
     return Array.from(knownZoneNames).map(zName => {
       const matchedConfig = rawZones.find(z => z.name.toLowerCase() === zName.toLowerCase());
-      const capacity = matchedConfig?.capacity || matchedConfig?.maxOccupancy || 20;
+      const capacity = (matchedConfig as any)?.capacity || (matchedConfig as any)?.maxOccupancy || 20;
       const current = activeWorkers.filter(p => (p.currentZone || p.zone || '').toLowerCase() === zName.toLowerCase()).length;
       const loadPct = capacity > 0 ? Math.round((current / capacity) * 100) : 0;
       return {

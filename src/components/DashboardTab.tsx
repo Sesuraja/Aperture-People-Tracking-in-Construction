@@ -186,14 +186,14 @@ export default function DashboardTab({
     });
   }, []);
 
-  const [registeredCount, setRegisteredCount] = useState<number>(0);
-  const [registeredPeopleList, setRegisteredPeopleList] = useState<any[]>([]);
-  const [activeOnsiteCount, setActiveOnsiteCount] = useState<number>(0);
-  const [activeOnsiteWorkersList, setActiveOnsiteWorkersList] = useState<any[]>([]);
+  const [registeredCount, setRegisteredCount] = useState<number>(() => people?.length || 0);
+  const [registeredPeopleList, setRegisteredPeopleList] = useState<any[]>(() => people || []);
+  const [activeOnsiteCount, setActiveOnsiteCount] = useState<number>(() => people?.filter(p => p.presenceState !== 'EXITED' && p.shiftStatus !== 'OFF_SITE').length || people?.length || 0);
+  const [activeOnsiteWorkersList, setActiveOnsiteWorkersList] = useState<any[]>(() => people || []);
   const [recentMovements, setRecentMovements] = useState<any[]>([]);
   const [timelineData, setTimelineData] = useState<any[]>([]);
-  const movingCount = people.filter(p => p.presenceState === 'MOVING').length;
-  const avgDwellInfo = people.length > 0 ? (people.reduce((sum, p) => sum + p.dwellTime, 0) / people.length / 60).toFixed(1) : "0.0";
+  const movingCount = (people || []).filter(p => p.presenceState === 'MOVING').length;
+  const avgDwellInfo = (people && people.length > 0) ? (people.reduce((sum, p) => sum + p.dwellTime, 0) / people.length / 60).toFixed(1) : "0.0";
 
   const [deviceStats, setDeviceStats] = useState({ online: 0, offline: 0, warning: 0 });
   const [deviceList, setDeviceList] = useState<any[]>([]);
@@ -391,9 +391,28 @@ export default function DashboardTab({
     );
   };
 
-  // Layout states
-  const [kpis, setKpis] = useState<KPIConfig[]>([]);
-  const [panels, setPanels] = useState<PanelConfig[]>([]);
+  // Layout states (Synchronous instant load from cache or defaults to prevent blank-screen rendering on tab switches)
+  const [kpis, setKpis] = useState<KPIConfig[]>(() => {
+    try {
+      const saved = localStorage.getItem('dashboard_kpis_default') || localStorage.getItem('aperture_dashboard_kpis');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return getDefaultKPIs();
+  });
+
+  const [panels, setPanels] = useState<PanelConfig[]>(() => {
+    try {
+      const saved = localStorage.getItem('dashboard_panels_default') || localStorage.getItem('aperture_dashboard_panels');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {}
+    return getDefaultPanels();
+  });
   const [isSaving, setIsSaving] = useState(false);
   const [showCustomizeModal, setShowCustomizeModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'metrics' | 'grids' | 'trash' | 'settings'>('metrics');
@@ -896,7 +915,7 @@ export default function DashboardTab({
     };
 
     fetchDirectStats();
-    const restPollInterval = setInterval(fetchDirectStats, 2000);
+    const restPollInterval = setInterval(fetchDirectStats, 8000);
 
     return () => {
       clearInterval(restPollInterval);
@@ -940,6 +959,8 @@ export default function DashboardTab({
           }
           setKpis(loadedKpis);
           setPanels(loadedPanels);
+          localStorage.setItem(`dashboard_kpis_${userId}`, JSON.stringify(loadedKpis));
+          localStorage.setItem(`dashboard_panels_${userId}`, JSON.stringify(loadedPanels));
         } else {
           // If the MongoDB document doesn't exist, use default layouts locally without auto-inserting into DB
           const kpisInit = getDefaultKPIs(termObj);
@@ -949,10 +970,6 @@ export default function DashboardTab({
         }
       } catch (err) {
         console.warn("Failed to load dashboard layout preference:", err);
-        // Fallback to local default layouts
-        const termObj = { personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, siteLabel, organizationType };
-        setKpis(getDefaultKPIs(termObj));
-        setPanels(getDefaultPanels());
       }
     };
     fetchLayout();
@@ -2499,71 +2516,6 @@ export default function DashboardTab({
           Customize Layout
         </button>
       </div>
-
-      {/* Real-time AI Intelligence Engine, External People Tracking UHF API & MongoDB 10-Day Retention Banner */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-800 to-indigo-950 text-white rounded-xl p-4 shadow-sm border border-slate-700/60 flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4 shrink-0">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-indigo-500/20 border border-indigo-400/30 flex items-center justify-center shrink-0">
-            <Sparkles className="w-5 h-5 text-indigo-400 animate-pulse" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-sm text-slate-100">Multi-AI Intelligence Engine:</span>
-              <span className="px-2 py-0.5 rounded-full text-xs font-bold uppercase tracking-wider bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping" />
-                {aiProviderStatus?.activeProvider ? aiProviderStatus.activeProvider.toUpperCase() : 'GEMINI'} AI ACTIVE
-              </span>
-              <span className="text-xs text-slate-400 font-mono">({aiProviderStatus?.activeModel || 'gemini-2.0-flash'})</span>
-            </div>
-            <div className="flex items-center gap-2 text-xs text-slate-300 mt-1 flex-wrap">
-              <span className="flex items-center gap-1 text-sky-400 font-semibold">
-                <Radio className="w-3.5 h-3.5 text-sky-400 animate-pulse" />
-                Live UHF Server:
-              </span>
-              <span className="font-mono text-[11px] text-slate-300 bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700">
-                {externalApiStatus?.host || 'https://www.i360services.com/peopletrackinguhf'}
-              </span>
-              <span className="text-emerald-400 font-bold">
-                • {externalApiStatus?.status?.totalHistoryCount ? externalApiStatus.status.totalHistoryCount.toLocaleString() : '75,462+'} Total History Records
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2.5 self-stretch lg:self-auto justify-between lg:justify-end border-t lg:border-t-0 border-slate-700/60 pt-3 lg:pt-0 flex-wrap">
-          <button
-            onClick={handleSyncExternalApi}
-            disabled={isSyncingApi}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-bold shadow transition cursor-pointer"
-            title="Fetch latest real-time tags and history records and analyze with AI"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${isSyncingApi ? 'animate-spin' : ''}`} />
-            {isSyncingApi ? 'Syncing...' : 'Sync Live API'}
-          </button>
-
-          <div className="flex items-center gap-2 px-3 py-1.5 bg-slate-800/90 border border-slate-700 rounded-lg text-xs">
-            <Database className="w-4 h-4 text-emerald-400" />
-            <div>
-              <div className="font-bold text-slate-200 text-[11px]">MongoDB 10-Day Retention</div>
-              <div className="text-[10px] text-emerald-400 font-semibold">Auto-Delete via TTL Active (864,000s)</div>
-            </div>
-          </div>
-
-          {latestAnalytics && (
-            <div className="hidden xl:flex flex-col text-right pl-2 border-l border-slate-700/60">
-              <span className="text-[10px] text-slate-400 font-medium">Compliance Index</span>
-              <span className="text-sm font-black text-emerald-400">{latestAnalytics.overallComplianceScore || 98}%</span>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {syncFeedback && (
-        <div className="bg-sky-500/10 border border-sky-400/30 text-sky-200 px-3.5 py-2 rounded-lg text-xs font-medium flex items-center justify-between animate-fadeIn shrink-0">
-          <span>{syncFeedback}</span>
-          <button onClick={() => setSyncFeedback(null)} className="text-sky-400 hover:text-white font-bold ml-2">×</button>
-        </div>
-      )}
 
       {/* Dynamic KPI Cards Row (3 Rows x 4 Columns) */}
       {sortedVisibleKpis.length > 0 ? (

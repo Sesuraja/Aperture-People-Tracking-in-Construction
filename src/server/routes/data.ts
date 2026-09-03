@@ -221,8 +221,23 @@ dataRouter.post('/zones/batch', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// POST /api/data/:collection (upsert)
+// POST & PUT /api/data/:collection (upsert)
 dataRouter.post('/:collection', async (req: AuthRequest, res: Response) => {
+  return handleCollectionUpsert(req, res);
+});
+dataRouter.put('/:collection', async (req: AuthRequest, res: Response) => {
+  return handleCollectionUpsert(req, res);
+});
+
+// POST & PUT /api/data/:collection/:id
+dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
+  return handleCollectionItemUpsert(req, res);
+});
+dataRouter.put('/:collection/:id', async (req: AuthRequest, res: Response) => {
+  return handleCollectionItemUpsert(req, res);
+});
+
+const handleCollectionUpsert = async (req: AuthRequest, res: Response) => {
   const { collection } = req.params;
   const user = req.user;
   const orgId = user?.organizationId || 'default';
@@ -282,10 +297,9 @@ dataRouter.post('/:collection', async (req: AuthRequest, res: Response) => {
     console.error(`[Data Route] Error upserting in ${collection}:`, err);
     return res.status(500).json({ error: `Failed to save document in ${collection}` });
   }
-});
+};
 
-// POST /api/data/:collection/:id
-dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
+const handleCollectionItemUpsert = async (req: AuthRequest, res: Response) => {
   const { collection, id } = req.params;
   const user = req.user;
   const orgId = user?.organizationId || 'default';
@@ -355,7 +369,7 @@ dataRouter.post('/:collection/:id', async (req: AuthRequest, res: Response) => {
     console.error(`[Data Route] Error updating doc ${id} in ${collection}:`, err);
     return res.status(500).json({ error: 'Failed to update document' });
   }
-});
+};
 
 // DELETE /api/data/:collection/:id
 dataRouter.delete('/:collection/:id', async (req: AuthRequest, res: Response) => {

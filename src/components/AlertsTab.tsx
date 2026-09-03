@@ -415,12 +415,12 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       };
 
       setAlertList(prev => {
-        const tag = (newWsAlert.evidence?.rfidTagId || newWsAlert.tagId || 'general').toString().trim().toUpperCase();
+        const tag = (newWsAlert.evidence?.rfidTagId || (newWsAlert as any).tagId || 'general').toString().trim().toUpperCase();
         const titleKey = (newWsAlert.title || newWsAlert.message || 'alert').trim().toLowerCase();
         const key = `${tag}_${titleKey}`;
 
         const filtered = prev.filter(a => {
-          const aTag = (a.evidence?.rfidTagId || a.tagId || 'general').toString().trim().toUpperCase();
+          const aTag = (a.evidence?.rfidTagId || (a as any).tagId || 'general').toString().trim().toUpperCase();
           const aTitle = (a.title || a.message || 'alert').trim().toLowerCase();
           return a.id !== newWsAlert.id && `${aTag}_${aTitle}` !== key;
         });
@@ -430,7 +430,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       setNotificationMsg({ type: newWsAlert.priority === 'Critical' ? 'error' : 'info', text: `⚡ AI ALERT: ${newWsAlert.title}` });
     } else if (msg.type === 'alert_acknowledged') {
       const p = msg.payload || {};
-      setAlertList(prev => prev.map(a => a.id === p.alertId ? { ...a, status: 'In Progress' } : a).sort((a, b) => getTimestampMs(b.timestamp) - getTimestampMs(a.timestamp)));
+      setAlertList(prev => prev.map(a => a.id === p.alertId ? { ...a, status: 'In Progress' as AlertStatus } : a).sort((a, b) => getTimestampMs(b.timestamp) - getTimestampMs(a.timestamp)));
       setNotificationMsg({ type: 'info', text: `⚡ WS Alert ${p.alertId} acknowledged` });
     }
   }, []);
@@ -522,7 +522,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       const dedupMap = new Map<string, AIAlert>();
 
       baseAlerts.forEach(a => {
-        const tag = (a.evidence?.rfidTagId || a.tagId || (a as any).tag || (a as any).rfidTag || 'general').toString().trim().toUpperCase();
+        const tag = (a.evidence?.rfidTagId || (a as any).tagId || (a as any).tag || (a as any).rfidTag || 'general').toString().trim().toUpperCase();
         const titleKey = (a.title || a.message || 'alert').trim().toLowerCase();
         const key = `${tag}_${titleKey}`;
 

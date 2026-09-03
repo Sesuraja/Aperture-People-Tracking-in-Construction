@@ -1,4 +1,4 @@
-import { getCollectionDocs, upsertDoc } from './db.js';
+import { getCollectionDocs, upsertDoc, bulkWriteRealtimeTags, savePlaybackSnapshot } from './db.js';
 import { processTelemetryWithAI, TelemetryPayload } from './aiPipeline.js';
 
 let runtimeHostOverride: string | null = null;
@@ -302,18 +302,48 @@ export async function syncPeopleTrackingData(options?: {
     }
 
     // 2. Fetch real-time tags
+    // 2. Fetch real-time tags and persist to MongoDB
     if (doRealtime) {
       try {
         realtimeTags = await fetchTagsInRealtime(host);
+        if (realtimeTags.length > 0) {
+          await bulkWriteRealtimeTags(realtimeTags, orgId).catch(() => {});
+        }
       } catch (e: any) {
         console.warn('[PeopleTrackingAPI] Real-time tags fetch warning:', e.message);
       }
     }
 
-    // 3. Fetch latest history records
+    // 3. Fetch latest history records and persist to MongoDB
     if (doHistory) {
       try {
         historyRecords = await fetchHistoryRecords(0, historyTake, host);
+        if (historyRecords.length > 0) {
+          for (const rec of historyRecords) {
+            const enter = rec.EnterTime || rec.enterTime || new Date().toISOString();
+            const docId = `hist_${rec.TagID}_${String(enter).replace(/[: ]/g, '_')}`;
+            const recordDoc = {
+              id: docId,
+              organizationId: orgId,
+              TagID: rec.TagID,
+              tagId: rec.TagID,
+              FirstName: rec.FirstName || '',
+              LastName: rec.LastName || '',
+              name: `${rec.FirstName || ''} ${rec.LastName || ''}`.trim() || `Personnel ${rec.TagID}`,
+              LocationName: rec.LocationName || rec.Location || 'Site Area',
+              Location: rec.LocationName || rec.Location || 'Site Area',
+              EnterTime: enter,
+              LeaveTime: rec.LeaveTime || 'ACTIVE',
+              EnterTimeStr: enter,
+              LeaveTimeStr: rec.LeaveTime || 'ACTIVE',
+              Duration: rec.Duration || 0,
+              timestamp: enter,
+              createdAt: new Date().toISOString()
+            };
+            await upsertDoc('tag_history', recordDoc, orgId).catch(() => {});
+            await upsertDoc('history_records', recordDoc, orgId).catch(() => {});
+          }
+        }
       } catch (e: any) {
         console.warn('[PeopleTrackingAPI] History records fetch warning:', e.message);
       }

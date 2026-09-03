@@ -3447,6 +3447,10 @@ async function syncPeopleTrackingData(options) {
     if (doRealtime) {
       try {
         realtimeTags = await fetchTagsInRealtime(host);
+        if (realtimeTags.length > 0) {
+          await bulkWriteRealtimeTags(realtimeTags, orgId).catch(() => {
+          });
+        }
       } catch (e) {
         console.warn("[PeopleTrackingAPI] Real-time tags fetch warning:", e.message);
       }
@@ -3454,6 +3458,34 @@ async function syncPeopleTrackingData(options) {
     if (doHistory) {
       try {
         historyRecords = await fetchHistoryRecords(0, historyTake, host);
+        if (historyRecords.length > 0) {
+          for (const rec of historyRecords) {
+            const enter = rec.EnterTime || rec.enterTime || (/* @__PURE__ */ new Date()).toISOString();
+            const docId = `hist_${rec.TagID}_${String(enter).replace(/[: ]/g, "_")}`;
+            const recordDoc = {
+              id: docId,
+              organizationId: orgId,
+              TagID: rec.TagID,
+              tagId: rec.TagID,
+              FirstName: rec.FirstName || "",
+              LastName: rec.LastName || "",
+              name: `${rec.FirstName || ""} ${rec.LastName || ""}`.trim() || `Personnel ${rec.TagID}`,
+              LocationName: rec.LocationName || rec.Location || "Site Area",
+              Location: rec.LocationName || rec.Location || "Site Area",
+              EnterTime: enter,
+              LeaveTime: rec.LeaveTime || "ACTIVE",
+              EnterTimeStr: enter,
+              LeaveTimeStr: rec.LeaveTime || "ACTIVE",
+              Duration: rec.Duration || 0,
+              timestamp: enter,
+              createdAt: (/* @__PURE__ */ new Date()).toISOString()
+            };
+            await upsertDoc("tag_history", recordDoc, orgId).catch(() => {
+            });
+            await upsertDoc("history_records", recordDoc, orgId).catch(() => {
+            });
+          }
+        }
       } catch (e) {
         console.warn("[PeopleTrackingAPI] History records fetch warning:", e.message);
       }
@@ -6643,6 +6675,18 @@ dataRouter.post("/zones/batch", async (req, res) => {
   }
 });
 dataRouter.post("/:collection", async (req, res) => {
+  return handleCollectionUpsert(req, res);
+});
+dataRouter.put("/:collection", async (req, res) => {
+  return handleCollectionUpsert(req, res);
+});
+dataRouter.post("/:collection/:id", async (req, res) => {
+  return handleCollectionItemUpsert(req, res);
+});
+dataRouter.put("/:collection/:id", async (req, res) => {
+  return handleCollectionItemUpsert(req, res);
+});
+var handleCollectionUpsert = async (req, res) => {
   const { collection } = req.params;
   const user = req.user;
   const orgId = user?.organizationId || "default";
@@ -6700,8 +6744,8 @@ dataRouter.post("/:collection", async (req, res) => {
     console.error(`[Data Route] Error upserting in ${collection}:`, err);
     return res.status(500).json({ error: `Failed to save document in ${collection}` });
   }
-});
-dataRouter.post("/:collection/:id", async (req, res) => {
+};
+var handleCollectionItemUpsert = async (req, res) => {
   const { collection, id } = req.params;
   const user = req.user;
   const orgId = user?.organizationId || "default";
@@ -6767,7 +6811,7 @@ dataRouter.post("/:collection/:id", async (req, res) => {
     console.error(`[Data Route] Error updating doc ${id} in ${collection}:`, err);
     return res.status(500).json({ error: "Failed to update document" });
   }
-});
+};
 dataRouter.delete("/:collection/:id", async (req, res) => {
   const collection = req.params.collection;
   const rawId = req.params.id;

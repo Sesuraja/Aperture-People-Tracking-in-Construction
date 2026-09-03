@@ -224,7 +224,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'workers' | 'visitors' | 'equipment' | 'vehicles' | 'readers'>('all');
   const [selectedZoneFilter, setSelectedZoneFilter] = useState<string>('all');
   const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [filterByDateEnabled, setFilterByDateEnabled] = useState(true);
+  const [filterByDateEnabled, setFilterByDateEnabled] = useState(false);
   const [isAiSummaryOpen, setIsAiSummaryOpen] = useState(false);
   const [aiSummaryContent, setAiSummaryContent] = useState<string | null>(null);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
@@ -342,14 +342,12 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
   const fetchDbHistory = async () => {
     setIsDbLoading(true);
     try {
-      const [historySnap, attendanceSnap, registeredPeopleSnap, peopleSnap, eventsSnap, visitorsSnap, framesRes] = await Promise.allSettled([
+      const [historySnap, registeredPeopleSnap, peopleSnap, visitorsSnap, restHistoryRes] = await Promise.allSettled([
         getDocs(collection(db, 'tag_history')),
-        getDocs(collection(db, 'attendance_logs')),
         getDocs(collection(db, 'registered_people')),
         getDocs(collection(db, 'people')),
-        getDocs(collection(db, 'rfid_realtime_events')),
         getDocs(collection(db, 'visitors')),
-        fetch(`/api/data/playback_frames?date=${selectedDate}`).then(r => r.ok ? r.json() : null)
+        fetch('/api/GetHistoryRecords/0/150').then(r => r.ok ? r.json() : [])
       ]);
 
       // Build local people lookup
@@ -383,12 +381,17 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
         return resolvePersonEntity(tagId, rawData, localPeopleMap, personnelSingular);
       };
 
-      // 1. Tag History records
+      // 1. Tag History records from MongoDB
       if (historySnap.status === 'fulfilled' && historySnap.value?.docs) {
         historySnap.value.docs.forEach((doc: any) => {
           const data = doc.data();
           if (data) {
-            const tagId = data.TagID || data.tagId || data.epc || doc.id;
+            const rawTagId = data.TagID || data.tagId || data.epc || doc.id;
+            // Exclude synthetic attendance or frame tags
+            if (String(rawTagId).startsWith('att_') || String(rawTagId).startsWith('ATT-') || String(rawTagId).startsWith('FRAME_')) {
+              return;
+            }
+            const tagId = String(rawTagId);
             const entity = resolveEntity(tagId, data);
             const enter = data.EnterTime || data.EnterTimeStr || (data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : String(data.timestamp || ''));
             const leave = data.LeaveTime || data.LeaveTimeStr || 'ACTIVE';
@@ -413,54 +416,27 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
         });
       }
 
-      // 2. Attendance Logs
-      if (attendanceSnap.status === 'fulfilled' && attendanceSnap.value?.docs) {
-        attendanceSnap.value.docs.forEach((doc: any) => {
-          const data = doc.data();
-          if (data) {
-            const tagId = data.tagId || data.TagID || data.personId || doc.id;
-            const entity = resolveEntity(tagId, data);
-            const enter = data.clockInTime || (data.timestamp?.toDate ? data.timestamp.toDate().toISOString() : String(data.timestamp || ''));
-            const leave = data.clockOutTime || 'ACTIVE';
-            const durationStr = formatDurationMinutes(enter, leave, data.hoursWorked);
+      // 2. Direct REST History records from API
+      if (restHistoryRes.status === 'fulfilled' && Array.isArray(restHistoryRes.value)) {
+        restHistoryRes.value.forEach((rec: any, idx: number) => {
+          if (rec.TagID || rec.tagId) {
+            const rawTagId = rec.TagID || rec.tagId || `TAG_${idx}`;
+            if (String(rawTagId).startsWith('att_') || String(rawTagId).startsWith('ATT-') || String(rawTagId).startsWith('FRAME_')) {
+              return;
+            }
+            const tagId = String(rawTagId);
+            const entity = resolveEntity(tagId, rec);
+            const enter = rec.EnterTime || rec.EnterTimeStr || rec.timestamp || new Date().toISOString();
+            const leave = rec.LeaveTime || rec.LeaveTimeStr || 'ACTIVE';
+            const durationStr = formatDurationMinutes(enter, leave, rec.Duration);
 
             combinedRecords.push({
-              id: doc.id,
+              id: `api_rest_${tagId}_${enter}`,
               TagID: tagId,
               FirstName: entity.firstName,
               LastName: entity.lastName,
               fullName: entity.fullName,
-              LocationName: data.zone || data.location || data.siteZone || 'Access Portal',
-              EnterTimeStr: enter,
-              LeaveTimeStr: leave,
-              Duration: durationStr,
-              role: entity.role,
-              category: entity.category,
-              isVisitor: entity.isVisitor,
-              rawDate: enter ? new Date(enter) : new Date()
-            });
-          }
-        });
-      }
-
-      // 3. Registered People & Visitors active presence
-      if (registeredPeopleSnap.status === 'fulfilled' && registeredPeopleSnap.value?.docs) {
-        registeredPeopleSnap.value.docs.forEach((doc: any) => {
-          const data = doc.data();
-          if (data) {
-            const tagId = data.hardhatTagId || data.tagId || data.TagID || doc.id;
-            const entity = resolveEntity(tagId, data);
-            const enter = data.lastSeen ? (data.lastSeen.toDate ? data.lastSeen.toDate().toISOString() : String(data.lastSeen)) : new Date().toISOString();
-            const leave = data.shiftStatus === 'OFF_SITE' ? 'Completed' : 'ACTIVE';
-            const durationStr = formatDurationMinutes(enter, leave, typeof data.dwellTime === 'number' ? data.dwellTime : 30);
-
-            combinedRecords.push({
-              id: doc.id,
-              TagID: tagId,
-              FirstName: entity.firstName,
-              LastName: entity.lastName,
-              fullName: entity.fullName,
-              LocationName: data.currentZone || data.location || 'Main Site Sector',
+              LocationName: rec.LocationName || rec.Location || 'Site Area',
               EnterTimeStr: enter,
               LeaveTimeStr: leave,
               Duration: durationStr,
@@ -468,61 +444,6 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
               category: entity.category,
               isVisitor: entity.isVisitor,
               rawDate: new Date(enter)
-            });
-          }
-        });
-      }
-
-      // 4. RFID Real-time telemetry events
-      if (eventsSnap.status === 'fulfilled' && eventsSnap.value?.docs) {
-        eventsSnap.value.docs.forEach((doc: any) => {
-          const data = doc.data();
-          if (data && data.tagId) {
-            const entity = resolveEntity(data.tagId, data);
-            const enter = data.timestamp ? (data.timestamp.toDate ? data.timestamp.toDate().toISOString() : String(data.timestamp)) : new Date().toISOString();
-
-            combinedRecords.push({
-              id: doc.id,
-              TagID: data.tagId,
-              FirstName: entity.firstName,
-              LastName: entity.lastName,
-              fullName: entity.fullName,
-              LocationName: data.zoneName || data.readerName || data.Location || 'Portal Antenna',
-              EnterTimeStr: enter,
-              LeaveTimeStr: 'ACTIVE',
-              Duration: '5 mins (Active)',
-              role: entity.role,
-              category: entity.category,
-              isVisitor: entity.isVisitor,
-              rawDate: new Date(enter)
-            });
-          }
-        });
-      }
-
-      // 5. Playback Frames from Backend
-      if (framesRes.status === 'fulfilled' && framesRes.value?.frames) {
-        framesRes.value.frames.forEach((frame: any) => {
-          if (Array.isArray(frame.tags)) {
-            frame.tags.forEach((tag: any, idx: number) => {
-              const tagId = tag.tagId || tag.TagID || `FRAME_TAG_${idx}`;
-              const entity = resolveEntity(tagId, tag);
-              const enter = frame.timestamp || new Date().toISOString();
-              combinedRecords.push({
-                id: `frame_${frame.id || frame.timestamp}_${tagId}`,
-                TagID: tagId,
-                FirstName: entity.firstName,
-                LastName: entity.lastName,
-                fullName: entity.fullName,
-                LocationName: tag.location || tag.zone || 'Site Sector',
-                EnterTimeStr: enter,
-                LeaveTimeStr: tag.status === 'Active' ? 'ACTIVE' : 'Completed',
-                Duration: '10 mins',
-                role: entity.role,
-                category: entity.category,
-                isVisitor: entity.isVisitor,
-                rawDate: new Date(enter)
-              });
             });
           }
         });
@@ -553,7 +474,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
     fetchDbHistory();
     const interval = setInterval(() => {
       fetchDbHistory();
-    }, 2000);
+    }, 4000);
     return () => clearInterval(interval);
   }, [registeredPeopleMap, selectedDate]);
 
@@ -561,15 +482,17 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
   useEffect(() => {
     if (apiRecords && apiRecords.length > 0) {
       apiRecords.forEach(rec => {
-        if (rec.TagID && rec.EnterTime) {
+        if (rec.TagID && (rec.EnterTime || rec.EnterTimeStr)) {
           const entity = resolvePersonEntity(rec.TagID, rec, registeredPeopleMap, personnelSingular);
           const fullName = entity.fullName;
           const parts = fullName.split(' ');
           const role = entity.role;
           const isVisitor = entity.isVisitor;
-          const durationStr = formatDurationMinutes(rec.EnterTime, rec.LeaveTime, rec.Duration);
+          const enter = rec.EnterTime || rec.EnterTimeStr || new Date().toISOString();
+          const leave = rec.LeaveTime || rec.LeaveTimeStr || 'ACTIVE';
+          const durationStr = formatDurationMinutes(enter, leave, rec.Duration);
 
-          const docId = `hist_${rec.TagID}_${String(rec.EnterTime).replace(/[: ]/g, '_')}`;
+          const docId = `hist_${rec.TagID}_${String(enter).replace(/[: ]/g, '_')}`;
           setDoc(doc(db, 'tag_history', docId), {
             id: docId,
             TagID: rec.TagID,
@@ -581,12 +504,12 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
             isVisitor,
             category: isVisitor ? 'visitors' : 'workers',
             LocationName: rec.LocationName || rec.Location || 'Site Area',
-            EnterTime: rec.EnterTime,
-            LeaveTime: rec.LeaveTime || 'ACTIVE',
-            EnterTimeStr: rec.EnterTime,
-            LeaveTimeStr: rec.LeaveTime || 'ACTIVE',
+            EnterTime: enter,
+            LeaveTime: leave,
+            EnterTimeStr: enter,
+            LeaveTimeStr: leave,
             Duration: durationStr,
-            timestamp: rec.EnterTime,
+            timestamp: enter,
             createdAt: new Date().toISOString()
           }).catch(() => {});
         }
@@ -594,35 +517,47 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
     }
   }, [apiRecords, registeredPeopleMap, personnelSingular]);
 
-  // Combined master records
+  // Combined master records (merges MongoDB records & real-time API logs)
   const allRecords = useMemo(() => {
-    if (dbRecords && dbRecords.length > 0) return dbRecords;
-    if (apiRecords && apiRecords.length > 0) {
-      return apiRecords.map((r: any, idx: number) => {
-        const tagId = r.TagID || r.id || `TAG-${idx}`;
-        const entity = resolvePersonEntity(tagId, r, registeredPeopleMap, personnelSingular);
-        const enter = r.EnterTime || r.EnterTimeStr || r.Timestamp || new Date().toLocaleString();
-        const leave = r.LeaveTime || r.LeaveTimeStr || 'ACTIVE';
-        const durationStr = formatDurationMinutes(enter, leave, r.Duration);
+    const map = new Map<string, any>();
 
-        return {
-          id: r.id || `api-${idx}`,
-          TagID: tagId,
-          FirstName: entity.firstName,
-          LastName: entity.lastName,
-          fullName: entity.fullName,
-          LocationName: r.LocationName || r.Location || 'Site Area',
-          EnterTimeStr: enter,
-          LeaveTimeStr: leave,
-          Duration: durationStr,
-          role: entity.role,
-          category: entity.category,
-          isVisitor: entity.isVisitor,
-          rawDate: new Date()
-        };
+    // 1. Ingest API history logs
+    (apiRecords || []).forEach((r: any, idx: number) => {
+      const tagId = r.TagID || r.id || `TAG-${idx}`;
+      const entity = resolvePersonEntity(tagId, r, registeredPeopleMap, personnelSingular);
+      const enter = r.EnterTime || r.EnterTimeStr || r.Timestamp || new Date().toISOString();
+      const leave = r.LeaveTime || r.LeaveTimeStr || 'ACTIVE';
+      const durationStr = formatDurationMinutes(enter, leave, r.Duration);
+      const key = `${tagId}_${enter}`;
+
+      map.set(key, {
+        id: r.id || `api-${idx}`,
+        TagID: tagId,
+        FirstName: entity.firstName,
+        LastName: entity.lastName,
+        fullName: entity.fullName,
+        LocationName: r.LocationName || r.Location || 'Site Area',
+        EnterTimeStr: enter,
+        LeaveTimeStr: leave,
+        Duration: durationStr,
+        role: entity.role,
+        category: entity.category,
+        isVisitor: entity.isVisitor,
+        rawDate: new Date(enter)
       });
-    }
-    return [];
+    });
+
+    // 2. Ingest and merge with MongoDB history documents
+    (dbRecords || []).forEach((r: any) => {
+      const tagId = r.TagID || r.id;
+      const enter = r.EnterTimeStr || r.EnterTime || (r.rawDate ? new Date(r.rawDate).toISOString() : new Date().toISOString());
+      const key = `${tagId}_${enter}`;
+      map.set(key, { ...r, EnterTimeStr: enter });
+    });
+
+    const combined = Array.from(map.values());
+    combined.sort((a, b) => new Date(b.EnterTimeStr || b.rawDate || 0).getTime() - new Date(a.EnterTimeStr || a.rawDate || 0).getTime());
+    return combined;
   }, [dbRecords, apiRecords, registeredPeopleMap, personnelSingular]);
 
   // Extract unique zones for filtering

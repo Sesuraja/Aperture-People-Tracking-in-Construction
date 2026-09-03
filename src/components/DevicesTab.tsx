@@ -173,14 +173,33 @@ export default function DevicesTab() {
     const mergeAndSet = () => {
       if (!isMounted) return;
       const devMap = new Map<string, DeviceItem>();
-      // 1. Hardware readers from MongoDB
-      hardwareReadersList.forEach(d => devMap.set(d.id, d));
-      // 2. Devices collection
-      devList.forEach(d => devMap.set(d.id, d));
-      // 3. Real-time active RFID tags & hardware badges
-      workerTagsList.forEach(d => devMap.set(d.id, d));
+      // 1. Baseline: Live Active Tag Telemetry
       liveTagsList.forEach(d => {
-        if (!devMap.has(d.id)) devMap.set(d.id, d);
+        if (d.id) devMap.set(d.id.toUpperCase(), d);
+      });
+      // 2. Baseline: Worker Wearable RFID Badges
+      workerTagsList.forEach(d => {
+        if (d.id) {
+          const idKey = d.id.toUpperCase();
+          const existing = devMap.get(idKey);
+          devMap.set(idKey, existing ? { ...existing, ...d } : d);
+        }
+      });
+      // 3. Hardware Readers from MongoDB
+      hardwareReadersList.forEach(d => {
+        if (d.id) {
+          const idKey = d.id.toUpperCase();
+          const existing = devMap.get(idKey);
+          devMap.set(idKey, existing ? { ...existing, ...d, name: d.name || existing.name } : d);
+        }
+      });
+      // 4. Devices collection from MongoDB (HIGHEST PRIORITY - User configured names always win)
+      devList.forEach(d => {
+        if (d.id) {
+          const idKey = d.id.toUpperCase();
+          const existing = devMap.get(idKey);
+          devMap.set(idKey, existing ? { ...existing, ...d, name: d.name || existing.name } : d);
+        }
       });
 
       setDevices(Array.from(devMap.values()));
