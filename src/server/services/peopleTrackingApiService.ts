@@ -24,27 +24,13 @@ let lastBatchFingerprint: string = '';
 let lastAiProcessedAt: number = 0;
 
 /**
- * Dynamically resolves the API host without hardcoding.
+ * Dynamically resolves the API host.
  * Priority:
- * 1. Runtime override (set via API/UI)
- * 2. MongoDB settings document ('people_tracking_api')
- * 3. Environment variable PEOPLE_TRACKING_API_HOST
- * 4. Environment variable APERTURE_RFID_HOST
- * 5. Default fallback ('https://www.i360services.com/peopletrackinguhf')
+ * 1. Environment variable PEOPLE_TRACKING_API_HOST (.env)
+ * 2. Environment variable APERTURE_RFID_HOST (.env)
+ * 3. Runtime override (set via API/UI)
  */
 export async function getPeopleTrackingApiHost(): Promise<string> {
-  if (runtimeHostOverride && runtimeHostOverride.trim()) {
-    return runtimeHostOverride.trim().replace(/\/+$/, '');
-  }
-
-  try {
-    const settings = await getCollectionDocs('settings');
-    const apiSetting = settings.find((s: any) => s.id === 'people_tracking_api' || s._id === 'people_tracking_api');
-    if (apiSetting?.host && typeof apiSetting.host === 'string' && apiSetting.host.trim()) {
-      return apiSetting.host.trim().replace(/\/+$/, '');
-    }
-  } catch {}
-
   if (process.env.PEOPLE_TRACKING_API_HOST && process.env.PEOPLE_TRACKING_API_HOST.trim()) {
     return process.env.PEOPLE_TRACKING_API_HOST.trim().replace(/\/+$/, '');
   }
@@ -53,7 +39,11 @@ export async function getPeopleTrackingApiHost(): Promise<string> {
     return process.env.APERTURE_RFID_HOST.trim().replace(/\/+$/, '');
   }
 
-  return 'https://www.i360services.com/peopletrackinguhf';
+  if (runtimeHostOverride && runtimeHostOverride.trim()) {
+    return runtimeHostOverride.trim().replace(/\/+$/, '');
+  }
+
+  return '';
 }
 
 /**
@@ -84,6 +74,9 @@ export async function setPeopleTrackingApiHost(newHost: string): Promise<string>
  */
 export async function fetchHistoryTotalCount(customHost?: string): Promise<{ totalCount: number; raw: string; latencyMs: number }> {
   const host = customHost || await getPeopleTrackingApiHost();
+  if (!host) {
+    throw new Error('API host URL is not configured. Please define PEOPLE_TRACKING_API_HOST in your .env file.');
+  }
   const url = `${host}/api/GetHistoryTotalCount`;
   const startTime = Date.now();
 
@@ -128,6 +121,9 @@ export async function fetchHistoryRecords(
   customHost?: string
 ): Promise<any[]> {
   const host = customHost || await getPeopleTrackingApiHost();
+  if (!host) {
+    throw new Error('API host URL is not configured. Please define PEOPLE_TRACKING_API_HOST in your .env file.');
+  }
   const skip = Math.max(0, Math.floor(skipCount));
   // The max value for TakeCount is 200 per GAO cloud server specification
   const take = Math.min(Math.max(1, Math.floor(takeCount)), 200);
@@ -211,6 +207,9 @@ export async function fetchAllHistoryRecordsPaged(
  */
 export async function fetchTagsInRealtime(customHost?: string): Promise<any[]> {
   const host = customHost || await getPeopleTrackingApiHost();
+  if (!host) {
+    throw new Error('API host URL is not configured. Please define PEOPLE_TRACKING_API_HOST in your .env file.');
+  }
   const url = `${host}/api/GetTagsInRealtime`;
 
   const controller = new AbortController();

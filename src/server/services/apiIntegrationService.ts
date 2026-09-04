@@ -149,10 +149,12 @@ export function extractTelemetryFromPayload(data: any, mapping?: ThirdPartyApiCo
  * 1. Test Third-Party API connection (GET or POST)
  */
 export async function testThirdPartyApi(config: Partial<ThirdPartyApiConfig>): Promise<ApiTestResult> {
+  const envHost = (process.env.PEOPLE_TRACKING_API_HOST || process.env.APERTURE_RFID_HOST || '').trim().replace(/\/+$/, '');
+  const defaultEndpoint = envHost ? `${envHost}/api/GetTagsInRealtime` : '';
   const fullConfig: ThirdPartyApiConfig = {
     id: config.id || 'test_api',
     name: config.name || 'Test API Endpoint',
-    endpointUrl: config.endpointUrl || 'https://www.i360services.com/peopletrackinguhf/api/GetTagsInRealtime',
+    endpointUrl: config.endpointUrl || defaultEndpoint,
     method: config.method || 'GET',
     authType: config.authType || 'none',
     apiKey: config.apiKey,
