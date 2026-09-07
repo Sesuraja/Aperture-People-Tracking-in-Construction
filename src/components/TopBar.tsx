@@ -1,10 +1,11 @@
-import { Download, Sun, Moon, Calendar, Bell, Search, Command, Database, ShieldCheck, Building2, Sparkles } from 'lucide-react';
+import { Download, Sun, Moon, Calendar, Bell, Search, Command, Database, ShieldCheck, Building2, Sparkles, Clock } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useContext } from 'react';
 import { AppModeContext } from '../App';
 import ExportReportModal from './ExportReportModal';
 import { ApertureLogoMark } from './ApertureLogo';
 import { useTerminology } from '../context/TrackingContext';
+import { useEdtClock } from '../lib/dateTimeUtils';
 
 interface TopBarProps {
   onOpenCommandPalette?: () => void;
@@ -27,6 +28,7 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
   const [orgInfo, setOrgInfo] = useState<{ id: string; name: string } | null>(null);
   const { mode } = useContext(AppModeContext);
   const { config, personnelPlural } = useTerminology();
+  const edtClock = useEdtClock(1000);
 
   // Real-time MongoDB and Server Health state
   const [dbStatus, setDbStatus] = useState<MongoStatus>({
@@ -206,11 +208,23 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
           </div>
         )}
 
-        {/* Date Display Card (Visible on extra-large screens) */}
-        <div className="hidden 2xl:flex items-center gap-2 px-3 py-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 shadow-2xs text-xs whitespace-nowrap shrink-0">
-          <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-          <span className="font-semibold text-xs whitespace-nowrap">
-            {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+        {/* REAL-TIME LIVE EDT CLOCK WIDGET */}
+        <div 
+          className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 text-slate-700 dark:text-slate-200 shadow-2xs text-xs whitespace-nowrap shrink-0"
+          title={`System Real-Time Clock: Eastern Daylight Time (EDT, UTC-4)\nDate: ${edtClock.dateLong}`}
+        >
+          <div className="flex items-center gap-1.5">
+            <Clock className="w-3.5 h-3.5 text-[#007BC4] animate-pulse shrink-0" />
+            <span className="font-mono font-bold text-xs tracking-tight text-slate-900 dark:text-white">
+              {edtClock.timeNoSuffix}
+            </span>
+          </div>
+          <span className="flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded-md border border-emerald-300/60 dark:border-emerald-700/50">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
+            EDT LIVE
+          </span>
+          <span className="hidden xl:inline-block text-[11px] text-slate-400 font-medium pl-1 border-l border-slate-200 dark:border-slate-700">
+            {edtClock.dateStr}
           </span>
         </div>
 

@@ -28,6 +28,7 @@ import {
   Info
 } from "lucide-react";
 import { useTracking, useTerminology } from "../context/TrackingContext";
+import { formatEdtTime } from "../lib/dateTimeUtils";
 import { IndustryConfig, INDUSTRY_PRESETS } from "../constants/industryPresets";
 
 const PRESET_ICONS: Record<string, any> = {
@@ -182,7 +183,7 @@ export default function IndustryConfigurationSection() {
             <span>{saveToast}</span>
           </div>
           <span className="text-[10px] text-emerald-600 font-mono">
-            {new Date().toLocaleTimeString()}
+            {formatEdtTime(new Date())}
           </span>
         </div>
       )}

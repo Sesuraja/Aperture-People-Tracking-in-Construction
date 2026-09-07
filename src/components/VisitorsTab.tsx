@@ -13,6 +13,7 @@ import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 import VisitorCheckInForm from './VisitorCheckInForm';
 import VisitorQrGenerator from './VisitorQrGenerator';
 import { useTracking, useTerminology } from '../context/TrackingContext';
+import { formatEdtTime } from '../lib/dateTimeUtils';
 
 export interface VisitorRecord {
   id: string;
@@ -310,7 +311,7 @@ export default function VisitorsTab() {
       const updatedData = {
         status: 'Active' as const,
         tag: tagId,
-        time: `Arrived ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        time: `Arrived ${formatEdtTime(new Date(), { includeSeconds: false })}`,
         location: 'Site Office & Welcome Center',
         duration: '0m',
         path: ['Gate 1 Gatehouse', 'Site Office'],

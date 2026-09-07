@@ -18,6 +18,7 @@ import {
   Layers
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { formatEdtTime } from '../lib/dateTimeUtils';
 
 export interface HealthState {
   mongo: {
@@ -141,7 +142,7 @@ export default function SystemHealthWidget() {
         <div className="flex items-center gap-2">
           {health.lastChecked && (
             <span className="text-[10px] font-mono text-slate-400 hidden md:inline-block">
-              Checked: {health.lastChecked.toLocaleTimeString()}
+              Checked: {formatEdtTime(health.lastChecked)}
             </span>
           )}
           <button

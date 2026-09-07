@@ -25,6 +25,7 @@ import {
   globalMqttClient,
   ConnectionStatus
 } from '../lib/realtimeClients';
+import { formatEdtTime } from '../lib/dateTimeUtils';
 import mqttStreamService, { MqttMetrics } from '../lib/mqttService';
 
 export default function RealTimeConnectionsTab() {
@@ -109,7 +110,7 @@ export default function RealTimeConnectionsTab() {
   }, []);
 
   const addLog = (method: string, data: any) => {
-    const timeStr = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    const timeStr = formatEdtTime(new Date());
     const logItem = {
       id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       method,

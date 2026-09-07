@@ -79,6 +79,7 @@ import { useTerminology } from '../context/TrackingContext';
 import { useNavigate } from 'react-router-dom';
 import { AppModeContext } from '../App';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
+import { formatEdtTime, formatEdtDate, formatEdtDateTime } from '../lib/dateTimeUtils';
 
 const COLORS = ['#007BC4', '#38bdf8', '#10b981', '#f59e0b', '#8b5cf6'];
 
@@ -1337,7 +1338,7 @@ export default function DashboardTab({
                           </span>
                         </div>
                         <div className="flex items-center justify-between text-[8px] text-rose-500 font-mono mt-1 pt-1.5 border-t border-rose-200/50 shrink-0">
-                          <span>{a.timestamp instanceof Date ? a.timestamp.toLocaleTimeString() : new Date(a.timestamp || Date.now()).toLocaleTimeString()}</span>
+                          <span>{formatEdtTime(a.timestamp)}</span>
                           <span className="bg-white border border-rose-200 px-1 rounded font-bold truncate max-w-[150px]">{a.evidence?.locationZone || a.locationZone || 'Site Area'}</span>
                         </div>
                       </div>
@@ -1396,7 +1397,7 @@ export default function DashboardTab({
 
                           <div className="flex items-center justify-between text-[8px] text-slate-400 font-bold mt-1 pt-1 border-t border-slate-200/40">
                             <span>{(n.author || "").split('@')[0]}</span>
-                            <span>{new Date(n.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</span>
+                            <span>{formatEdtTime(n.timestamp, { includeSeconds: false })}</span>
                           </div>
                         </div>
                       );
@@ -1732,7 +1733,7 @@ export default function DashboardTab({
                       </div>
                     </div>
                     <div className="flex items-center gap-3 self-end md:self-auto shrink-0">
-                      <span className="text-[10px] text-slate-400 font-mono">{inc.time || (inc.createdAt ? new Date(inc.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Logged in DB')}</span>
+                      <span className="text-[10px] text-slate-400 font-mono">{inc.time || (inc.createdAt ? formatEdtTime(inc.createdAt, { includeSeconds: false }) : 'Logged in DB')}</span>
                       <span className={`text-[10px] font-bold px-2.5 py-1 rounded-full uppercase ${inc.status === 'Investigating' || inc.workflowStatus === 'Investigation' ? 'bg-rose-50 text-rose-700 border border-rose-200' : inc.status === 'Open' || inc.workflowStatus === 'Open' ? 'bg-amber-50 text-amber-700 border border-amber-200' : 'bg-emerald-50 text-emerald-700 border border-emerald-200'}`}>
                         {inc.status || inc.workflowStatus || 'Open'}
                       </span>
@@ -1831,7 +1832,7 @@ export default function DashboardTab({
                                <div className="text-xs font-bold text-slate-600 flex items-center gap-1 text-right">
                                  <span className="w-1 h-1 rounded-full bg-[#007BC4]"></span> {move.fromZone ? `${move.fromZone} → ${move.toZone}` : `Entered ${move.toZone}`}
                                </div>
-                               <div className="text-[9px] text-slate-400 font-mono mt-0.5">{move.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' })}</div>
+                               <div className="text-[9px] text-slate-400 font-mono mt-0.5">{formatEdtTime(move.timestamp)}</div>
                             </div>
                           </div>
                         ))
@@ -1881,9 +1882,9 @@ export default function DashboardTab({
         });
         const firstEntry = sortedLogs.find(l => l.checkInTime || l.inTime || l.status === 'PRESENT' || l.status === 'LATE');
         const lastExit = [...sortedLogs].reverse().find(l => l.checkOutTime || l.outTime || l.status === 'EXITED');
-        const firstEntryTime = firstEntry?.checkInTime || firstEntry?.inTime ? new Date(firstEntry.checkInTime || firstEntry.inTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : (sortedLogs.length > 0 ? '07:00 AM' : 'No scans recorded');
+        const firstEntryTime = firstEntry?.checkInTime || firstEntry?.inTime ? formatEdtTime(firstEntry.checkInTime || firstEntry.inTime, { includeSeconds: false }) : (sortedLogs.length > 0 ? '07:00 AM EDT' : 'No scans recorded');
         const firstEntryName = firstEntry?.name || firstEntry?.personName || (registeredPeopleList[0]?.name) || 'Awaiting entry telemetry';
-        const lastExitTime = lastExit?.checkOutTime || lastExit?.outTime ? new Date(lastExit.checkOutTime || lastExit.outTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'On site / No exit';
+        const lastExitTime = lastExit?.checkOutTime || lastExit?.outTime ? formatEdtTime(lastExit.checkOutTime || lastExit.outTime, { includeSeconds: false }) : 'On site / No exit';
         const lastExitName = lastExit?.name || lastExit?.personName || 'All active personnel logged in';
 
         const totalActiveHours = sortedLogs.length > 0 ? '8h 00m' : '0h 00m';

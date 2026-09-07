@@ -17,6 +17,7 @@ import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 import { useWebSocket } from '../lib/useWebSocket';
 import { useTerminology } from '../context/TrackingContext';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, AreaChart, Area, PieChart, Pie, Cell, CartesianGrid } from 'recharts';
+import { formatEdtTime, formatEdtDate, formatEdtDateTime } from '../lib/dateTimeUtils';
 
 
 const CATEGORY_CONFIG: Record<AlertCategory, { icon: React.ElementType; color: string; bg: string; border: string }> = {
@@ -49,21 +50,8 @@ const DEFAULT_OFFICERS = [
 
 function formatAlertTimestamp(ts: any): string {
   if (!ts) return '';
-  if (typeof ts === 'string') return ts;
-  if (ts instanceof Date) {
-    return ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  if (typeof ts.toDate === 'function') {
-    return ts.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  if (typeof ts.seconds === 'number') {
-    return new Date(ts.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  }
-  try {
-    return String(ts);
-  } catch {
-    return '';
-  }
+  if (typeof ts === 'string' && /^\d{2}:\d{2}/.test(ts)) return ts;
+  return formatEdtTime(ts, { includeSeconds: false });
 }
 
 function getTimestampMs(ts: any): number {
@@ -862,13 +850,13 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
           id: `c_${Date.now()}`,
           author: 'AI Safety Engine',
           role: 'Autonomous System',
-          timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          timestamp: formatEdtTime(now, { includeSeconds: false }),
           text: `Automated ${activeIndustry} rule evaluation triggered: ${rule.name} (${rule.description})`
         }
       ],
       timeline: [
         {
-          time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          time: formatEdtTime(now, { includeSeconds: false }),
           title: `AI Rule Triggered: ${rule.name}`,
           description: rule.sampleMessage,
           actor: 'AI Safety Engine',
@@ -905,9 +893,8 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     }
   };
 
-  // Handle Acknowledge Alert (New -> In Progress)
   const handleAcknowledgeAlert = async (alert: AIAlert) => {
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const nowStr = formatEdtTime(new Date(), { includeSeconds: false });
     const updatedHistory = [...(alert.history || []), {
       timestamp: nowStr,
       action: 'Acknowledged by EHS Control Officer',
@@ -944,9 +931,8 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     }
   };
 
-  // Handle Reassign Officer
   const handleReassignOfficer = async (alert: AIAlert, newOfficer: string) => {
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const nowStr = formatEdtTime(new Date(), { includeSeconds: false });
     const updatedHistory = [...(alert.history || []), {
       timestamp: nowStr,
       action: `Reassigned to ${newOfficer}`,
@@ -1012,10 +998,10 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
         telemetryLog: `[MANUAL_TRIGGER] Alert ID: ${alertId} | Priority: ${newAlert.priority} | Zone: ${newAlert.locationZone}`
       },
       comments: [
-        { id: `c_${Date.now()}`, author: 'Current User', role: 'EHS Controller', timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), text: `Alert manually initiated: ${newAlert.title}` }
+        { id: `c_${Date.now()}`, author: 'Current User', role: 'EHS Controller', timestamp: formatEdtTime(now, { includeSeconds: false }), text: `Alert manually initiated: ${newAlert.title}` }
       ],
       timeline: [
-        { time: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), title: 'Alert Created', description: newAlert.message, actor: 'User Input', type: 'trigger' }
+        { time: formatEdtTime(now, { includeSeconds: false }), title: 'Alert Created', description: newAlert.message, actor: 'User Input', type: 'trigger' }
       ],
       escalation: {
         level: 'Tier 1 (Gatehouse)',
@@ -1025,7 +1011,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
         isEscalated: false
       },
       history: [
-        { timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }), action: 'Created Alert', user: 'User' }
+        { timestamp: formatEdtTime(now, { includeSeconds: false }), action: 'Created Alert', user: 'User' }
       ]
     };
 
@@ -1062,13 +1048,13 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       id: `comment_${Date.now()}`,
       author: 'EHS Control Officer',
       role: 'Site Safety Team',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: formatEdtTime(new Date(), { includeSeconds: false }),
       text: newCommentText.trim()
     };
 
     const updatedComments = [...(selectedAlert.comments || []), newComment];
     const updatedHistory = [...(selectedAlert.history || []), {
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: formatEdtTime(new Date(), { includeSeconds: false }),
       action: 'Added Comment',
       user: 'EHS Officer'
     }];
@@ -1105,7 +1091,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     };
 
     const updatedHistory = [...(alert.history || []), {
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: formatEdtTime(new Date(), { includeSeconds: false }),
       action: 'Manually Escalated to Tier 2 (EHS Director)',
       user: 'EHS Controller'
     }];
@@ -1149,7 +1135,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     };
 
     const updatedHistory = [...(selectedAlert.history || []), {
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: formatEdtTime(new Date(), { includeSeconds: false }),
       action: `Resolved by ${resolutionData.verificationOfficer}`,
       user: resolutionData.verificationOfficer
     }];
@@ -1189,9 +1175,8 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     }
   };
 
-  // 1-Click Direct Close & Resolve Alert
   const handleDirectCloseAlert = async (alert: AIAlert) => {
-    const nowStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const nowStr = formatEdtTime(new Date(), { includeSeconds: false });
     const updatedHistory = [...(alert.history || []), {
       timestamp: nowStr,
       action: 'Directly Resolved & Closed by EHS Controller',
@@ -1353,7 +1338,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       zone,
       type,
       activatedBy: 'Operations Duty Lead',
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      timestamp: formatEdtTime(new Date(), { includeSeconds: false }),
       musterTarget: 25,
       musterAccounted: 22,
       status: 'ACTIVE'
@@ -2031,7 +2016,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                         )}
 
                         <span className="text-xs text-slate-400 font-mono">
-                          {alert.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          {formatAlertTimestamp(alert.timestamp)}
                         </span>
                       </div>
 

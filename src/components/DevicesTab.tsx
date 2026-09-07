@@ -15,6 +15,7 @@ import StreamDiagnostics from './StreamDiagnostics';
 import mqttStreamService, { MqttMetrics } from '../lib/mqttService';
 import { globalSseClient } from '../lib/realtimeClients';
 import { useTerminology, useTracking } from '../context/TrackingContext';
+import { formatEdtTime } from '../lib/dateTimeUtils';
 
 export interface DeviceItem {
   id: string;
@@ -336,7 +337,7 @@ export default function DevicesTab() {
               memoryUsagePct: 15,
               pingMs: 4,
               uptime: p.presenceState === 'MOVING' ? 'Active / In Transit' : 'Stationary / Working',
-              lastPing: p.lastSeen ? new Date(p.lastSeen).toLocaleTimeString() : 'Just now',
+              lastPing: p.lastSeen ? formatEdtTime(p.lastSeen) : 'Just now',
               calibrationStatus: 'Calibrated' as const,
               otaStatus: 'Up to Date' as const,
               powerSource: 'Li-Ion Battery' as const,
@@ -374,7 +375,7 @@ export default function DevicesTab() {
                 memoryUsagePct: 12,
                 pingMs: 5,
                 uptime: 'Active In Telemetry',
-                lastPing: t.EnterTime || t.timestamp || 'Just now',
+                lastPing: (t.EnterTime || t.timestamp) ? formatEdtTime(t.EnterTime || t.timestamp) : 'Just now',
                 calibrationStatus: 'Calibrated' as const,
                 otaStatus: 'Up to Date' as const,
                 powerSource: 'Li-Ion Battery' as const,
@@ -496,7 +497,7 @@ export default function DevicesTab() {
           memoryUsagePct: 12,
           pingMs: 5,
           uptime: 'Active In Telemetry',
-          lastPing: data.timestamp ? new Date(data.timestamp).toLocaleTimeString() : 'Just now',
+          lastPing: data.timestamp ? formatEdtTime(data.timestamp) : 'Just now',
           calibrationStatus: 'Calibrated',
           otaStatus: 'Up to Date',
           powerSource: 'Li-Ion Battery',
@@ -545,7 +546,7 @@ export default function DevicesTab() {
           memoryUsagePct: 15,
           pingMs: 4,
           uptime: p.presenceState === 'MOVING' ? 'Active / In Transit' : 'Stationary / Working',
-          lastPing: p.lastSeen ? new Date(p.lastSeen).toLocaleTimeString() : 'Just now',
+          lastPing: p.lastSeen ? formatEdtTime(p.lastSeen) : 'Just now',
           calibrationStatus: 'Calibrated',
           otaStatus: 'Up to Date',
           powerSource: 'Li-Ion Battery',
@@ -619,7 +620,7 @@ export default function DevicesTab() {
         memoryUsagePct: 15,
         pingMs: 4,
         uptime: p.presenceState === 'MOVING' ? 'Active / In Transit' : 'Stationary / Working',
-        lastPing: p.lastSeen ? new Date(p.lastSeen).toLocaleTimeString() : 'Just now',
+        lastPing: p.lastSeen ? formatEdtTime(p.lastSeen) : 'Just now',
         calibrationStatus: 'Calibrated' as const,
         otaStatus: 'Up to Date' as const,
         powerSource: 'Li-Ion Battery' as const,
@@ -655,7 +656,7 @@ export default function DevicesTab() {
         memoryUsagePct: 12,
         pingMs: 5,
         uptime: 'Active In Telemetry',
-        lastPing: t.EnterTime || t.Timestamp || 'Just now',
+        lastPing: (t.EnterTime || t.Timestamp) ? formatEdtTime(t.EnterTime || t.Timestamp) : 'Just now',
         calibrationStatus: 'Calibrated' as const,
         otaStatus: 'Up to Date' as const,
         powerSource: 'Li-Ion Battery' as const,
@@ -1317,7 +1318,7 @@ export default function DevicesTab() {
               {/* Synchronization Time */}
               <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 rounded-lg border border-slate-200 dark:border-slate-700">
                 <Clock size={11} className="text-slate-400" />
-                Last Sync: {lastSyncTime ? new Date(lastSyncTime).toLocaleTimeString() : 'Syncing...'}
+                Last Sync: {lastSyncTime ? formatEdtTime(lastSyncTime) : 'Syncing...'}
               </span>
 
               <button

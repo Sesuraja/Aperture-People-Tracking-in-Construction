@@ -1,6 +1,7 @@
 import { generatePDFReport, ExportColumn } from './exportUtils';
 import { collection, doc, setDoc, getDocs, db } from './db';
 import { Person } from '../types';
+import { formatEdtDate, formatEdtTime } from './dateTimeUtils';
 
 export interface DailyReportSummary {
   reportId: string;
@@ -42,14 +43,9 @@ export async function executeDailyReportingTask(
   triggerSource: string = 'Automated System Daemon'
 ): Promise<{ report: DailyReportSummary; success: boolean }> {
   const dateObj = new Date();
-  const dateIsoStr = dateObj.toISOString().slice(0, 10);
-  const formattedDate = dateObj.toLocaleDateString('en-US', {
-    weekday: 'long',
-    year: 'numeric',
-    month: 'long',
-    day: 'numeric'
-  });
-  const timeStr = dateObj.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+  const dateIsoStr = formatEdtDate(dateObj, { format: 'iso' });
+  const formattedDate = formatEdtDate(dateObj, { format: 'long' });
+  const timeStr = formatEdtTime(dateObj, { includeSeconds: false });
 
   // 1. Fetch people if not passed directly
   let people: Person[] = peopleData || [];

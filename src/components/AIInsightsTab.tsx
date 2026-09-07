@@ -48,6 +48,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { useTerminology, useTracking } from '../context/TrackingContext';
 import { gaoApi, HistoryRecord } from '../lib/gaoApi';
 import { exportToCSV, ExportColumn } from '../lib/exportUtils';
+import { formatEdtTime } from '../lib/dateTimeUtils';
 import { db, doc, setDoc, batchSetDocs, addDoc, collection, onSnapshot, serverTimestamp } from '../lib/db';
 import {
   RawMovementRecord,
@@ -175,7 +176,7 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
       const validRecords = Array.isArray(records) ? records : [];
       setRawRecords(validRecords);
       setTotalSystemCount(count > 0 ? count : validRecords.length);
-      setLastAnalysisTimestamp(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+      setLastAnalysisTimestamp(formatEdtTime(new Date()));
     } catch (err: any) {
       console.error('[AI Insights] Telemetry fetch error:', err);
       setApiError(err?.message || 'Failed to fetch people-tracking telemetry records');
@@ -332,7 +333,7 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
         `What unusual patterns were detected today?`,
         `Show data quality audit`
       ],
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: formatEdtTime(new Date(), { includeSeconds: false })
     }
   ]);
   const [chatInput, setChatInput] = useState<string>('');
@@ -353,7 +354,7 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
       id: `msg-user-${Date.now()}`,
       sender: 'user',
       text: q,
-      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      timestamp: formatEdtTime(new Date(), { includeSeconds: false })
     };
 
     setChatMessages(prev => [...prev, userMsg]);
@@ -380,7 +381,7 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
         confidence: result.confidence,
         supportingMetrics: result.supportingMetrics,
         suggestedFollowUps: result.suggestedFollowUps,
-        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        timestamp: formatEdtTime(new Date(), { includeSeconds: false })
       };
 
       setChatMessages(prev => [...prev, botMsg]);

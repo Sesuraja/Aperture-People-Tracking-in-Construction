@@ -462,10 +462,18 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
     };
     await upsertDoc('devices', deviceDoc, orgId).catch(() => {});
 
-    // 4. Auto-generate Attendance timecard in 'attendance_logs'
-    const enterDate = new Date(item.enter);
-    const timeStr = !isNaN(enterDate.getTime()) ? enterDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '08:00 AM';
-    const dateStr = !isNaN(enterDate.getTime()) ? enterDate.toISOString().split('T')[0] : nowIso.split('T')[0];
+    // 4. Auto-generate Attendance timecard in 'attendance_logs' (EDT Real-Time Standard)
+    let enterDate = new Date(item.enter);
+    if (typeof item.enter === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(item.enter) && !item.enter.endsWith('Z')) {
+      const utcDate = new Date(item.enter.replace(' ', 'T') + 'Z');
+      if (!isNaN(utcDate.getTime())) enterDate = utcDate;
+    }
+    const timeStr = !isNaN(enterDate.getTime()) 
+      ? enterDate.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' }) + ' EDT' 
+      : '08:00 AM EDT';
+    const dateStr = !isNaN(enterDate.getTime()) 
+      ? enterDate.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) 
+      : new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
 
     const attDoc = {
       id: `att_${tid}`,

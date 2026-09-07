@@ -16,6 +16,7 @@ import {
 } from '../lib/realtimeClients';
 import mqttStreamService, { MqttMetrics } from '../lib/mqttService';
 import { useTerminology } from '../context/TrackingContext';
+import { formatEdtTime } from '../lib/dateTimeUtils';
 
 export interface DiagnosticMetrics {
   wsLatencyMs: number;
@@ -106,7 +107,7 @@ export default function StreamDiagnostics() {
     message: string,
     latencyMs?: number
   ) => {
-    const timeStr = new Date().toLocaleTimeString('en-GB', { hour12: false });
+    const timeStr = formatEdtTime(new Date());
     const item = {
       id: `${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       protocol,

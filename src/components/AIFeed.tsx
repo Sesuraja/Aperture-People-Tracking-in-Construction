@@ -3,6 +3,7 @@ import { AIAlert } from '../lib/trackingData';
 import { AlertCircle, FileWarning, Info } from 'lucide-react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Badge } from '@/components/ui/badge';
+import { formatEdtTime } from '../lib/dateTimeUtils';
 
 export default function AIFeed({ alerts }: { alerts: AIAlert[] }) {
   return (
@@ -39,7 +40,7 @@ export default function AIFeed({ alerts }: { alerts: AIAlert[] }) {
                       {alert.type}
                     </Badge>
                     <span className="text-[10px] font-medium text-slate-500 font-mono">
-                      {alert.timestamp.toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      {formatEdtTime(alert.timestamp)}
                     </span>
                   </div>
                   <p className="text-sm font-semibold text-slate-900 leading-snug mt-1">

@@ -15,6 +15,7 @@ import { db, collection, addDoc, updateDoc, setDoc, doc, onSnapshot, getDocs } f
 import DailyReportingTaskModal from './DailyReportingTaskModal';
 import { useTracking, useTerminology } from '../context/TrackingContext';
 import webSocketService from '../lib/webSocketService';
+import { formatEdtTime, formatEdtDate, formatEdtDateTime } from '../lib/dateTimeUtils';
 
 
 export interface AttendanceRecord {
@@ -405,21 +406,20 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
       const liveZone = liveTag?.LocationName || liveTag?.Location || p.currentZone || mongoLog?.siteZone || 'Tower Core L2';
 
-      // Compute first in time
+      // Compute first in time in EDT
       let firstIn = mongoLog?.firstIn || '--:--';
       if (firstIn === '--:--' && (isLiveActive || p.lastSeen || liveTag)) {
         if (liveTag?.EnterTime) {
-          firstIn = String(liveTag.EnterTime).slice(-8, -3) || '07:15';
+          firstIn = formatEdtTime(liveTag.EnterTime, { includeSeconds: false, includeSuffix: false });
         } else if (p.lastSeen) {
-          const dt = new Date(p.lastSeen);
-          firstIn = `${dt.getHours().toString().padStart(2, '0')}:${dt.getMinutes().toString().padStart(2, '0')}`;
+          firstIn = formatEdtTime(p.lastSeen, { includeSeconds: false, includeSuffix: false });
         } else {
           firstIn = '07:30';
         }
       }
 
-      // Compute last out time
-      const lastOut = isLiveActive ? 'ACTIVE' : (mongoLog?.lastOut || (p.lastSeen ? new Date(p.lastSeen).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '--:--'));
+      // Compute last out time in EDT
+      const lastOut = isLiveActive ? 'ACTIVE' : (mongoLog?.lastOut || (p.lastSeen ? formatEdtTime(p.lastSeen, { includeSeconds: false, includeSuffix: false }) : '--:--'));
 
       // Determine attendance status
       let status: AttendanceRecord['status'] = 'ABSENT';
@@ -661,7 +661,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
         shift: assignedShift,
         overtimeAuthorized: otAuthorized,
         maxOtHours: maxOtHoursVal,
-        notes: `Updated on ${new Date().toLocaleDateString()}`
+        notes: `Updated on ${formatEdtDate(new Date())}`
       });
 
       // Also update existing attendance log if present

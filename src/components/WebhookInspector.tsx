@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Terminal, Play, Pause, Trash2, Copy, Check, Filter, Zap, RefreshCw } from 'lucide-react';
 import { globalWsClient, RealtimeEventMessage } from '../lib/realtimeClients';
+import { formatEdtTime, formatEdtDate } from '../lib/dateTimeUtils';
 
 export interface WebhookLogEntry {
   id: string;
@@ -413,7 +414,7 @@ export default function WebhookInspector() {
 
                   <div className="flex items-center gap-3">
                     <span className="text-[11px] text-slate-500">
-                      {new Date(log.timestamp).toLocaleTimeString()} ({new Date(log.timestamp).toLocaleDateString()})
+                      {formatEdtTime(log.timestamp)} ({formatEdtDate(log.timestamp)})
                     </span>
 
                     <button

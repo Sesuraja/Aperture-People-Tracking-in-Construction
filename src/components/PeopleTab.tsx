@@ -23,6 +23,7 @@ import {
 } from '../lib/db';
 import { useTracking, useTerminology } from '../context/TrackingContext';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
+import { formatEdtTime, formatEdtDate } from '../lib/dateTimeUtils';
 
 interface PeopleTabProps {
 
@@ -1012,7 +1013,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   const handleQuickUpdateTrainingStatus = async (tagId: string, name: string, newStatus: 'COMPLIANT' | 'DUE_SOON' | 'OVERDUE' | 'PENDING') => {
     try {
       const tagUpper = (tagId || "").toUpperCase().trim();
-      const todayDate = new Date().toISOString().split('T')[0];
+      const todayDate = formatEdtDate(new Date(), { format: 'iso' });
       await setDoc(doc(db, 'registered_people', tagUpper), {
         trainingStatus: newStatus,
         lastTrainingDate: todayDate,
@@ -1203,7 +1204,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         ppeStatus: formData.ppeStatus || 'COMPLIANT',
         shiftStatus: formData.shiftStatus || 'ON_SITE',
         trainingStatus: formData.trainingStatus || 'COMPLIANT',
-        lastTrainingDate: formData.lastTrainingDate || new Date().toISOString().split('T')[0],
+        lastTrainingDate: formData.lastTrainingDate || formatEdtDate(new Date(), { format: 'iso' }),
         trainingCourse: formData.trainingCourse || `${config?.appTitle || 'Enterprise'} Safety Induction`,
         trainingExpiry: formData.trainingExpiry || '2027-05-15',
         department: formData.department || finalCompany,
@@ -1502,7 +1503,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       ppeStatus: 'COMPLIANT',
       shiftStatus: 'ON_SITE',
       trainingStatus: 'COMPLIANT',
-      lastTrainingDate: new Date().toISOString().split('T')[0],
+      lastTrainingDate: formatEdtDate(new Date(), { format: 'iso' }),
       trainingCourse: `${config?.appTitle || 'Enterprise'} Safety Induction`,
       trainingExpiry: '2027-05-15',
       department: availableCompanies[0] || 'Operations',
@@ -1552,7 +1553,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       ShiftStatus: p.shiftStatus || 'ON_SITE',
       Phone: p.phone || 'N/A'
     }));
-    exportToCSV(`Workforce_Roster_${new Date().toISOString().split('T')[0]}`, data, [
+    exportToCSV(`Workforce_Roster_${formatEdtDate(new Date(), { format: 'iso' })}`, data, [
       { key: 'TagID', label: idBadgeLabel.toUpperCase() },
       { key: 'Name', label: `${personnelSingular.toUpperCase()} NAME` },
       { key: 'Role', label: roleLabel.toUpperCase() },
@@ -1577,7 +1578,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
     generatePDFReport(
       `${config?.appTitle || 'Enterprise'} - Active Workforce & Safety Compliance Report`,
-      `${new Date().toLocaleDateString()} - ${personnelPlural} Roster & PPE Compliance Snapshot`,
+      `${formatEdtDate(new Date())} - ${personnelPlural} Roster & PPE Compliance Snapshot`,
       [
         { key: 'tag', label: idBadgeLabel },
         { key: 'name', label: 'Name' },
@@ -2546,7 +2547,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                               </span>
                             )}
                             <span className="font-mono text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
-                              {h.timestamp ? new Date(h.timestamp).toLocaleTimeString() : 'Logged'}
+                              {h.timestamp ? formatEdtTime(h.timestamp) : 'Logged'}
                             </span>
                           </div>
                         </div>

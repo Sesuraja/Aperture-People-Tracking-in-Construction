@@ -6,6 +6,7 @@ import {
 import QRCode from 'react-qr-code';
 import { collection, setDoc, doc, onSnapshot, db } from '../lib/db';
 import { VisitorRecord, SecurityListItem } from './VisitorsTab';
+import { formatEdtTime } from '../lib/dateTimeUtils';
 
 interface VisitorCheckInFormProps {
   onCheckInComplete?: (visitor: VisitorRecord) => void;
@@ -114,7 +115,7 @@ export default function VisitorCheckInForm({ onCheckInComplete, securityListProp
         email: formData.email || `${(formData.name || "").toLowerCase().replace(/\s+/g, '.')}@guest.com`,
         phone: formData.phone || '+1 (555) 019-2831',
         status: isBlocked ? 'Denied' : 'Active',
-        time: `Arrived ${now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        time: `Arrived ${formatEdtTime(now, { includeSeconds: false })}`,
         tag: isBlocked ? 'Tag Withheld' : formData.rfidTag,
         location: isBlocked ? 'Gate 1 Security Guardhouse (Blocked)' : formData.location,
         duration: isBlocked ? 'Refused Entry' : 'Just Arrived',

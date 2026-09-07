@@ -54,6 +54,7 @@ import { gaoApi, DEFAULT_HOST } from "../lib/gaoApi";
 import { doc, getDoc, setDoc, onSnapshot, isMongoActive, db } from "../lib/db";
 import { AppModeContext } from "../App";
 import { useTracking } from "../context/TrackingContext";
+import { formatEdtTime } from "../lib/dateTimeUtils";
 
 export default function SettingsTab() {
   const { mode } = React.useContext(AppModeContext);
@@ -75,7 +76,7 @@ export default function SettingsTab() {
 
   // 1. General Settings States
   const [companyName, setCompanyName] = useState("Aperture Construction Systems");
-  const [systemTimezone, setSystemTimezone] = useState("UTC (Coordinated Universal Time)");
+  const [systemTimezone, setSystemTimezone] = useState("EDT (Eastern Daylight Time / UTC-4)");
   const [dataRetentionDays, setDataRetentionDays] = useState(90);
   const [currencySymbol, setCurrencySymbol] = useState("$ USD");
   const [siteLocation, setSiteLocation] = useState("Tower 1 - Metro Commercial Build");
@@ -1721,7 +1722,7 @@ export default function SettingsTab() {
                 <span>{saveSuccessNotice}</span>
               </div>
               <span className="text-[10px] text-emerald-600 font-mono">
-                {new Date().toLocaleTimeString()}
+                {formatEdtTime(new Date())}
               </span>
             </div>
           )}
@@ -1767,8 +1768,9 @@ export default function SettingsTab() {
                       onChange={(e) => setSystemTimezone(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition cursor-pointer"
                     >
+                      <option value="EDT (Eastern Daylight Time / UTC-4)">EDT (Eastern Daylight Time / UTC-4)</option>
+                      <option value="EST (Eastern Standard Time / UTC-5)">EST (Eastern Standard Time / UTC-5)</option>
                       <option value="UTC (Coordinated Universal Time)">UTC (Coordinated Universal Time)</option>
-                      <option value="EST (Eastern Standard Time)">EST (Eastern Standard Time)</option>
                       <option value="CST (Central Standard Time)">CST (Central Standard Time)</option>
                       <option value="PST (Pacific Standard Time)">PST (Pacific Standard Time)</option>
                       <option value="GMT (Greenwich Mean Time)">GMT (Greenwich Mean Time)</option>

@@ -6,6 +6,7 @@ import {
 import QRCode from 'react-qr-code';
 import { collection, setDoc, doc, onSnapshot, updateDoc, db } from '../lib/db';
 import { VisitorRecord, SecurityListItem } from './VisitorsTab';
+import { formatEdtTime } from '../lib/dateTimeUtils';
 
 export interface VisitorAccessToken {
   tokenId: string;
@@ -165,7 +166,7 @@ export default function VisitorQrGenerator({ visitorsList = [], securityListProp
     if (!code) return;
 
     const now = new Date();
-    const timestampStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const timestampStr = formatEdtTime(now);
 
     // Look up token in state or DB
     const token = tokens.find(t => (t.tokenId || "").toUpperCase() === (code || "").toUpperCase());
@@ -591,7 +592,7 @@ export default function VisitorQrGenerator({ visitorsList = [], securityListProp
                       <div className="text-[10px] text-slate-400">{t.company}</div>
                     </td>
                     <td className="p-2 font-mono text-[11px] text-slate-500">
-                      {new Date(t.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {formatEdtTime(t.expiresAt, { includeSeconds: false })}
                     </td>
                     <td className="p-2 font-mono font-bold text-slate-700 dark:text-slate-300">
                       {t.scanCount || 0} / {t.maxUsages}
@@ -650,7 +651,7 @@ export default function VisitorQrGenerator({ visitorsList = [], securityListProp
                 </div>
                 <div className="text-[10px] text-slate-500 font-mono flex items-center justify-between">
                   <span>{log.gate}</span>
-                  <span>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                  <span>{formatEdtTime(log.timestamp)}</span>
                 </div>
               </div>
             ))}

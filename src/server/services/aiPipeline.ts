@@ -255,9 +255,18 @@ export async function processTelemetryWithAI(
       await upsertDoc('people', personDoc, orgId);
     }
 
-    // 3c. Persist to attendance_logs (so Attendance tab displays live on-site workforce telemetry)
-    const enterDate = new Date(item.timestamp || now);
-    const timeStr = enterDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    // 3c. Persist to attendance_logs (so Attendance tab displays live on-site workforce telemetry in EDT)
+    let enterDate = new Date(item.timestamp || now);
+    if (typeof item.timestamp === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(item.timestamp) && !item.timestamp.endsWith('Z')) {
+      const utcDate = new Date(item.timestamp.replace(' ', 'T') + 'Z');
+      if (!isNaN(utcDate.getTime())) enterDate = utcDate;
+    }
+    const timeStr = !isNaN(enterDate.getTime())
+      ? enterDate.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' }) + ' EDT'
+      : '08:00 AM EDT';
+    const dateStr = !isNaN(enterDate.getTime())
+      ? enterDate.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
+      : now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
     const attendanceDoc = {
       id: `att_${tagId}`,
       personId: tagId,
@@ -281,7 +290,7 @@ export async function processTelemetryWithAI(
       hourlyRate: 35,
       punchType: 'RFID_AUTO',
       gateLocation: item.location || 'Main Site Access Turnstile',
-      date: enterDate.toISOString().split('T')[0],
+      date: dateStr,
       updatedAt: nowIso,
       organizationId: orgId,
       createdAt: now,

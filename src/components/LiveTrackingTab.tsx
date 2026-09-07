@@ -16,6 +16,7 @@ import { db, collection, onSnapshot, doc } from '../lib/db';
 import { ZoneBounds } from './MapEditorModal';
 import { HardwareDevice } from './HardwareConfigModal';
 import { generatePDFReport } from '../lib/exportUtils';
+import { formatEdtTime, formatEdtDate } from '../lib/dateTimeUtils';
 import { useWebSocket } from '../lib/useWebSocket';
 import { useTracking, useTerminology } from '../context/TrackingContext';
 
@@ -403,7 +404,7 @@ export default function LiveTrackingTab({
         active: true,
         workerName: p.title || 'WS Safety SOS Alert',
         zone: p.location || 'Site Perimeter',
-        timestamp: new Date().toLocaleTimeString()
+        timestamp: formatEdtTime(new Date())
       });
       setIsEmergencyMode(true);
       setMapMode('evacuation');
@@ -487,7 +488,7 @@ export default function LiveTrackingTab({
         workerId: targetWorker.id,
         workerName: targetWorker.name,
         zone: targetWorker.currentZone || 'Crane Operating Zone',
-        timestamp: new Date().toLocaleTimeString(),
+        timestamp: formatEdtTime(new Date()),
         x: targetWorker.x,
         y: targetWorker.y
       });
@@ -548,7 +549,7 @@ export default function LiveTrackingTab({
 
     generatePDFReport(
       "Aperture RFID Shift Attendance & Zone Presence Report",
-      `Project: ${currentProject.name} | Contractor: ${currentProject.contractor} | Date: ${new Date().toLocaleDateString()}`,
+      `Project: ${currentProject.name} | Contractor: ${currentProject.contractor} | Date: ${formatEdtDate(new Date())}`,
       pdfColumns,
       pdfRows,
       pdfMetrics
