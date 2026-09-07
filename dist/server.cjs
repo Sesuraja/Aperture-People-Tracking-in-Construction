@@ -3283,24 +3283,16 @@ var lastSyncMetadata = {
 var lastBatchFingerprint = "";
 var lastAiProcessedAt = 0;
 async function getPeopleTrackingApiHost() {
-  if (runtimeHostOverride && runtimeHostOverride.trim()) {
-    return runtimeHostOverride.trim().replace(/\/+$/, "");
-  }
-  try {
-    const settings = await getCollectionDocs("settings");
-    const apiSetting = settings.find((s) => s.id === "people_tracking_api" || s._id === "people_tracking_api");
-    if (apiSetting?.host && typeof apiSetting.host === "string" && apiSetting.host.trim()) {
-      return apiSetting.host.trim().replace(/\/+$/, "");
-    }
-  } catch {
-  }
   if (process.env.PEOPLE_TRACKING_API_HOST && process.env.PEOPLE_TRACKING_API_HOST.trim()) {
     return process.env.PEOPLE_TRACKING_API_HOST.trim().replace(/\/+$/, "");
   }
   if (process.env.APERTURE_RFID_HOST && process.env.APERTURE_RFID_HOST.trim()) {
     return process.env.APERTURE_RFID_HOST.trim().replace(/\/+$/, "");
   }
-  return "https://www.i360services.com/peopletrackinguhf";
+  if (runtimeHostOverride && runtimeHostOverride.trim()) {
+    return runtimeHostOverride.trim().replace(/\/+$/, "");
+  }
+  return "";
 }
 async function setPeopleTrackingApiHost(newHost) {
   const sanitized = (newHost || "").trim().replace(/\/+$/, "");
@@ -3322,6 +3314,9 @@ async function setPeopleTrackingApiHost(newHost) {
 }
 async function fetchHistoryTotalCount(customHost) {
   const host = customHost || await getPeopleTrackingApiHost();
+  if (!host) {
+    throw new Error("API host URL is not configured. Please define PEOPLE_TRACKING_API_HOST in your .env file.");
+  }
   const url = `${host}/api/GetHistoryTotalCount`;
   const startTime = Date.now();
   const controller = new AbortController();
@@ -3351,6 +3346,9 @@ async function fetchHistoryTotalCount(customHost) {
 }
 async function fetchHistoryRecords(skipCount = 0, takeCount = 50, customHost) {
   const host = customHost || await getPeopleTrackingApiHost();
+  if (!host) {
+    throw new Error("API host URL is not configured. Please define PEOPLE_TRACKING_API_HOST in your .env file.");
+  }
   const skip = Math.max(0, Math.floor(skipCount));
   const take = Math.min(Math.max(1, Math.floor(takeCount)), 200);
   const url = `${host}/api/GetHistoryRecords/${skip}/${take}`;
@@ -3392,6 +3390,9 @@ async function fetchHistoryRecords(skipCount = 0, takeCount = 50, customHost) {
 }
 async function fetchTagsInRealtime(customHost) {
   const host = customHost || await getPeopleTrackingApiHost();
+  if (!host) {
+    throw new Error("API host URL is not configured. Please define PEOPLE_TRACKING_API_HOST in your .env file.");
+  }
   const url = `${host}/api/GetTagsInRealtime`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 15e3);

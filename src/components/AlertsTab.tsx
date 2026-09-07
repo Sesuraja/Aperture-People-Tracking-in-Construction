@@ -38,7 +38,7 @@ const CATEGORIES_LIST: AlertCategory[] = [
   'Weather', 'System'
 ];
 
-const OFFICERS_LIST = [
+const DEFAULT_OFFICERS = [
   'Operations Duty Lead',
   'Field Safety Lead',
   'Facility Equipment Manager',
@@ -95,178 +95,302 @@ export interface AIRuleDefinition {
   priority: AlertPriority;
 }
 
-export const AI_ALERT_RULES_CATALOG: AIRuleDefinition[] = [
-  // 🔴 Critical
-  {
-    id: 'after_hours_entry',
-    name: 'After-hours meeting room entry',
-    tier: 'Critical',
-    tierEmoji: '🔴',
-    category: 'Security',
-    defaultZone: 'Executive Meeting Room A',
-    description: 'Triggered when badge access is recorded outside facility operating hours (19:00 - 07:00).',
-    sampleMessage: 'Unauthorized personnel detected in Executive Meeting Room A outside operating hours (21:45).',
-    triggerSiren: true,
-    priority: 'Critical'
-  },
-  {
-    id: 'capacity_exceeded',
-    name: 'Capacity exceeded',
-    tier: 'Critical',
-    tierEmoji: '🔴',
-    category: 'Safety',
-    defaultZone: 'Main Conference Suite',
-    description: 'Triggered when active room occupant count exceeds the designated safe capacity threshold.',
-    sampleMessage: 'Active headcount in Main Conference Suite reached 12 occupants, exceeding maximum limit of 8.',
-    triggerSiren: true,
-    priority: 'Critical'
-  },
-  {
-    id: 'unknown_tag_detected',
-    name: 'Unknown/unassigned tag detected',
-    tier: 'Critical',
-    tierEmoji: '🔴',
-    category: 'Security',
-    defaultZone: 'Facility Secure Gate 1',
-    description: 'Triggered when an unregistered UHF RFID tag or unassigned worker badge transponder is detected.',
-    sampleMessage: 'Unregistered UHF RFID transponder [TAG_UNKNOWN_9921] detected at Facility Secure Gate 1 without assigned personnel profile.',
-    triggerSiren: true,
-    priority: 'Critical'
-  },
-  {
-    id: 'persistent_zone_conflict',
-    name: 'Persistent zone detection conflict',
-    tier: 'Critical',
-    tierEmoji: '🔴',
-    category: 'System',
-    defaultZone: 'Zone 1 & Zone 2 Boundary Array',
-    description: 'Triggered when contradictory antenna portals simultaneously register the same tag ID.',
-    sampleMessage: 'Tag E28011606000020788842D21 detected across contradictory antennas (Portal Gate 1 & Boardroom Array) simultaneously.',
-    triggerSiren: false,
-    priority: 'Critical'
-  },
-  // 🟠 Warning
-  {
-    id: 'meeting_overstay',
-    name: 'Meeting room overstay',
-    tier: 'Warning',
-    tierEmoji: '🟠',
-    category: 'Worker',
-    defaultZone: 'Meeting Room B',
-    description: 'Triggered when meeting room occupancy duration exceeds scheduled reservation (>60m).',
-    sampleMessage: 'Personnel John Doe Testing occupied Meeting Room B for 82 minutes (exceeding 45-minute scheduled reservation).',
-    triggerSiren: false,
-    priority: 'High'
-  },
-  {
-    id: 'repeated_zone_movement',
-    name: 'Repeated zone movement',
-    tier: 'Warning',
-    tierEmoji: '🟠',
-    category: 'Worker',
-    defaultZone: 'Corridor & Staging Bay',
-    description: 'Triggered when rapid oscillation between adjacent zone boundaries is detected.',
-    sampleMessage: 'Rapid zone oscillation (6 transitions in 4 mins) detected across sector boundaries.',
-    triggerSiren: false,
-    priority: 'High'
-  },
-  {
-    id: 'unusual_movement_pattern',
-    name: 'Unusual movement pattern',
-    tier: 'Warning',
-    tierEmoji: '🟠',
-    category: 'Safety',
-    defaultZone: 'Pedestrian Walkway Sector',
-    description: 'Triggered when velocity anomalies (>3.0 m/s) or erratic worker trajectories are detected.',
-    sampleMessage: 'Kinematic speed anomaly: Velocity of 3.6 m/s recorded for personnel inside restricted corridor.',
-    triggerSiren: false,
-    priority: 'Medium'
-  },
-  {
-    id: 'zone_detection_overlap',
-    name: 'Zone detection overlap',
-    tier: 'Warning',
-    tierEmoji: '🟠',
-    category: 'Reader',
-    defaultZone: 'Antenna Portal Array 3',
-    description: 'Triggered when overlapping RFID antenna lobes produce boundary read jitter.',
-    sampleMessage: 'High-power RF lobe interference (-44 dBm / -48 dBm) registered at Antenna Portal boundary.',
-    triggerSiren: false,
-    priority: 'Medium'
-  },
-  // 🔵 Information
-  {
-    id: 'person_entered_room',
-    name: 'Person entered meeting room',
-    tier: 'Information',
-    tierEmoji: '🔵',
-    category: 'Worker',
-    defaultZone: 'Conference Suite 1',
-    description: 'Informational log generated when verified personnel enter a meeting room.',
-    sampleMessage: 'Personnel badge entered monitored sector zone.',
-    triggerSiren: false,
-    priority: 'Low'
-  },
-  {
-    id: 'person_left_room',
-    name: 'Person left meeting room',
-    tier: 'Information',
-    tierEmoji: '🔵',
-    category: 'Worker',
-    defaultZone: 'Conference Suite 1',
-    description: 'Informational log generated when personnel exit a meeting room with dwell duration.',
-    sampleMessage: 'Personnel departed monitored zone sector.',
-    triggerSiren: false,
-    priority: 'Low'
-  },
-  {
-    id: 'person_in_room',
-    name: 'Person currently in meeting room',
-    tier: 'Information',
-    tierEmoji: '🔵',
-    category: 'Worker',
-    defaultZone: 'Executive Boardroom',
-    description: 'Continuous presence heartbeat confirming personnel active in meeting room.',
-    sampleMessage: 'Active presence heartbeat verified in operational zone.',
-    triggerSiren: false,
-    priority: 'Low'
-  },
-  {
-    id: 'occupancy_changed',
-    name: 'Occupancy changed',
-    tier: 'Information',
-    tierEmoji: '🔵',
-    category: 'Operational' as AlertCategory,
-    defaultZone: 'Training & Meeting Hall',
-    description: 'Room headcount delta event logged as personnel enter or leave.',
-    sampleMessage: 'Occupancy headcount updated for active zone sector.',
-    triggerSiren: false,
-    priority: 'Low'
-  },
-  {
-    id: 'tag_detected',
-    name: 'Tag detected',
-    tier: 'Information',
-    tierEmoji: '🔵',
-    category: 'Reader',
-    defaultZone: 'Facility Entrance Portal',
-    description: 'Routine antenna beacon telemetry scan acknowledged and logged.',
-    sampleMessage: 'Active RFID badge transponder scanned at Facility Entrance Portal.',
-    triggerSiren: false,
-    priority: 'Low'
+export function getOfficersForIndustry(profile?: any, industryId: string = 'construction'): string[] {
+  const ind = profile?.industry || industryId || 'construction';
+  if (profile?.defaultRoles && profile.defaultRoles.length > 0) {
+    return profile.defaultRoles.slice(0, 6).map((r: string) => `${r} Lead`);
   }
-];
+  if (ind === 'healthcare') {
+    return ['Clinical Safety Lead', 'Charge Nurse Supervisor', 'Hospital Security Lead', 'EHS Duty Controller', 'Pharmacy Vault Officer'];
+  }
+  if (ind === 'aviation') {
+    return ['Airside Safety Marshal', 'ATC Operations Lead', 'Ground Handling Supervisor', 'Airport Security Lead'];
+  }
+  if (ind === 'mining') {
+    return ['Mine Safety Controller', 'Blast Zone Officer', 'Haulage Dispatch Lead', 'Ventilation Officer'];
+  }
+  if (ind === 'manufacturing') {
+    return ['Automation Safety Lead', 'Plant Duty Manager', 'Line Supervisor', 'Quality Assurance Lead'];
+  }
+  if (ind === 'oil_gas') {
+    return ['OIM (Offshore Manager)', 'HSE Lead', 'Process Safety Engineer', 'Lifeboat Muster Lead'];
+  }
+  if (ind === 'logistics') {
+    return ['Warehouse Safety Lead', 'Cold Chain Vault Lead', 'Forklift Fleet Supervisor', 'Dispatch Lead'];
+  }
+  return [
+    'Operations Duty Lead',
+    'Field Safety Lead',
+    'Facility Equipment Manager',
+    'Gate Security Lead',
+    'IT Network Systems Admin',
+    'Site Operations Duty Manager'
+  ];
+}
 
-function getRulesForIndustry(industryId: string = 'construction'): AlertRule[] {
-  const profile = INDUSTRY_PRESET_PROFILES[industryId as keyof typeof INDUSTRY_PRESET_PROFILES] || INDUSTRY_PRESET_PROFILES.construction;
-  return profile.alertRuleTemplates.map((t, idx) => ({
+export function getAiRulesCatalogForIndustry(
+  industryId: string = 'construction',
+  profileInput?: any
+): AIRuleDefinition[] {
+  const preset = INDUSTRY_PRESET_PROFILES[industryId as keyof typeof INDUSTRY_PRESET_PROFILES] || INDUSTRY_PRESET_PROFILES.construction;
+  const profile = profileInput || preset;
+  const terms = profile.terminology || preset.terminology || {
+    personnelSingular: 'Worker',
+    personnelPlural: 'Workers',
+    roleLabel: 'Role',
+    idBadgeLabel: 'RFID Tag',
+    safetyComplianceLabel: 'Safety Compliance',
+    zoneLabel: 'Zone',
+    siteLabel: 'Facility',
+    organizationType: 'Organization'
+  };
+  
+  const functionalAreas = profile.functionalAreas && profile.functionalAreas.length > 0
+    ? profile.functionalAreas
+    : preset.functionalAreas;
+    
+  const critArea = functionalAreas.find((a: any) => a.hazardLevel === 'critical') || functionalAreas[0] || { name: 'High Hazard Exclusion Zone', hazardLevel: 'critical', requiredClearanceLevel: 'Safety Clearance' };
+  const warnArea = functionalAreas.find((a: any) => a.hazardLevel === 'warning') || functionalAreas[1] || functionalAreas[0] || { name: 'Operational Monitored Zone', hazardLevel: 'warning', maxDwellMinutes: 45 };
+  const commonArea = functionalAreas.find((a: any) => a.hazardLevel === 'normal' || a.category === 'common' || a.category === 'production') || functionalAreas[functionalAreas.length - 1] || functionalAreas[0] || { name: 'Main Facility Area', maxOccupancy: 12 };
+  const gateArea = functionalAreas.find((a: any) => a.category === 'safety' || /gate|entry|portal|reception|perimeter/i.test(a.name)) || functionalAreas[0] || { name: 'Facility Access Gate' };
+
+  const rules: AIRuleDefinition[] = [];
+
+  // 1. Convert Industry Alert Rule Templates from the active profile
+  if (profile.alertRuleTemplates && profile.alertRuleTemplates.length > 0) {
+    profile.alertRuleTemplates.forEach((t: any) => {
+      const isCrit = t.priorityThreshold === 'Critical';
+      const isWarn = t.priorityThreshold === 'High' || t.priorityThreshold === 'Medium';
+      rules.push({
+        id: (t.id || 'rule').toLowerCase().replace(/[^a-z0-9]/g, '_'),
+        name: t.name,
+        tier: isCrit ? 'Critical' : isWarn ? 'Warning' : 'Information',
+        tierEmoji: isCrit ? '🔴' : isWarn ? '🟠' : '🔵',
+        category: (t.category as AlertCategory) || 'Safety',
+        defaultZone: t.targetZone || critArea.name,
+        description: `Automated ${profile.complianceFramework || 'standard'} policy: ${t.defaultAction || 'Triggered on safety threshold breach'}.`,
+        sampleMessage: `${t.name} recorded in ${t.targetZone || critArea.name}. SLA response window: ${t.slaMinutes || 5} min.`,
+        triggerSiren: Boolean(t.triggerSiren),
+        priority: t.priorityThreshold || (isCrit ? 'Critical' : isWarn ? 'High' : 'Low')
+      });
+    });
+  }
+
+  // 2. Standardized Dynamic Edge AI Rules tailored strictly to active industry
+  // 🔴 Critical Tier: Exclusion Zone / Critical Area Incursion
+  if (!rules.some(r => r.name.toLowerCase().includes('incursion') || r.name.toLowerCase().includes('breach'))) {
+    rules.push({
+      id: 'critical_zone_incursion',
+      name: `${critArea.name} Exclusion Incursion`,
+      tier: 'Critical',
+      tierEmoji: '🔴',
+      category: 'Safety',
+      defaultZone: critArea.name,
+      description: `Triggered when ${terms.personnelSingular.toLowerCase()} enters ${critArea.name} without verified ${critArea.requiredClearanceLevel || 'clearance credentials'}.`,
+      sampleMessage: `Unauthorized ${terms.personnelSingular.toLowerCase()} detected inside ${critArea.name}. Emergency safety audit dispatched.`,
+      triggerSiren: true,
+      priority: 'Critical'
+    });
+  }
+
+  // 🔴 Critical Tier: Capacity / Density Threshold Exceeded
+  if (!rules.some(r => r.name.toLowerCase().includes('capacity') || r.name.toLowerCase().includes('occupancy'))) {
+    const maxCap = commonArea.maxOccupancy || 10;
+    rules.push({
+      id: 'capacity_exceeded',
+      name: `${commonArea.name} Capacity Overcrowding`,
+      tier: 'Critical',
+      tierEmoji: '🔴',
+      category: 'Safety',
+      defaultZone: commonArea.name,
+      description: `Triggered when active ${terms.personnelPlural.toLowerCase()} headcount exceeds designated safe threshold of ${maxCap}.`,
+      sampleMessage: `Active headcount in ${commonArea.name} reached ${maxCap + 4} occupants, exceeding maximum limit of ${maxCap}.`,
+      triggerSiren: true,
+      priority: 'Critical'
+    });
+  }
+
+  // 🔴 Critical Tier: Unregistered / Rogue Tag Detected
+  if (!rules.some(r => r.name.toLowerCase().includes('unknown') || r.name.toLowerCase().includes('unassigned'))) {
+    rules.push({
+      id: 'unknown_tag_detected',
+      name: `Unregistered ${terms.idBadgeLabel} Detected`,
+      tier: 'Critical',
+      tierEmoji: '🔴',
+      category: 'Security',
+      defaultZone: gateArea.name,
+      description: `Triggered when an unassigned transponder is detected without an active ${terms.personnelSingular.toLowerCase()} profile.`,
+      sampleMessage: `Unregistered UHF transponder [TAG_UNKNOWN_9921] detected at ${gateArea.name} without assigned personnel profile.`,
+      triggerSiren: true,
+      priority: 'Critical'
+    });
+  }
+
+  // 🔴 Critical Tier: Contradictory Simultaneous Antenna Conflict
+  if (!rules.some(r => r.name.toLowerCase().includes('conflict'))) {
+    rules.push({
+      id: 'persistent_zone_conflict',
+      name: 'Simultaneous Multi-Portal Detection Conflict',
+      tier: 'Critical',
+      tierEmoji: '🔴',
+      category: 'System',
+      defaultZone: `${functionalAreas[0]?.name || 'Gate 1'} & ${functionalAreas[1]?.name || 'Sector 2'} Boundary Array`,
+      description: 'Triggered when contradictory gateway antennas simultaneously register the same transponder ID.',
+      sampleMessage: `Transponder detected across contradictory gateway antennas simultaneously without valid physical transition path.`,
+      triggerSiren: false,
+      priority: 'Critical'
+    });
+  }
+
+  // 🟠 Warning Tier: Loitering / Dwell Overstay
+  if (!rules.some(r => r.name.toLowerCase().includes('overstay') || r.name.toLowerCase().includes('dwell'))) {
+    const maxDwell = warnArea.maxDwellMinutes || 45;
+    rules.push({
+      id: 'zone_dwell_overstay',
+      name: `${warnArea.name} Loiter & Overstay Alert`,
+      tier: 'Warning',
+      tierEmoji: '🟠',
+      category: 'Operational',
+      defaultZone: warnArea.name,
+      description: `Triggered when dwell duration inside ${warnArea.name} exceeds standard time limit (>${maxDwell} mins).`,
+      sampleMessage: `${terms.personnelSingular} dwell in ${warnArea.name} exceeded ${maxDwell}m safe window. Welfare verification dispatched.`,
+      triggerSiren: false,
+      priority: 'High'
+    });
+  }
+
+  // 🟠 Warning Tier: Rapid Zone Oscillation
+  if (!rules.some(r => r.name.toLowerCase().includes('movement') || r.name.toLowerCase().includes('oscillation'))) {
+    rules.push({
+      id: 'repeated_zone_oscillation',
+      name: `Rapid ${terms.zoneLabel} Boundary Oscillation`,
+      tier: 'Warning',
+      tierEmoji: '🟠',
+      category: 'Operational',
+      defaultZone: `${functionalAreas[0]?.name || 'Access'} Perimeter Corridor`,
+      description: 'Triggered when erratic transition oscillation is registered across sector boundaries.',
+      sampleMessage: `Rapid ${terms.zoneLabel.toLowerCase()} boundary oscillation (6 crossings in 3m) registered for active badge.`,
+      triggerSiren: false,
+      priority: 'High'
+    });
+  }
+
+  // 🟠 Warning Tier: Velocity / Kinematic Anomaly
+  if (!rules.some(r => r.name.toLowerCase().includes('speed') || r.name.toLowerCase().includes('velocity') || r.name.toLowerCase().includes('kinematic'))) {
+    rules.push({
+      id: 'unusual_velocity_pattern',
+      name: 'Kinematic Speed & Velocity Anomaly',
+      tier: 'Warning',
+      tierEmoji: '🟠',
+      category: 'Safety',
+      defaultZone: functionalAreas[1]?.name || functionalAreas[0]?.name || 'Pedestrian Transit Corridor',
+      description: 'Triggered when velocity anomalies (>3.0 m/s) or erratic trajectories are detected by antenna gates.',
+      sampleMessage: `Kinematic speed anomaly: Velocity of 3.8 m/s recorded inside monitored ${terms.zoneLabel.toLowerCase()}.`,
+      triggerSiren: false,
+      priority: 'Medium'
+    });
+  }
+
+  // 🟠 Warning Tier: Antenna Lobe Overlap / Jitter
+  if (!rules.some(r => r.name.toLowerCase().includes('overlap') || r.name.toLowerCase().includes('jitter'))) {
+    rules.push({
+      id: 'antenna_lobe_overlap',
+      name: 'Antenna Lobe RF Boundary Interference',
+      tier: 'Warning',
+      tierEmoji: '🟠',
+      category: 'Reader',
+      defaultZone: `${functionalAreas[0]?.name || 'Portal'} Antenna Array`,
+      description: 'Triggered when overlapping RFID antenna lobes generate boundary read jitter.',
+      sampleMessage: 'High RF power lobe overlap (-44 dBm / -47 dBm) registered at reader antenna portal array.',
+      triggerSiren: false,
+      priority: 'Medium'
+    });
+  }
+
+  // 🔵 Information Tier: Sector Check-In
+  rules.push({
+    id: 'personnel_entered_zone',
+    name: `${terms.personnelSingular} Entered ${commonArea.name}`,
+    tier: 'Information',
+    tierEmoji: '🔵',
+    category: 'Worker',
+    defaultZone: commonArea.name,
+    description: `Informational log generated when verified ${terms.personnelSingular.toLowerCase()} enters ${commonArea.name}.`,
+    sampleMessage: `Verified ${terms.personnelSingular.toLowerCase()} transponder recorded entering ${commonArea.name}.`,
+    triggerSiren: false,
+    priority: 'Low'
+  });
+
+  // 🔵 Information Tier: Sector Departure
+  rules.push({
+    id: 'personnel_departed_zone',
+    name: `${terms.personnelSingular} Departed ${commonArea.name}`,
+    tier: 'Information',
+    tierEmoji: '🔵',
+    category: 'Worker',
+    defaultZone: commonArea.name,
+    description: `Informational log generated when ${terms.personnelSingular.toLowerCase()} departs ${commonArea.name} with completed dwell time.`,
+    sampleMessage: `${terms.personnelSingular} departed ${commonArea.name} after completed shift dwell.`,
+    triggerSiren: false,
+    priority: 'Low'
+  });
+
+  // 🔵 Information Tier: Continuous Presence Heartbeat
+  rules.push({
+    id: 'presence_heartbeat_verified',
+    name: `Active ${terms.personnelSingular} Presence Heartbeat`,
+    tier: 'Information',
+    tierEmoji: '🔵',
+    category: 'Worker',
+    defaultZone: commonArea.name,
+    description: `Continuous presence heartbeat verifying ${terms.personnelSingular.toLowerCase()} active in operational area.`,
+    sampleMessage: `Continuous RF heartbeat verified for active ${terms.personnelSingular.toLowerCase()} in ${commonArea.name}.`,
+    triggerSiren: false,
+    priority: 'Low'
+  });
+
+  // 🔵 Information Tier: Headcount Delta Updated
+  rules.push({
+    id: 'headcount_delta_updated',
+    name: `${terms.zoneLabel} Headcount Delta Updated`,
+    tier: 'Information',
+    tierEmoji: '🔵',
+    category: 'Operational',
+    defaultZone: commonArea.name,
+    description: `Occupancy headcount updated in real time as ${terms.personnelPlural.toLowerCase()} transition.`,
+    sampleMessage: `Occupancy headcount updated for ${commonArea.name} telemetry ledger.`,
+    triggerSiren: false,
+    priority: 'Low'
+  });
+
+  // 🔵 Information Tier: Telemetry Scan Logged
+  rules.push({
+    id: 'telemetry_transponder_scanned',
+    name: `${terms.idBadgeLabel} Telemetry Scan Acknowledged`,
+    tier: 'Information',
+    tierEmoji: '🔵',
+    category: 'Reader',
+    defaultZone: gateArea.name,
+    description: 'Routine antenna beacon telemetry scan acknowledged and logged.',
+    sampleMessage: `Active ${terms.idBadgeLabel} transponder beacon acknowledged at ${gateArea.name}.`,
+    triggerSiren: false,
+    priority: 'Low'
+  });
+
+  return rules;
+}
+
+function getRulesForIndustry(industryId: string = 'construction', profileInput?: any): AlertRule[] {
+  const profile = profileInput || INDUSTRY_PRESET_PROFILES[industryId as keyof typeof INDUSTRY_PRESET_PROFILES] || INDUSTRY_PRESET_PROFILES.construction;
+  const officers = getOfficersForIndustry(profile, industryId);
+  return (profile.alertRuleTemplates || []).map((t: any, idx: number) => ({
     id: t.id,
     name: t.name,
     category: (t.category as AlertCategory) || 'Safety',
     priorityThreshold: t.priorityThreshold,
     targetZone: t.targetZone,
     slaMinutes: t.slaMinutes,
-    autoAssignOfficer: 'Operations Duty Lead',
+    autoAssignOfficer: officers[0] || 'Operations Duty Lead',
     autoEscalateTier: 'Tier 2 (EHS Director)',
     triggerSiren: Boolean(t.triggerSiren),
     notifySmsEmail: Boolean(t.notifySmsEmail),
@@ -283,6 +407,11 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   const activeIndustry = config?.industryId || intelligenceProfile?.industry || 'construction';
   const [activeSubTab, setActiveSubTab] = useState<'feed' | 'rules' | 'broadcast' | 'heatmap' | 'analytics'>('feed');
 
+  // Dynamic Officers & Industry AI Rules Catalog
+  const officersList = useMemo(() => getOfficersForIndustry(intelligenceProfile, activeIndustry), [intelligenceProfile, activeIndustry]);
+  const aiRulesCatalog = useMemo(() => getAiRulesCatalogForIndustry(activeIndustry, intelligenceProfile), [activeIndustry, intelligenceProfile]);
+  const primaryZone = intelligenceProfile?.functionalAreas?.[0]?.name || `${zoneLabel} 1`;
+
   // Filters & State
   const [selectedCategory, setSelectedCategory] = useState<AlertCategory | 'All'>('All');
   const [selectedPriority, setSelectedPriority] = useState<AlertPriority | 'All'>('All');
@@ -294,12 +423,12 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   
   // Data lists synced to DB
   const [alertList, setAlertList] = useState<AIAlert[]>([]);
-  const [ruleList, setRuleList] = useState<AlertRule[]>(() => getRulesForIndustry(activeIndustry));
+  const [ruleList, setRuleList] = useState<AlertRule[]>(() => getRulesForIndustry(activeIndustry, intelligenceProfile));
   const [broadcastList, setBroadcastList] = useState<EmergencyBroadcast[]>([]);
 
   useEffect(() => {
-    setRuleList(getRulesForIndustry(config?.industryId || intelligenceProfile?.industry));
-  }, [config?.industryId, intelligenceProfile?.industry]);
+    setRuleList(getRulesForIndustry(activeIndustry, intelligenceProfile));
+  }, [activeIndustry, intelligenceProfile]);
 
   const [mongoStatus, setMongoStatus] = useState<{
     connected: boolean;
@@ -338,7 +467,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   const [isResolveModalOpen, setIsResolveModalOpen] = useState(false);
   const [activeDetailTab, setActiveDetailTab] = useState<'ai_summary' | 'evidence' | 'timeline' | 'resolution' | 'comments'>('ai_summary');
 
-  // New Alert Form State
+  // New Alert Form State (Dynamically initialized from active industry)
   const [newAlert, setNewAlert] = useState<{
     category: AlertCategory;
     priority: AlertPriority;
@@ -353,11 +482,25 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     priority: 'High',
     title: '',
     message: '',
-    assignedTo: OFFICERS_LIST[0],
-    locationZone: 'Main Gate 1',
-    cctvCameraId: 'CAM-GATE-1A',
-    rfidReaderId: 'RD-GATE-01-TURNSTILE'
+    assignedTo: officersList[0] || 'Operations Duty Lead',
+    locationZone: primaryZone,
+    cctvCameraId: 'CAM-01-PRIMARY',
+    rfidReaderId: 'RD-01-PORTAL'
   });
+
+  // Update default zone / officer when industry changes
+  useEffect(() => {
+    setNewAlert(prev => ({
+      ...prev,
+      assignedTo: officersList[0] || prev.assignedTo,
+      locationZone: primaryZone || prev.locationZone
+    }));
+    setNewRule(prev => ({
+      ...prev,
+      autoAssignOfficer: officersList[0] || prev.autoAssignOfficer,
+      targetZone: primaryZone || prev.targetZone
+    }));
+  }, [officersList, primaryZone]);
 
   // New Rule Form State
   const [newRule, setNewRule] = useState<{
@@ -374,9 +517,9 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     name: '',
     category: 'All',
     priorityThreshold: 'High',
-    targetZone: 'Confined Shaft & Tunneling',
+    targetZone: primaryZone,
     slaMinutes: 15,
-    autoAssignOfficer: OFFICERS_LIST[0],
+    autoAssignOfficer: officersList[0] || 'Operations Duty Lead',
     autoEscalateTier: 'Tier 2 (EHS Director)',
     triggerSiren: true,
     notifySmsEmail: true
@@ -389,7 +532,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   const [resolutionData, setResolutionData] = useState({
     rootCause: '',
     correctiveAction: '',
-    verificationOfficer: OFFICERS_LIST[0]
+    verificationOfficer: officersList[0] || 'Operations Duty Lead'
   });
 
   // Notification Toast
@@ -408,10 +551,10 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
         title: p.title || 'Live AI Telemetry Safety Alert',
         message: p.message || (p.location ? `Real-time hazard triggered at ${p.location}` : 'Immediate worker safety response required.'),
         timestamp: p.timestamp ? new Date(p.timestamp) : new Date(),
-        assignedTo: p.assignedTo || OFFICERS_LIST[0],
+        assignedTo: p.assignedTo || officersList[0] || 'Operations Duty Lead',
         assignedRole: p.assignedRole || 'Field Safety Lead',
         aiSummary: p.aiSummary,
-        evidence: p.evidence || { locationZone: p.targetZone || p.location || p.locationZone || 'Site Perimeter', rfidTagId: p.tagId }
+        evidence: p.evidence || { locationZone: p.targetZone || p.location || p.locationZone || primaryZone, rfidTagId: p.tagId }
       };
 
       setAlertList(prev => {
@@ -509,6 +652,15 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     });
   };
 
+  // Auto-run AI telemetry analysis on mount and background interval (every 45s)
+  useEffect(() => {
+    handleRunAiAnalysis();
+    const interval = setInterval(() => {
+      handleRunAiAnalysis();
+    }, 45000);
+    return () => clearInterval(interval);
+  }, [activeIndustry]);
+
   // MongoDB Sync
   useEffect(() => {
     let entAlerts: AIAlert[] = [];
@@ -586,7 +738,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
           title: d.title || 'Logged MongoDB Incident Alert',
           message: d.description || `Incident logged at ${d.zone || siteLabel || 'Facility'} for ${d.personName || personnelSingular}`,
           timestamp: typeof d.timestamp === 'string' ? new Date(d.timestamp) : new Date(),
-          assignedTo: d.assignedOfficer || OFFICERS_LIST[0],
+          assignedTo: d.assignedOfficer || (officersList && officersList[0]) || 'Operations Duty Lead',
           evidence: {
             locationZone: d.zone || siteLabel || 'Facility Zone',
             rfidReaderId: d.tagId ? `${idBadgeLabel}-${d.tagId}` : 'RD-GAO-01'
@@ -687,23 +839,23 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       priority: rule.priority,
       status: 'New',
       title: rule.name,
-      message: `${rule.sampleMessage} (Target Zone: ${rule.defaultZone})`,
+      message: `${rule.sampleMessage} (Target ${zoneLabel}: ${rule.defaultZone})`,
       timestamp: now,
-      assignedTo: OFFICERS_LIST[0],
+      assignedTo: officersList[0] || 'Operations Duty Lead',
       assignedRole: rule.tier === 'Critical' ? 'EHS Duty Controller' : 'Field Safety Lead',
       assignedAt: now.toISOString(),
       aiSummary: {
-        rootCause: `[AI_RULE_ENGINE] Triggered rule '${rule.name}' [${rule.tierEmoji} ${rule.tier} Tier] under active telemetry stream.`,
+        rootCause: `[INDUSTRY_AI_ENGINE] Triggered policy rule '${rule.name}' [${rule.tierEmoji} ${rule.tier} Tier] under active ${activeIndustry.toUpperCase()} telemetry stream.`,
         threatScore: rule.tier === 'Critical' ? 95 : rule.tier === 'Warning' ? 65 : 15,
         recommendedActions: [
-          rule.tier === 'Critical' ? 'Dispatch immediate field response team.' : 'Acknowledge event and verify zone telemetry.',
-          'Review camera feed for ' + rule.defaultZone,
+          rule.tier === 'Critical' ? 'Dispatch immediate field safety responder.' : 'Acknowledge event and verify zone telemetry.',
+          'Review portal stream for ' + rule.defaultZone,
           'Log containment measures in MongoDB audit thread.'
         ]
       },
       evidence: {
         locationZone: rule.defaultZone,
-        telemetryLog: `[AI_EVENT_TRIGGER] Rule: ${rule.name} | Tier: ${rule.tier} | Zone: ${rule.defaultZone} | Timestamp: ${now.toISOString()}`
+        telemetryLog: `[AI_EVENT_TRIGGER] Industry: ${activeIndustry} | Rule: ${rule.name} | Tier: ${rule.tier} | Zone: ${rule.defaultZone} | Timestamp: ${now.toISOString()}`
       },
       comments: [
         {
@@ -711,7 +863,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
           author: 'AI Safety Engine',
           role: 'Autonomous System',
           timestamp: now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          text: `Automated rule evaluation triggered: ${rule.name} (${rule.description})`
+          text: `Automated ${activeIndustry} rule evaluation triggered: ${rule.name} (${rule.description})`
         }
       ],
       timeline: [
@@ -727,7 +879,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
         level: rule.tier === 'Critical' ? 'Tier 2 (EHS Director)' : 'Tier 1 (Gatehouse)',
         slaMinutes: rule.tier === 'Critical' ? 15 : rule.tier === 'Warning' ? 45 : 120,
         elapsedMinutes: 0,
-        autoEscalateTarget: OFFICERS_LIST[0],
+        autoEscalateTarget: officersList[0] || 'Operations Duty Lead',
         isEscalated: rule.tier === 'Critical'
       }
     };
@@ -869,7 +1021,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
         level: 'Tier 1 (Gatehouse)',
         slaMinutes: newAlert.priority === 'Critical' ? 15 : 60,
         elapsedMinutes: 0,
-        autoEscalateTarget: OFFICERS_LIST[0],
+        autoEscalateTarget: officersList[0] || 'Operations Duty Lead',
         isEscalated: false
       },
       history: [
@@ -892,10 +1044,10 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
         priority: 'High',
         title: '',
         message: '',
-        assignedTo: OFFICERS_LIST[0],
-        locationZone: 'Main Gate 1',
-        cctvCameraId: 'CAM-GATE-1A',
-        rfidReaderId: 'RD-GATE-01-TURNSTILE'
+        assignedTo: officersList[0] || 'Operations Duty Lead',
+        locationZone: primaryZone,
+        cctvCameraId: 'CAM-01-PRIMARY',
+        rfidReaderId: 'RD-01-PORTAL'
       });
     } catch (err) {
       console.error('Error creating alert:', err);
@@ -1018,7 +1170,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     setResolutionData({
       rootCause: '',
       correctiveAction: '',
-      verificationOfficer: OFFICERS_LIST[0]
+      verificationOfficer: officersList[0] || 'Operations Duty Lead'
     });
 
     try {
@@ -1158,9 +1310,9 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
         name: '',
         category: 'All',
         priorityThreshold: 'High',
-        targetZone: 'Confined Shaft & Tunneling',
+        targetZone: primaryZone,
         slaMinutes: 15,
-        autoAssignOfficer: OFFICERS_LIST[0],
+        autoAssignOfficer: officersList[0] || 'Operations Duty Lead',
         autoEscalateTier: 'Tier 2 (EHS Director)',
         triggerSiren: true,
         notifySmsEmail: true
@@ -1527,13 +1679,13 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                   </div>
                   <div>
                     <h3 className="text-base md:text-lg font-black tracking-tight text-slate-900 flex items-center gap-2">
-                      AI Spatial & Zone Rules Intelligence Hub
+                      AI Spatial & {zoneLabel} Rules Intelligence Hub
                       <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-blue-50 text-[#007BC4] border border-blue-200">
-                        13 Active Detection Rules
+                        {aiRulesCatalog.length} Active {activeIndustry.toUpperCase()} Rules
                       </span>
                     </h3>
                     <p className="text-xs text-slate-500 font-medium mt-0.5">
-                      Real-time edge rule evaluations for facility meeting rooms, high-hazard sectors, occupancy thresholds & RFID badge kinematics
+                      Autonomous edge AI telemetry diagnostics tailored to {activeIndustry} compliance ({intelligenceProfile?.complianceFramework || 'Standards'})
                     </p>
                   </div>
                 </div>
@@ -1549,7 +1701,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                       : 'text-slate-600 hover:text-slate-900 hover:bg-white/60'
                   }`}
                 >
-                  All Tiers (13)
+                  All Tiers ({aiRulesCatalog.length})
                 </button>
 
                 <button
@@ -1560,7 +1712,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                       : 'text-rose-700 hover:bg-rose-100/70'
                   }`}
                 >
-                  🔴 Critical ({AI_ALERT_RULES_CATALOG.filter(r => r.tier === 'Critical').length})
+                  🔴 Critical ({aiRulesCatalog.filter(r => r.tier === 'Critical').length})
                 </button>
 
                 <button
@@ -1571,7 +1723,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                       : 'text-amber-700 hover:bg-amber-100/70'
                   }`}
                 >
-                  🟠 Warning ({AI_ALERT_RULES_CATALOG.filter(r => r.tier === 'Warning').length})
+                  🟠 Warning ({aiRulesCatalog.filter(r => r.tier === 'Warning').length})
                 </button>
 
                 <button
@@ -1582,14 +1734,14 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                       : 'text-blue-700 hover:bg-blue-100/70'
                   }`}
                 >
-                  🔵 Information ({AI_ALERT_RULES_CATALOG.filter(r => r.tier === 'Information').length})
+                  🔵 Information ({aiRulesCatalog.filter(r => r.tier === 'Information').length})
                 </button>
               </div>
             </div>
 
             {/* AI Rules Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-              {AI_ALERT_RULES_CATALOG
+              {aiRulesCatalog
                 .filter(r => selectedAiTier === 'all' || r.tier === selectedAiTier)
                 .map(rule => {
                   const matchingCount = alertList.filter(a => a.title && a.title.toLowerCase().includes(rule.name.toLowerCase())).length;
@@ -1662,7 +1814,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                               ? 'bg-amber-600 hover:bg-amber-700 text-white'
                               : 'bg-blue-600 hover:bg-blue-700 text-white'
                           }`}
-                          title={`Simulate and trigger an event for ${rule.name}`}
+                          title={`Simulate and evaluate real-time policy for ${rule.name}`}
                         >
                           <Play size={11} className="fill-current" /> Trigger Test
                         </button>
@@ -1901,11 +2053,11 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                           <UserCheck size={12} className="text-emerald-600" />
                           <span>Assigned:</span>
                           <select
-                            value={alert.assignedTo || OFFICERS_LIST[0]}
+                            value={alert.assignedTo || (officersList && officersList[0]) || 'Operations Duty Lead'}
                             onChange={e => handleReassignOfficer(alert, e.target.value)}
                             className="bg-transparent font-bold border-b border-dashed border-slate-400 outline-none cursor-pointer text-xs"
                           >
-                            {OFFICERS_LIST.map(o => <option key={o} value={o}>{o}</option>)}
+                            {officersList.map(o => <option key={o} value={o}>{o}</option>)}
                           </select>
                         </div>
 
@@ -2107,23 +2259,26 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
               </div>
             </div>
 
-            {/* Quick Zone Siren Buttons */}
+            {/* Dynamic Industry Zone Siren Buttons */}
             <div className="pt-4 border-t border-rose-100 grid grid-cols-2 sm:grid-cols-4 gap-2 relative z-10">
-              {[
-                { name: 'Confined Shaft L3', icon: Flame },
-                { name: 'Scaffolding Level 1-4', icon: HardHat },
-                { name: 'Heavy Crane Yard', icon: Zap },
-                { name: 'Gatehouse Gate 1', icon: Shield }
-              ].map(z => (
-                <button
-                  key={z.name}
-                  onClick={() => handleTriggerBroadcast(z.name, 'Evacuation Order', `${z.name} Immediate Local Zone Evacuation`)}
-                  className="p-3 bg-white hover:bg-rose-50 border border-rose-200 rounded-xl text-left text-xs font-bold transition flex items-center justify-between text-slate-800 shadow-2xs cursor-pointer"
-                >
-                  <span className="truncate">{z.name} Siren</span>
-                  <Volume2 size={14} className="text-rose-600 shrink-0" />
-                </button>
-              ))}
+              {(intelligenceProfile?.functionalAreas?.slice(0, 4) || [
+                { id: 'fa-1', name: `${zoneLabel} 1`, category: 'hazardous' },
+                { id: 'fa-2', name: `${zoneLabel} 2`, category: 'restricted' },
+                { id: 'fa-3', name: `${zoneLabel} 3`, category: 'production' },
+                { id: 'fa-4', name: `${zoneLabel} Gate`, category: 'safety' }
+              ]).map((z: any) => {
+                const Icon = z.category === 'hazardous' ? Flame : z.category === 'restricted' ? HardHat : z.category === 'safety' ? Shield : Zap;
+                return (
+                  <button
+                    key={z.name}
+                    onClick={() => handleTriggerBroadcast(z.name, 'Evacuation Order', `${z.name} Immediate Local Zone Evacuation`)}
+                    className="p-3 bg-white hover:bg-rose-50 border border-rose-200 rounded-xl text-left text-xs font-bold transition flex items-center justify-between text-slate-800 shadow-2xs cursor-pointer"
+                  >
+                    <span className="truncate">{z.name} Siren</span>
+                    <Volume2 size={14} className="text-rose-600 shrink-0" />
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -2139,7 +2294,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                   <TableRow>
                     <TableHead>Broadcast ID</TableHead>
                     <TableHead>Title & Type</TableHead>
-                    <TableHead>Target Zone</TableHead>
+                    <TableHead>Target {zoneLabel}</TableHead>
                     <TableHead>Activated By</TableHead>
                     <TableHead>Muster Clearance</TableHead>
                     <TableHead>Status</TableHead>
@@ -2158,7 +2313,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                       <TableCell className="text-xs font-medium">{bc.activatedBy}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2 text-xs font-bold">
-                          <span>{bc.musterAccounted} / {bc.musterTarget} workers</span>
+                          <span>{bc.musterAccounted} / {bc.musterTarget} {personnelPlural.toLowerCase()}</span>
                           <span className="text-emerald-600 font-mono">({Math.round((bc.musterAccounted / bc.musterTarget) * 100)}%)</span>
                         </div>
                       </TableCell>
@@ -2197,56 +2352,64 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
         <div className="space-y-6">
           <div className="bg-white dark:bg-slate-800 p-4 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-sm flex justify-between items-center">
             <div>
-              <h3 className="font-bold text-slate-900 dark:text-white text-base">Site Spatial Hazard & Risk Heatmap</h3>
-              <p className="text-xs text-slate-500 mt-0.5">Click any site zone to view real-time environmental telemetry and filter live incidents for that location.</p>
+              <h3 className="font-bold text-slate-900 dark:text-white text-base">{siteLabel} Spatial Hazard & Risk Heatmap</h3>
+              <p className="text-xs text-slate-500 mt-0.5">Click any {zoneLabel.toLowerCase()} to view real-time environmental telemetry and filter live incidents for that location.</p>
             </div>
             {selectedZone !== 'All' && (
               <button
                 onClick={() => setSelectedZone('All')}
                 className="px-3 py-1.5 bg-slate-100 text-slate-700 rounded-xl text-xs font-bold flex items-center gap-1"
               >
-                Clear Zone Filter ({selectedZone})
+                Clear {zoneLabel} Filter ({selectedZone})
               </button>
             )}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[
-              { name: 'Confined Shaft & Tunneling', risk: 'CRITICAL', score: 92, temp: '31.2°C', gas: '48ppm CO', activeIncidents: 1, bg: 'bg-rose-50 dark:bg-rose-950/40', border: 'border-rose-300 dark:border-rose-800', badgeColor: 'bg-rose-600' },
-              { name: 'Structure & Scaffolding (L1-L4)', risk: 'HIGH', score: 82, temp: '28.5°C', gas: 'Optimal', activeIncidents: 1, bg: 'bg-amber-50 dark:bg-amber-950/40', border: 'border-amber-300 dark:border-amber-800', badgeColor: 'bg-amber-500' },
-              { name: 'Heavy Crane & Exclusion Area', risk: 'HIGH', score: 78, temp: '29.0°C', gas: 'Optimal', activeIncidents: 2, bg: 'bg-amber-50 dark:bg-amber-950/40', border: 'border-amber-300 dark:border-amber-800', badgeColor: 'bg-amber-500' },
-              { name: 'Gate 1 Gatehouse', risk: 'MODERATE', score: 65, temp: '26.1°C', gas: 'Optimal', activeIncidents: 1, bg: 'bg-blue-50 dark:bg-blue-950/40', border: 'border-blue-300 dark:border-blue-800', badgeColor: 'bg-blue-600' },
-              { name: 'Laydown Yard & Material Staging', risk: 'SAFE', score: 25, temp: '25.0°C', gas: 'Optimal', activeIncidents: 0, bg: 'bg-emerald-50 dark:bg-emerald-950/40', border: 'border-emerald-300 dark:border-emerald-800', badgeColor: 'bg-emerald-600' },
-              { name: 'Site Office & Welcome Center', risk: 'SAFE', score: 15, temp: '22.4°C', gas: 'Optimal', activeIncidents: 0, bg: 'bg-emerald-50 dark:bg-emerald-950/40', border: 'border-emerald-300 dark:border-emerald-800', badgeColor: 'bg-emerald-600' }
-            ].map(z => (
-              <div
-                key={z.name}
-                onClick={() => {
-                  setSelectedZone(z.name);
-                  setActiveSubTab('feed');
-                  setNotificationMsg({ type: 'info', text: `Filtered Live Stream for Zone: ${z.name}` });
-                }}
-                className={`p-5 rounded-2xl border ${z.bg} ${z.border} cursor-pointer hover:shadow-md transition space-y-3 relative overflow-hidden`}
-              >
-                <div className="flex justify-between items-start">
-                  <Badge variant="outline" className={`${z.badgeColor} text-white font-black text-[10px] uppercase border-0`}>
-                    {z.risk} RISK ({z.score}/100)
-                  </Badge>
-                  <span className="text-xs font-mono font-bold text-slate-500">{z.activeIncidents} Active Hazards</span>
-                </div>
+            {(intelligenceProfile?.functionalAreas && intelligenceProfile.functionalAreas.length > 0 ? intelligenceProfile.functionalAreas : [
+              { id: 'fa-1', name: `Confined Operations ${zoneLabel}`, hazardLevel: 'critical', maxOccupancy: 8 },
+              { id: 'fa-2', name: `Primary Sector Array`, hazardLevel: 'warning', maxOccupancy: 20 },
+              { id: 'fa-3', name: `Main ${siteLabel} Access Gate`, hazardLevel: 'normal', maxOccupancy: 50 }
+            ]).map((area: any) => {
+              const isCrit = area.hazardLevel === 'critical';
+              const isWarn = area.hazardLevel === 'warning';
+              const risk = isCrit ? 'CRITICAL' : isWarn ? 'HIGH' : 'SAFE';
+              const score = isCrit ? 92 : isWarn ? 78 : 22;
+              const bg = isCrit ? 'bg-rose-50 dark:bg-rose-950/40' : isWarn ? 'bg-amber-50 dark:bg-amber-950/40' : 'bg-emerald-50 dark:bg-emerald-950/40';
+              const border = isCrit ? 'border-rose-300 dark:border-rose-800' : isWarn ? 'border-amber-300 dark:border-amber-800' : 'border-emerald-300 dark:border-emerald-800';
+              const badgeColor = isCrit ? 'bg-rose-600' : isWarn ? 'bg-amber-500' : 'bg-emerald-600';
+              const activeIncidents = alertList.filter(a => a.evidence?.locationZone && (a.evidence.locationZone.toLowerCase().includes(area.name.toLowerCase()) || area.name.toLowerCase().includes(a.evidence.locationZone.toLowerCase()))).length;
 
-                <h4 className="font-bold text-slate-900 dark:text-white text-base">{z.name}</h4>
+              return (
+                <div
+                  key={area.id || area.name}
+                  onClick={() => {
+                    setSelectedZone(area.name);
+                    setActiveSubTab('feed');
+                    setNotificationMsg({ type: 'info', text: `Filtered Live Stream for ${zoneLabel}: ${area.name}` });
+                  }}
+                  className={`p-5 rounded-2xl border ${bg} ${border} cursor-pointer hover:shadow-md transition space-y-3 relative overflow-hidden`}
+                >
+                  <div className="flex justify-between items-start">
+                    <Badge variant="outline" className={`${badgeColor} text-white font-black text-[10px] uppercase border-0`}>
+                      {risk} RISK ({score}/100)
+                    </Badge>
+                    <span className="text-xs font-mono font-bold text-slate-500">{activeIncidents} Active Hazards</span>
+                  </div>
 
-                <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white/60 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200/50">
-                  <div>Ambient Temp: <strong>{z.temp}</strong></div>
-                  <div>Gas Level: <strong>{z.gas}</strong></div>
-                </div>
+                  <h4 className="font-bold text-slate-900 dark:text-white text-base">{area.name}</h4>
 
-                <div className="text-[11px] font-bold text-[#007BC4] flex items-center gap-1">
-                  View Zone Incident Feed <ChevronRight size={14} />
+                  <div className="grid grid-cols-2 gap-2 text-xs font-semibold text-slate-600 dark:text-slate-300 bg-white/60 dark:bg-slate-900/60 p-2.5 rounded-xl border border-slate-200/50">
+                    <div>Category: <strong>{String(area.category || 'Operations').toUpperCase()}</strong></div>
+                    <div>Max Headcount: <strong>{area.maxOccupancy ? `${area.maxOccupancy} max` : 'Dynamic'}</strong></div>
+                  </div>
+
+                  <div className="text-[11px] font-bold text-[#007BC4] flex items-center gap-1">
+                    View {zoneLabel} Incident Feed <ChevronRight size={14} />
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -2479,7 +2642,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                         <CheckCircle2 size={18} className="text-emerald-600" />
                         Incident Resolved & Verified
                       </div>
-                      <div><strong>Resolved By:</strong> {selectedAlert.resolution?.resolvedBy || OFFICERS_LIST[0]}</div>
+                      <div><strong>Resolved By:</strong> {selectedAlert.resolution?.resolvedBy || (officersList && officersList[0]) || 'Operations Duty Lead'}</div>
                       <div><strong>Root Cause:</strong> {selectedAlert.resolution?.rootCause}</div>
                       <div><strong>Corrective Action:</strong> {selectedAlert.resolution?.correctiveAction}</div>
                       <div className="text-[10px] text-slate-400 font-mono">Resolved At: {selectedAlert.resolution?.resolvedAt}</div>
@@ -2641,13 +2804,19 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Location Zone</label>
-                  <input
-                    type="text"
+                  <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">Location {zoneLabel}</label>
+                  <select
                     value={newAlert.locationZone}
                     onChange={e => setNewAlert({ ...newAlert, locationZone: e.target.value })}
-                    className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
-                  />
+                    className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold"
+                  >
+                    {(intelligenceProfile?.functionalAreas || []).map(f => (
+                      <option key={f.id} value={f.name}>{f.name}</option>
+                    ))}
+                    {!intelligenceProfile?.functionalAreas?.some(f => f.name === newAlert.locationZone) && (
+                      <option value={newAlert.locationZone}>{newAlert.locationZone}</option>
+                    )}
+                  </select>
                 </div>
 
                 <div>
@@ -2657,7 +2826,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                     onChange={e => setNewAlert({ ...newAlert, assignedTo: e.target.value })}
                     className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold"
                   >
-                    {OFFICERS_LIST.map(o => <option key={o} value={o}>{o}</option>)}
+                    {officersList.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
               </div>
@@ -2754,7 +2923,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                     onChange={e => setNewRule({ ...newRule, autoAssignOfficer: e.target.value })}
                     className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold"
                   >
-                    {OFFICERS_LIST.map(o => <option key={o} value={o}>{o}</option>)}
+                    {officersList.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
               </div>
@@ -2845,7 +3014,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                   className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold"
                   required
                 >
-                  {OFFICERS_LIST.map(o => <option key={o} value={o}>{o}</option>)}
+                  {officersList.map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               </div>
 
