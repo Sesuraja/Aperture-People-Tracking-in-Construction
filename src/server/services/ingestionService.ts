@@ -1,6 +1,7 @@
 import { processTelemetryWithAI, TelemetryPayload } from './aiPipeline.js';
 import { ApiConnectionConfig, saveConnection, getConnectionById } from './connectionsService.js';
-import { validateTelemetrySource } from './dataPolicy.js';
+import { validateTelemetrySource, isRealTelemetryTag } from './dataPolicy.js';
+import { autoSyncTelemetryToMongoDB } from './peopleTrackingApiService.js';
 
 export interface IngestionResult {
   success: boolean;
@@ -91,13 +92,13 @@ export async function ingestTelemetry(
       };
     }
 
-    // 2. Map raw payloads to standard telemetry payloads and filter items without a valid tag identifier
+    // 2. Map raw payloads to standard telemetry payloads and filter items without a valid real tag identifier
     const telemetryItems = rawList
       .map(item => mapRawItemToTelemetry(item, connection?.dataMapping))
-      .filter(item => Boolean(item.TagID && item.TagID.trim() !== ''));
+      .filter(item => Boolean(item.TagID && item.TagID.trim() !== '') && isRealTelemetryTag(item.TagID));
 
     if (telemetryItems.length === 0) {
-      console.warn(`[INGEST] rejected: invalid external telemetry from source="${sourceName}" (missing tag identifiers)`);
+      console.warn(`[INGEST] rejected: no valid real external telemetry found from source="${sourceName}" (missing or test/dummy tag identifiers)`);
       return {
         success: true,
         recordsProcessed: 0,
@@ -107,9 +108,15 @@ export async function ingestTelemetry(
     }
 
     console.log(`[INGEST] source="${sourceName}" records=${telemetryItems.length}`);
+    const orgId = (connection as any)?.organizationId || 'default';
 
-    // 3. Process through AI, Database persistence, and live client broadcasts
-    const aiResult = await processTelemetryWithAI(telemetryItems, sourceName);
+    // 3. Persist to all MongoDB collections (history, people, devices, attendance, zones, readers)
+    await autoSyncTelemetryToMongoDB(telemetryItems, orgId).catch((err: any) => {
+      console.warn(`[INGEST] autoSyncTelemetryToMongoDB warning: ${err.message}`);
+    });
+
+    // 4. Process through AI, Database persistence, and live client broadcasts
+    const aiResult = await processTelemetryWithAI(telemetryItems, sourceName, orgId);
 
     const latencyMs = Date.now() - startTime;
     const nowIso = new Date().toISOString();

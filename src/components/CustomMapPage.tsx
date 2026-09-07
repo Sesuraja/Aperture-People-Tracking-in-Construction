@@ -466,8 +466,8 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
           fetch('/api/data/sites', { headers: authHeaders }).then(r => r.ok ? r.json() : [])
         ]);
 
+        const loadedZones: Record<string, ZoneBounds> = {};
         if (zonesRes.status === 'fulfilled' && Array.isArray(zonesRes.value)) {
-          const loadedZones: Record<string, ZoneBounds> = {};
           zonesRes.value.forEach((z: any) => {
             if (z && z.name) {
               loadedZones[z.name] = {
@@ -483,15 +483,18 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
               };
             }
           });
-          setCustomZones(loadedZones);
         }
 
         if (mapRes.status === 'fulfilled' && mapRes.value) {
           if (mapRes.value.floorplanUrl) setCustomFloorplan(mapRes.value.floorplanUrl);
           if (mapRes.value.svgSource) setCustomSvgSource(mapRes.value.svgSource);
           if (mapRes.value.zones && typeof mapRes.value.zones === 'object' && Object.keys(mapRes.value.zones).length > 0) {
-            setCustomZones(mapRes.value.zones);
+            Object.assign(loadedZones, mapRes.value.zones);
           }
+        }
+
+        if (Object.keys(loadedZones).length > 0) {
+          setCustomZones(loadedZones);
         }
 
         if (sitesRes.status === 'fulfilled' && Array.isArray(sitesRes.value) && sitesRes.value.length > 0) {
@@ -602,8 +605,8 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
           const d = docSnap.data();
           if (d.floorplanUrl) setCustomFloorplan(d.floorplanUrl);
           if (d.svgSource) setCustomSvgSource(d.svgSource);
-          if (d.zones && typeof d.zones === 'object') {
-            setCustomZones(d.zones);
+          if (d.zones && typeof d.zones === 'object' && Object.keys(d.zones).length > 0) {
+            setCustomZones(prev => ({ ...prev, ...d.zones }));
           }
         }
       });
@@ -1204,6 +1207,23 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     };
 
     setCustomZones(updatedZones);
+
+    try {
+      await fetch('/api/data/map_configurations', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          id: activeProject,
+          siteId: activeProject,
+          floorplanUrl: customFloorplan,
+          svgSource: customSvgSource,
+          zones: updatedZones,
+          updatedAt: new Date().toISOString()
+        })
+      });
+    } catch (err) {
+      console.warn('Map configuration database sync warning:', err);
+    }
 
     if (trackingCtx?.saveCustomZones) {
       trackingCtx.saveCustomZones(updatedZones, customFloorplan, customSvgSource).catch(() => {});

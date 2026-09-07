@@ -31,33 +31,20 @@ function handleDbError(error: unknown, operationType: OperationType, path: strin
 }
 
 export const SITE_ZONE_WAYPOINTS: { name: string; x: number; y: number; minX: number; maxX: number; minY: number; maxY: number }[] = [
-  { name: 'Material Storage', x: 18.0, y: 15.0, minX: 10, maxX: 26, minY: 11, maxY: 23 },
-  { name: 'Structure Work Area', x: 50.0, y: 15.0, minX: 40, maxX: 60, minY: 11, maxY: 23 },
-  { name: 'Crane Operating Zone', x: 82.0, y: 15.0, minX: 72, maxX: 90, minY: 11, maxY: 23 },
-  { name: 'Site Office', x: 18.0, y: 45.0, minX: 10, maxX: 26, minY: 40, maxY: 53 },
-  { name: 'Open Work Area', x: 50.0, y: 45.0, minX: 40, maxX: 60, minY: 40, maxY: 53 },
-  { name: 'Equipment Parking', x: 82.0, y: 45.0, minX: 72, maxX: 90, minY: 40, maxY: 53 },
-  { name: 'Excavation Area', x: 18.0, y: 75.0, minX: 10, maxX: 26, minY: 70, maxY: 83 },
-  { name: 'Assembly Point', x: 50.0, y: 75.0, minX: 40, maxX: 60, minY: 70, maxY: 83 },
-  { name: 'High Voltage Area', x: 82.0, y: 75.0, minX: 72, maxX: 90, minY: 70, maxY: 83 }
+  { name: 'Zone 1', x: 42.5, y: 27.5, minX: 20, maxX: 65, minY: 10, maxY: 45 },
+  { name: 'Zone 2', x: 42.5, y: 80.0, minX: 20, maxX: 65, minY: 70, maxY: 90 }
 ];
 
 export const INITIAL_PROJECT_ZONES: Record<string, Record<string, { x: number; y: number; width: number; height: number }>> = {
   'metro-tower': {
-    'Material Storage': { x: 6.5, y: 8.0, width: 23.5, height: 21.5 },
-    'Structure Work Area': { x: 36.5, y: 8.0, width: 26.0, height: 21.5 },
-    'Crane Operating Zone': { x: 69.0, y: 8.0, width: 24.5, height: 21.5 },
-    'Site Office': { x: 6.5, y: 38.0, width: 23.5, height: 21.5 },
-    'Open Work Area': { x: 36.5, y: 38.0, width: 26.0, height: 21.5 },
-    'Equipment Parking': { x: 69.0, y: 38.0, width: 24.5, height: 21.5 },
-    'Excavation Area': { x: 6.5, y: 68.0, width: 23.5, height: 21.5 },
-    'Assembly Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5 },
-    'High Voltage Area': { x: 69.0, y: 68.0, width: 24.5, height: 21.5 }
+    'Zone 1': { x: 20, y: 10, width: 45, height: 35 },
+    'Zone 2': { x: 20, y: 70, width: 45, height: 20 },
+    'Zone1': { x: 20, y: 10, width: 45, height: 35 },
+    'Zone2': { x: 20, y: 70, width: 45, height: 20 }
   },
   'highrise-phase2': {
-    'Structural Frame Sector A': { x: 18, y: 22, width: 30, height: 56 },
-    'Structural Frame Sector B': { x: 52, y: 22, width: 30, height: 56 },
-    'Exterior Scaffolding Perimeter': { x: 15, y: 15, width: 70, height: 70 }
+    'Zone 1': { x: 20, y: 10, width: 45, height: 35 },
+    'Zone 2': { x: 20, y: 70, width: 45, height: 20 }
   }
 };
 
@@ -201,8 +188,10 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
           return new Date();
         };
 
+        let isSyncInProgress = false;
         const syncRealtime = async () => {
-          if (!isMounted) return;
+          if (!isMounted || isSyncInProgress) return;
+          isSyncInProgress = true;
           try {
             const liveTags = await gaoApi.getTagsInRealtime();
             
@@ -240,7 +229,8 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
                  const targetY = tag.y !== undefined ? tag.y : Math.max(5, Math.min(95, rect.y + (rect.height || 20) / 2 + hashOffset));
 
                  const registered = registeredPeopleRef.current[tid] || registeredPeopleRef.current[tidLower] || registeredPeopleRef.current[tid.toUpperCase()];
-                 const pName = registered ? registered.name : (tag.personName || tag.name || `Tag ${tid.substring(0, 8).toUpperCase()}`);
+                 const apiName = tag.personName || tag.name || ((tag as any).FirstName ? `${(tag as any).FirstName} ${(tag as any).LastName || ''}`.trim() : '');
+                 const pName = registered ? registered.name : (apiName || `Tag ${tid.substring(0, 8).toUpperCase()}`);
                  const pRole = registered ? registered.role : (tag.role || 'Field Personnel');
                  const parsedDate = parseTagTimestamp(tag.Timestamp);
 
@@ -302,11 +292,13 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
             });
           } catch (e: any) {
             console.warn('Realtime tag sync warning:', e?.message || e);
+          } finally {
+            isSyncInProgress = false;
           }
         };
 
         syncRealtime();
-        interval = setInterval(syncRealtime, 1000);
+        interval = setInterval(syncRealtime, 2500);
     }
 
      return () => {

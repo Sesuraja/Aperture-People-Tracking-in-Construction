@@ -66,6 +66,28 @@ export function validateTelemetrySource(source?: string): { valid: boolean; norm
 }
 
 /**
+ * Validates that a telemetry tag ID is real and does not match test/dummy/mock prefixes.
+ */
+export function isRealTelemetryTag(tagId?: string): boolean {
+  if (!tagId || typeof tagId !== 'string') return false;
+  const tid = tagId.trim();
+  if (!tid) return false;
+  
+  const testPrefixes = [
+    'test_', 'batch-', 'uhf-real-', 'tag_diag', 'diag_',
+    'tag_hist_', 'tag_rt_', 'tag_raw_', 'tag_api_worker_', 'tag_123',
+    'w-101', 'worker-1', 'worker-2', 'worker-3'
+  ];
+  const tidLower = tid.toLowerCase();
+  for (const prefix of testPrefixes) {
+    if (tidLower.startsWith(prefix) || tidLower === prefix) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
  * Generates a deterministic event hash for deduplicating incoming telemetry events.
  * Uses externalEventId if provided, otherwise hashes (tagId + timestamp + location + readerId + orgId).
  */

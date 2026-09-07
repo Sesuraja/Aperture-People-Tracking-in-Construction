@@ -157,7 +157,7 @@ export function evaluateDeterministicRules(
   const locLower = (location || '').toLowerCase();
 
   // Find matching functional area by name, code, or partial string
-  const matchedArea: FunctionalAreaConfig | undefined = profile.functionalAreas.find(area => {
+  let matchedArea: FunctionalAreaConfig | undefined = profile.functionalAreas.find(area => {
     const areaNameLower = area.name.toLowerCase();
     const areaCodeLower = (area.code || '').toLowerCase();
     return (
@@ -167,6 +167,15 @@ export function evaluateDeterministicRules(
       (areaCodeLower && locLower.includes(areaCodeLower))
     );
   });
+
+  // Map generic zone tags (e.g. Zone1, Zone2) to functional areas if no exact match
+  if (!matchedArea && profile.functionalAreas.length > 0) {
+    if (/zone\s*1/i.test(locLower)) {
+      matchedArea = profile.functionalAreas[0];
+    } else if (/zone\s*2/i.test(locLower)) {
+      matchedArea = profile.functionalAreas[1] || profile.functionalAreas[0];
+    }
+  }
 
   let aiRiskScore = 12;
   let aiRiskLevel: 'SAFE' | 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'SAFE';

@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { upsertDoc, getCollectionDocs, getDocById } from './db.js';
-import { generateEventHash, validateTelemetrySource } from './dataPolicy.js';
+import { generateEventHash, validateTelemetrySource, isRealTelemetryTag } from './dataPolicy.js';
 import {
   analyzeTelemetryBatchWithAI,
   TelemetryContextItem,
@@ -216,24 +216,43 @@ export async function processTelemetryWithAI(
       }, orgId);
     }
 
-    // 3b. Update registered_people & people ONLY if the person already exists in MongoDB (Do NOT auto-create fake/new workers)
+    // 3b. Dynamically sync workforce registry: update or register personnel from real API telemetry
     const existingPerson = (await getDocById('registered_people', tagId, orgId)) || (await getDocById('people', tagId, orgId));
-    const personName = existingPerson?.name || item.personName || item.name || (item.fullName || (item.firstName ? `${item.firstName} ${item.lastName || ''}`.trim() : `Tag ${tagId}`));
-    const personRole = existingPerson?.role || (item.role && item.role !== 'General Staff' ? item.role : 'Field Specialist');
-    const personCompany = existingPerson?.tradeCompany || existingPerson?.company || item.company || 'Direct RFID / Ingested Data';
+    const fn = String(item.FirstName || item.firstName || existingPerson?.firstName || '').trim();
+    const ln = String(item.LastName || item.lastName || existingPerson?.lastName || '').trim();
+    const personName = (fn || ln)
+      ? `${fn} ${ln}`.trim()
+      : (existingPerson?.name || item.personName || item.name || `Tag ${tagId}`);
+    const personRole = existingPerson?.role || (item.role && item.role !== 'General Staff' ? item.role : 'Field Personnel');
+    const personCompany = existingPerson?.tradeCompany || existingPerson?.company || item.company || 'External API / RFID';
 
-    if (existingPerson) {
-      const updatedPersonDoc = {
-        ...existingPerson,
-        currentZone: item.location || existingPerson.currentZone || 'Site Perimeter',
-        location: item.location || existingPerson.location || 'Site Perimeter',
-        shiftStatus: existingPerson.shiftStatus || 'ON_SITE',
+    if (isRealTelemetryTag(tagId)) {
+      const personDoc = {
+        ...(existingPerson || {}),
+        id: tagId,
+        tagId,
+        hardhatTagId: tagId,
+        organizationId: orgId,
+        firstName: fn,
+        lastName: ln,
+        name: personName,
+        role: personRole,
+        company: personCompany,
+        tradeCompany: personCompany,
+        currentZone: item.location || existingPerson?.currentZone || 'Site Area',
+        location: item.location || existingPerson?.location || 'Site Area',
+        shiftStatus: existingPerson?.shiftStatus || 'ON_SITE',
         presenceState: 'ACTIVE',
+        safetyScore: existingPerson?.safetyScore || 95,
+        ppeStatus: existingPerson?.ppeStatus || 'COMPLIANT',
+        trainingStatus: existingPerson?.trainingStatus || 'COMPLIANT',
         lastSeen: item.timestamp || nowIso,
-        updatedAt: nowIso
+        updatedAt: nowIso,
+        createdAt: existingPerson?.createdAt || nowIso,
+        expireAt: tenDaysLater
       };
-      await upsertDoc('registered_people', updatedPersonDoc, orgId);
-      await upsertDoc('people', updatedPersonDoc, orgId);
+      await upsertDoc('registered_people', personDoc, orgId);
+      await upsertDoc('people', personDoc, orgId);
     }
 
     // 3c. Persist to attendance_logs (so Attendance tab displays live on-site workforce telemetry)

@@ -6,14 +6,75 @@ import {
   deleteDocById,
   isMongoConnected,
   logAuditEvent,
-  getPlaybackFrames
+  getPlaybackFrames,
+  bulkUpsertDocs
 } from '../services/db.js';
-import { optionalAuth, AuthRequest } from '../middleware/auth.js';
+import { requireAuth, optionalAuth, AuthRequest } from '../middleware/auth.js';
+import { broadcastWebSocketEvent } from '../services/websocket.js';
+import { broadcastSseEvent } from '../services/sse.js';
 
 export const dataRouter = Router();
 
-// Allow authenticated session or default tenant session for /api/data/* endpoints
-dataRouter.use(optionalAuth);
+// GET /api/data/floorplan_image/:id - streams floorplan image directly from MongoDB (Binary BSON or base64)
+const serveFloorplanImageHandler = async (req: AuthRequest, res: Response) => {
+  const { id } = req.params;
+  const orgId = req.user?.organizationId || 'default';
+
+  try {
+    const config = (await getDocById('map_configurations', id, orgId)) || 
+                   (await getDocById('floorplans', id, orgId)) || 
+                   (await getDocById('floorplans', `fp_${id}`, orgId));
+    if (!config) {
+      return res.status(404).send('Floorplan not found');
+    }
+
+    // Check if stored as raw Binary / Buffer in MongoDB
+    const binary = config.imageBinary || config.floorplanBinary || config.binaryData;
+    if (binary) {
+      let buffer: Buffer | null = null;
+      if (Buffer.isBuffer(binary)) {
+        buffer = binary;
+      } else if (binary && typeof binary.buffer === 'object' && binary.buffer) {
+        buffer = Buffer.from(binary.buffer);
+      } else if (binary && typeof binary.value === 'function') {
+        buffer = Buffer.from(binary.value());
+      }
+
+      if (buffer && buffer.length > 0) {
+        res.setHeader('Content-Type', config.imageMimeType || 'image/png');
+        res.setHeader('Cache-Control', 'public, max-age=86400');
+        return res.send(buffer);
+      }
+    }
+
+    // Check if stored as base64 string
+    const base64Data = config.imageUrl || config.image || config.floorplanImage || '';
+    if (typeof base64Data === 'string' && base64Data.startsWith('data:')) {
+      const parts = base64Data.split(',');
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mimeType = mimeMatch ? mimeMatch[1] : 'image/png';
+      const imgBuffer = Buffer.from(parts[1], 'base64');
+
+      res.setHeader('Content-Type', mimeType);
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.send(imgBuffer);
+    }
+
+    if (config.imageUrl && !config.imageUrl.startsWith('data:')) {
+      return res.redirect(config.imageUrl);
+    }
+
+    return res.status(404).send('No image data found');
+  } catch (err: any) {
+    console.error(`[Data Route] Error serving floorplan image ${id}:`, err);
+    return res.status(500).send('Internal server error loading image');
+  }
+};
+
+dataRouter.get('/floorplan_image/:id', optionalAuth, serveFloorplanImageHandler);
+
+// Enforce authentication on all /api/data/* operational endpoints
+dataRouter.use(requireAuth);
 
 // GET /api/data/playback_frames?date=YYYY-MM-DD
 // Returns all chronological tag position snapshots for the given date (used by PlaybackTab)
@@ -91,74 +152,7 @@ dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
   }
 });
 
-// GET /api/data/floorplan_image/:id - streams floorplan image directly from MongoDB (Binary BSON or base64)
-const serveFloorplanImageHandler = async (req: AuthRequest, res: Response) => {
-  const { id } = req.params;
-  const orgId = req.user?.organizationId || 'default';
 
-  try {
-    const config = (await getDocById('map_configurations', id, orgId)) || 
-                   (await getDocById('floorplans', id, orgId)) || 
-                   (await getDocById('floorplans', `fp_${id}`, orgId));
-    if (!config) {
-      return res.status(404).send('Floorplan not found');
-    }
-
-    // Check if stored as raw Binary / Buffer in MongoDB
-    const binary = config.imageBinary || config.floorplanBinary || config.binaryData;
-    if (binary) {
-      let buffer: Buffer | null = null;
-      if (Buffer.isBuffer(binary)) {
-        buffer = binary;
-      } else if (binary && typeof binary.buffer === 'object' && binary.buffer) {
-        buffer = Buffer.from(binary.buffer);
-      } else if (binary && typeof binary.value === 'function') {
-        buffer = Buffer.from(binary.value());
-      }
-
-      if (buffer && buffer.length > 0) {
-        res.setHeader('Content-Type', config.contentType || 'image/webp');
-        res.setHeader('Content-Length', buffer.length);
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        return res.send(buffer);
-      }
-    }
-
-    const raw = config.floorplanData || config.imageData || config.floorplanUrl || config.url;
-    if (!raw) {
-      return res.status(404).send('No image data in floorplan');
-    }
-
-    if (typeof raw === 'string' && raw.startsWith('data:image/')) {
-      const match = raw.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
-      if (match) {
-        const mimeType = match[1] === 'svg+xml' ? 'image/svg+xml' : `image/${match[1]}`;
-        const buffer = Buffer.from(match[2], 'base64');
-        res.setHeader('Content-Type', mimeType);
-        res.setHeader('Content-Length', buffer.length);
-        res.setHeader('Cache-Control', 'public, max-age=86400');
-        return res.send(buffer);
-      }
-    }
-
-    if (typeof raw === 'string' && raw.startsWith('<svg')) {
-      res.setHeader('Content-Type', 'image/svg+xml');
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      return res.send(raw);
-    }
-
-    if (typeof raw === 'string' && (raw.startsWith('/') || raw.startsWith('http'))) {
-      return res.redirect(raw);
-    }
-
-    return res.status(400).send('Invalid image format');
-  } catch (err: any) {
-    console.error('[Data Route] Error serving floorplan image from MongoDB:', err);
-    return res.status(500).send('Error serving image');
-  }
-};
-
-dataRouter.get('/floorplan_image/:id', serveFloorplanImageHandler);
 dataRouter.get('/map_configurations/:id/image', serveFloorplanImageHandler);
 dataRouter.get('/floorplans/:id/image', serveFloorplanImageHandler);
 
@@ -187,7 +181,9 @@ dataRouter.post('/zones/batch', async (req: AuthRequest, res: Response) => {
   const { zones, floorplanUrl, svgSource, activeProject } = req.body || {};
 
   try {
-    const savedZones = [];
+    const savedZones: any[] = [];
+    const zonesMap: Record<string, any> = {};
+
     if (Array.isArray(zones)) {
       for (const z of zones) {
         if (z && (z.id || z.zoneId || z.name)) {
@@ -195,29 +191,64 @@ dataRouter.post('/zones/batch', async (req: AuthRequest, res: Response) => {
           const cleanZone = { ...z, id: zoneId, zoneId };
           const saved = await upsertDoc('zones', cleanZone, orgId);
           savedZones.push(saved);
+          if (z.name) zonesMap[z.name] = z;
+        }
+      }
+    } else if (zones && typeof zones === 'object') {
+      for (const [name, z] of Object.entries(zones)) {
+        if (z && typeof z === 'object') {
+          const zoneObj = z as any;
+          const zoneId = zoneObj.id || zoneObj.zoneId || `zone_${(name || '').toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+          const cleanZone = { ...zoneObj, id: zoneId, zoneId, name };
+          const saved = await upsertDoc('zones', cleanZone, orgId);
+          savedZones.push(saved);
+          zonesMap[name] = cleanZone;
         }
       }
     }
 
-    // If floorplanUrl or svgSource provided, update map_configurations without polluting zones collection
-    if (floorplanUrl || svgSource) {
-      const projId = activeProject || 'metro-tower';
-      const existingConfig = (await getDocById('map_configurations', projId, orgId)) || {};
-      const updatedConfig = {
-        ...existingConfig,
-        id: projId,
-        siteId: projId,
-        ...(floorplanUrl ? { floorplanUrl } : {}),
-        ...(svgSource ? { svgSource } : {}),
-        updatedAt: new Date().toISOString()
-      };
-      await upsertDoc('map_configurations', updatedConfig, orgId);
-    }
+    // Always keep map_configurations synchronized with current zones for active project
+    const projId = activeProject || req.body?.siteId || 'metro-tower';
+    const existingConfig = (await getDocById('map_configurations', projId, orgId)) || {};
+    const mergedZones = req.body?.replaceZones ? zonesMap : {
+      ...(existingConfig.zones || {}),
+      ...zonesMap
+    };
 
-    return res.json({ success: true, count: savedZones.length, zones: savedZones });
+    const updatedConfig = {
+      ...existingConfig,
+      id: projId,
+      siteId: projId,
+      zones: mergedZones,
+      ...(floorplanUrl ? { floorplanUrl } : {}),
+      ...(svgSource ? { svgSource } : {}),
+      updatedAt: new Date().toISOString()
+    };
+    await upsertDoc('map_configurations', updatedConfig, orgId);
+
+    return res.json({ success: true, count: savedZones.length, zones: savedZones, mapConfig: updatedConfig });
   } catch (err: any) {
     console.error('[Data Route] Error saving zones batch:', err);
     return res.status(500).json({ error: 'Failed to save zones batch' });
+  }
+});
+
+// POST /api/data/:collection/batch - high-performance bulk upsert
+dataRouter.post('/:collection/batch', async (req: AuthRequest, res: Response) => {
+  const { collection } = req.params;
+  const orgId = req.user?.organizationId || 'default';
+  const docs = Array.isArray(req.body) ? req.body : (req.body?.docs || []);
+
+  if (!Array.isArray(docs) || docs.length === 0) {
+    return res.json({ success: true, count: 0 });
+  }
+
+  try {
+    const result = await bulkUpsertDocs(collection, docs, orgId);
+    return res.json({ success: true, count: result.count });
+  } catch (err: any) {
+    console.error(`[Data Route] Error during batch upsert for ${collection}:`, err);
+    return res.status(500).json({ error: `Failed to batch save documents in ${collection}` });
   }
 });
 
@@ -248,6 +279,15 @@ const handleCollectionUpsert = async (req: AuthRequest, res: Response) => {
   }
 
   try {
+    // If updating map_configurations without explicit zones, preserve existing zones
+    if (collection === 'map_configurations' && (body.zones === undefined || (body.preserveZones && (!body.zones || Object.keys(body.zones).length === 0)))) {
+      const docId = body.id || 'metro-tower';
+      const existing = await getDocById('map_configurations', docId, orgId);
+      if (existing && existing.zones && Object.keys(existing.zones).length > 0) {
+        body.zones = existing.zones;
+      }
+    }
+
     const saved = await upsertDoc(collection, body, orgId);
 
     // Sync dual workforce collections: registered_people <-> people in MongoDB
@@ -280,6 +320,40 @@ const handleCollectionUpsert = async (req: AuthRequest, res: Response) => {
         ip: body.ipAddress || body.ip || '192.168.1.101',
         mac: body.macAddress || body.mac || '00:1A:79:39:63:43'
       }, orgId).catch(() => {});
+    } else if (collection === 'map_configurations') {
+      // Sync zones defined on the custom map directly to the 'zones' collection in MongoDB
+      if (body.zones && typeof body.zones === 'object') {
+        const zoneEntries = Array.isArray(body.zones) ? body.zones : Object.entries(body.zones);
+        for (const entry of zoneEntries) {
+          const zName = Array.isArray(entry) ? entry[0] : (entry.name || entry.id);
+          const zData = Array.isArray(entry) ? entry[1] : entry;
+          if (zData && typeof zData === 'object') {
+            const cleanId = zData.id || zData.zoneId || `zone_${String(zName).toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+            await upsertDoc('zones', {
+              ...zData,
+              id: cleanId,
+              zoneId: cleanId,
+              name: zData.name || zName,
+              siteId: body.id || body.siteId || 'metro-tower',
+              organizationId: orgId,
+              updatedAt: new Date().toISOString()
+            }, orgId).catch(() => {});
+          }
+        }
+      }
+    } else if (collection === 'zones') {
+      // Sync individual zones directly into the map_configurations zone index
+      const projId = body.siteId || body.projectId || 'metro-tower';
+      const cfg = (await getDocById('map_configurations', projId, orgId)) || { id: projId, siteId: projId, zones: {} };
+      const currentZones = cfg.zones && typeof cfg.zones === 'object' ? { ...cfg.zones } : {};
+      const zoneKey = body.name || body.id || 'Custom Zone';
+      currentZones[zoneKey] = {
+        id: body.id || saved.id,
+        zoneId: body.id || saved.id,
+        name: zoneKey,
+        ...body
+      };
+      await upsertDoc('map_configurations', { ...cfg, zones: currentZones, updatedAt: new Date().toISOString() }, orgId).catch(() => {});
     }
 
     await logAuditEvent({
@@ -291,6 +365,10 @@ const handleCollectionUpsert = async (req: AuthRequest, res: Response) => {
       details: { docId: saved.id },
       ip: req.ip
     });
+
+    // Real-time broadcast so all open tabs / clients update dynamically without refresh
+    broadcastWebSocketEvent('data_updated', { collection, id: saved.id, action: 'upsert' }, orgId);
+    broadcastSseEvent('data_updated', { collection, id: saved.id, action: 'upsert' }, orgId);
 
     return res.json(saved);
   } catch (err: any) {
@@ -320,6 +398,14 @@ const handleCollectionItemUpsert = async (req: AuthRequest, res: Response) => {
   body.id = id;
 
   try {
+    // If updating map_configurations without explicit zones, preserve existing zones
+    if (collection === 'map_configurations' && (body.zones === undefined || (body.preserveZones && (!body.zones || Object.keys(body.zones).length === 0)))) {
+      const existing = await getDocById('map_configurations', id, orgId);
+      if (existing && existing.zones && Object.keys(existing.zones).length > 0) {
+        body.zones = existing.zones;
+      }
+    }
+
     const saved = await upsertDoc(collection, body, orgId);
 
     // Sync dual workforce collections: registered_people <-> people in MongoDB
@@ -352,6 +438,40 @@ const handleCollectionItemUpsert = async (req: AuthRequest, res: Response) => {
         ip: body.ipAddress || body.ip || '192.168.1.101',
         mac: body.macAddress || body.mac || '00:1A:79:39:63:43'
       }, orgId).catch(() => {});
+    } else if (collection === 'map_configurations') {
+      // Sync zones defined on the custom map directly to the 'zones' collection in MongoDB
+      if (body.zones && typeof body.zones === 'object') {
+        const zoneEntries = Array.isArray(body.zones) ? body.zones : Object.entries(body.zones);
+        for (const entry of zoneEntries) {
+          const zName = Array.isArray(entry) ? entry[0] : (entry.name || entry.id);
+          const zData = Array.isArray(entry) ? entry[1] : entry;
+          if (zData && typeof zData === 'object') {
+            const cleanId = zData.id || zData.zoneId || `zone_${String(zName).toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+            await upsertDoc('zones', {
+              ...zData,
+              id: cleanId,
+              zoneId: cleanId,
+              name: zData.name || zName,
+              siteId: id || body.id || body.siteId || 'metro-tower',
+              organizationId: orgId,
+              updatedAt: new Date().toISOString()
+            }, orgId).catch(() => {});
+          }
+        }
+      }
+    } else if (collection === 'zones') {
+      // Sync individual zones directly into the map_configurations zone index
+      const projId = body.siteId || body.projectId || 'metro-tower';
+      const cfg = (await getDocById('map_configurations', projId, orgId)) || { id: projId, siteId: projId, zones: {} };
+      const currentZones = cfg.zones && typeof cfg.zones === 'object' ? { ...cfg.zones } : {};
+      const zoneKey = body.name || id || body.id || 'Custom Zone';
+      currentZones[zoneKey] = {
+        id: id || body.id,
+        zoneId: id || body.id,
+        name: zoneKey,
+        ...body
+      };
+      await upsertDoc('map_configurations', { ...cfg, zones: currentZones, updatedAt: new Date().toISOString() }, orgId).catch(() => {});
     }
 
     await logAuditEvent({
@@ -363,6 +483,10 @@ const handleCollectionItemUpsert = async (req: AuthRequest, res: Response) => {
       details: { docId: id },
       ip: req.ip
     });
+
+    // Real-time broadcast so all open tabs / clients update dynamically without refresh
+    broadcastWebSocketEvent('data_updated', { collection, id, action: 'update' }, orgId);
+    broadcastSseEvent('data_updated', { collection, id, action: 'update' }, orgId);
 
     return res.json(saved);
   } catch (err: any) {
@@ -394,6 +518,25 @@ dataRouter.delete('/:collection/:id', async (req: AuthRequest, res: Response) =>
       const tagMapDel = await deleteDocById('hardware_tag_mappings', id, orgId).catch(() => false);
       const liveDel = await deleteDocById('live_tags', id, orgId).catch(() => false);
       if (mirrorDel || tagMapDel || liveDel) deleted = true;
+    } else if (collection === 'zones' || collection === 'geofences') {
+      const configs = await getCollectionDocs('map_configurations', undefined, orgId);
+      for (const cfg of configs) {
+        if (cfg.zones && typeof cfg.zones === 'object') {
+          let modified = false;
+          const nextZones = { ...cfg.zones };
+          for (const k of Object.keys(nextZones)) {
+            const zId = (nextZones[k] as any)?.id || (nextZones[k] as any)?.zoneId || `zone_${k.toLowerCase().replace(/[^a-z0-9]+/g, '_')}`;
+            if (k === id || zId === id || k.toLowerCase() === id.toLowerCase() || `zone_${id.toLowerCase()}` === zId) {
+              delete nextZones[k];
+              modified = true;
+            }
+          }
+          if (modified) {
+            await upsertDoc('map_configurations', { ...cfg, zones: nextZones }, orgId);
+            deleted = true;
+          }
+        }
+      }
     }
 
     await logAuditEvent({
@@ -409,6 +552,10 @@ dataRouter.delete('/:collection/:id', async (req: AuthRequest, res: Response) =>
     if (!deleted) {
       return res.status(404).json({ error: 'Document not found or belongs to another organization' });
     }
+
+    // Real-time broadcast so all open tabs / clients update dynamically without refresh
+    broadcastWebSocketEvent('data_updated', { collection, id, action: 'delete' }, orgId);
+    broadcastSseEvent('data_updated', { collection, id, action: 'delete' }, orgId);
 
     return res.json({ message: 'Document deleted successfully', id });
   } catch (err: any) {

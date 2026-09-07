@@ -393,6 +393,9 @@ export default function DevicesTab() {
 
     fetchDirectFromApi();
     const interval = setInterval(fetchDirectFromApi, 2000);
+    window.addEventListener('gao_refresh_data', fetchDirectFromApi);
+    window.addEventListener('gao_map_data_updated', fetchDirectFromApi);
+    window.addEventListener('gao_data_updated', fetchDirectFromApi);
 
     const unsubDevices = onSnapshot(collection(db, 'devices'), async (snapshot) => {
       devList = [];
@@ -575,6 +578,9 @@ export default function DevicesTab() {
     return () => {
       isMounted = false;
       clearInterval(interval);
+      window.removeEventListener('gao_refresh_data', fetchDirectFromApi);
+      window.removeEventListener('gao_map_data_updated', fetchDirectFromApi);
+      window.removeEventListener('gao_data_updated', fetchDirectFromApi);
       unsubDevices();
       unsubHwReaders();
       unsubLiveTags();

@@ -62,7 +62,7 @@ export interface DirectHardwareScanPayload {
  */
 export async function processDirectHardwareScan(
   scan: DirectHardwareScanPayload,
-  organizationId: string = 'demo'
+  organizationId: string = 'default'
 ): Promise<{
   success: boolean;
   resolvedEntity: { name: string; type: string; role?: string };
@@ -72,7 +72,10 @@ export async function processDirectHardwareScan(
   aiInsight: string;
 }> {
   const nowIso = new Date().toISOString();
-  const rawTagId = String(scan.tagId || `TAG_${Date.now()}`).trim();
+  const rawTagId = String(scan.tagId || '').trim();
+  if (!rawTagId) {
+    throw new Error('Valid hardware tagId is required for hardware scan ingestion');
+  }
 
   // STEP 1: RESOLVE READER & ANTENNA ZONE MAPPING
   const readers: HardwareReader[] = await getCollectionDocs('hardware_readers', undefined, organizationId);

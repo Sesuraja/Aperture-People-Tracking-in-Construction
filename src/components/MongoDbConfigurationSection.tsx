@@ -44,9 +44,6 @@ export default function MongoDbConfigurationSection() {
       const res = await fetch("/api/mongodb/status");
       const data = await res.json();
       setStats(data);
-      if (data.connectionString && !mongoUriInput) {
-        // If unmasked or available, we can set placeholder
-      }
     } catch (err) {
       console.error("Failed to fetch MongoDB status:", err);
     } finally {
@@ -127,30 +124,30 @@ export default function MongoDbConfigurationSection() {
 
   return (
     <div className="space-y-6">
-      {/* Overview Banner */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5 text-white shadow-lg">
+      {/* Overview Banner - Clean White Card */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 text-slate-900 shadow-sm">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
               stats?.connected
-                ? "bg-emerald-500/20 border border-emerald-500/30 text-emerald-400"
-                : "bg-amber-500/20 border border-amber-500/30 text-amber-400"
+                ? "bg-emerald-50 border border-emerald-200 text-emerald-600"
+                : "bg-amber-50 border border-amber-200 text-amber-600"
             }`}>
               <Database className="w-5 h-5" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="text-base font-semibold">MongoDB Database Connection</h3>
-                <span className={`px-2 py-0.5 text-[10px] font-bold rounded-full flex items-center gap-1 ${
+                <h3 className="text-base font-semibold text-slate-900">MongoDB Database Cluster</h3>
+                <span className={`px-2.5 py-0.5 text-xs font-semibold rounded-full flex items-center gap-1.5 ${
                   stats?.connected
-                    ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
-                    : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                    ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                    : "bg-amber-50 text-amber-700 border border-amber-200"
                 }`}>
                   <span className="w-1.5 h-1.5 rounded-full bg-current" />
                   {stats?.connected ? "MongoDB Atlas Active" : "In-Memory Storage"}
                 </span>
               </div>
-              <p className="text-xs text-slate-400 mt-0.5">
+              <p className="text-xs text-slate-500 mt-0.5">
                 Central persistent database storing personnel, RFID telemetry, hardware gateways, third-party APIs, and AI incident logs.
               </p>
             </div>
@@ -159,33 +156,33 @@ export default function MongoDbConfigurationSection() {
           <button
             type="button"
             onClick={fetchMongoStatus}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg transition-colors"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin text-indigo-600" : "text-slate-500"}`} />
             Refresh Status
           </button>
         </div>
 
         {/* Quick Stats Grid */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-800 text-xs">
-          <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/60">
-            <span className="text-[10px] text-slate-400 block">Database Engine</span>
-            <span className="font-semibold text-slate-200">{stats?.engine || "Connecting..."}</span>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-4 pt-4 border-t border-slate-100 text-xs">
+          <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+            <span className="text-[10px] font-semibold text-slate-500 block uppercase tracking-wider">Database Engine</span>
+            <span className="font-semibold text-slate-800 mt-0.5 block">{stats?.engine || "Connecting..."}</span>
           </div>
 
-          <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/60">
-            <span className="text-[10px] text-slate-400 block">Active Collections</span>
-            <span className="font-semibold text-slate-200">{stats?.collectionsCount || 0} Collections</span>
+          <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+            <span className="text-[10px] font-semibold text-slate-500 block uppercase tracking-wider">Active Collections</span>
+            <span className="font-semibold text-slate-800 mt-0.5 block">{stats?.collectionsCount || 0} Collections</span>
           </div>
 
-          <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/60">
-            <span className="text-[10px] text-slate-400 block">Total Stored Records</span>
-            <span className="font-semibold text-emerald-400 font-mono">{stats?.totalRecords || 0} Documents</span>
+          <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+            <span className="text-[10px] font-semibold text-slate-500 block uppercase tracking-wider">Total Stored Records</span>
+            <span className="font-semibold text-emerald-600 font-mono mt-0.5 block">{stats?.totalRecords || 0} Documents</span>
           </div>
 
-          <div className="bg-slate-800/50 p-3 rounded-lg border border-slate-700/60">
-            <span className="text-[10px] text-slate-400 block">Connection URI</span>
-            <span className="font-mono text-slate-300 truncate block text-[11px]">
+          <div className="bg-slate-50 p-3 rounded-lg border border-slate-100">
+            <span className="text-[10px] font-semibold text-slate-500 block uppercase tracking-wider">Connection URI</span>
+            <span className="font-mono text-slate-700 truncate block text-[11px] mt-0.5">
               {stats?.connectionString || "None (Using In-Memory)"}
             </span>
           </div>
@@ -193,20 +190,20 @@ export default function MongoDbConfigurationSection() {
       </div>
 
       {/* Connection Configuration Form */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm space-y-4">
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm space-y-4">
         <div>
-          <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <Server className="w-4 h-4 text-indigo-500" />
+          <h4 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
+            <Server className="w-4 h-4 text-indigo-600" />
             Configure MongoDB Connection URI
           </h4>
-          <p className="text-xs text-slate-500 dark:text-slate-400">
+          <p className="text-xs text-slate-500">
             Enter your MongoDB Atlas cluster URI or self-hosted MongoDB connection string.
           </p>
         </div>
 
         <div className="space-y-3">
           <div>
-            <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+            <label className="block text-xs font-semibold text-slate-700 mb-1">
               MongoDB Connection String (URI)
             </label>
             <div className="relative">
@@ -215,18 +212,18 @@ export default function MongoDbConfigurationSection() {
                 value={mongoUriInput}
                 onChange={(e) => setMongoUriInput(e.target.value)}
                 placeholder="mongodb+srv://username:password@cluster.mongodb.net/database?retryWrites=true&w=majority"
-                className="w-full pl-3 pr-10 py-2.5 text-xs font-mono bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
+                className="w-full pl-3 pr-10 py-2.5 text-xs font-mono bg-slate-50 border border-slate-200 rounded-lg text-slate-900 placeholder:text-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                className="absolute right-2.5 top-2.5 text-slate-400 hover:text-slate-600"
               >
                 {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
               </button>
             </div>
-            <span className="text-[11px] text-slate-400 mt-1 block">
-              Supports standard format e.g. <code className="text-indigo-500 font-mono">mongodb+srv://admin:pass@cluster0.mongodb.net/peopletracking</code>
+            <span className="text-[11px] text-slate-500 mt-1 block">
+              Supports standard format e.g. <code className="text-indigo-600 font-mono">mongodb+srv://admin:pass@cluster0.mongodb.net/peopletracking</code>
             </span>
           </div>
 
@@ -247,16 +244,16 @@ export default function MongoDbConfigurationSection() {
                 type="button"
                 disabled={isTesting}
                 onClick={handleTestConnection}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-700 dark:text-slate-200 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-300 dark:border-slate-700 rounded-lg disabled:opacity-50 transition-colors"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-lg disabled:opacity-50 transition-colors"
               >
-                {isTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 text-emerald-500" />}
+                {isTesting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5 text-emerald-600" />}
                 Test MongoDB Connection
               </button>
             </div>
 
             <div className="text-xs text-slate-500 flex items-center gap-1">
               <Info className="w-3.5 h-3.5 text-slate-400" />
-              Runtime URI is persistently saved to <code className="text-slate-700 dark:text-slate-300 font-mono">.mongo_runtime.json</code>
+              Runtime URI is persistently saved to <code className="text-slate-800 font-mono bg-slate-100 px-1 rounded">.mongo_runtime.json</code>
             </div>
           </div>
 
@@ -265,34 +262,34 @@ export default function MongoDbConfigurationSection() {
             <div
               className={`p-3 rounded-lg text-xs flex items-center gap-2 ${
                 saveNotice.success
-                  ? "bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-300"
-                  : "bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-300"
+                  ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
+                  : "bg-rose-50 border border-rose-200 text-rose-800"
               }`}
             >
-              {saveNotice.success ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertTriangle className="w-4 h-4 shrink-0" />}
+              {saveNotice.success ? <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-600" /> : <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />}
               <span>{saveNotice.message}</span>
             </div>
           )}
 
           {/* Test Result Diagnostics */}
           {testResult && (
-            <div className="p-3.5 rounded-lg bg-slate-950 border border-slate-800 text-slate-200 font-mono text-xs space-y-1.5">
+            <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-800 font-mono text-xs space-y-1.5">
               <div className="flex items-center justify-between">
                 <span className="flex items-center gap-1.5 font-semibold">
                   {testResult.success ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                   ) : (
-                    <AlertTriangle className="w-4 h-4 text-rose-400" />
+                    <AlertTriangle className="w-4 h-4 text-rose-600" />
                   )}
                   {testResult.success ? "MongoDB Ping Succeeded" : "Connection Failed"}
                 </span>
                 {testResult.latencyMs !== undefined && (
-                  <span className="text-slate-400">Latency: {testResult.latencyMs}ms</span>
+                  <span className="text-slate-500">Latency: {testResult.latencyMs}ms</span>
                 )}
               </div>
 
               {testResult.error && (
-                <p className="text-rose-400 text-[11px] pt-1">
+                <p className="text-rose-600 text-[11px] pt-1">
                   Reason: {testResult.error}
                 </p>
               )}
@@ -303,9 +300,9 @@ export default function MongoDbConfigurationSection() {
 
       {/* Collections Breakdown */}
       {stats?.collectionsBreakdown && Object.keys(stats.collectionsBreakdown).length > 0 && (
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl p-5 shadow-sm">
-          <h4 className="text-sm font-semibold text-slate-900 dark:text-slate-100 mb-3 flex items-center gap-2">
-            <Layers className="w-4 h-4 text-indigo-500" />
+        <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+          <h4 className="text-sm font-semibold text-slate-900 mb-3 flex items-center gap-2">
+            <Layers className="w-4 h-4 text-indigo-600" />
             MongoDB Stored Collections Breakdown
           </h4>
 
@@ -313,12 +310,12 @@ export default function MongoDbConfigurationSection() {
             {Object.entries(stats.collectionsBreakdown).map(([colName, count]) => (
               <div
                 key={colName}
-                className="p-2.5 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700/60"
+                className="p-3 bg-slate-50 rounded-lg border border-slate-200"
               >
-                <span className="text-[11px] font-mono font-medium text-slate-700 dark:text-slate-300 block truncate">
+                <span className="text-xs font-mono font-medium text-slate-700 block truncate">
                   {colName}
                 </span>
-                <span className="text-xs font-bold text-indigo-600 dark:text-indigo-400 font-mono">
+                <span className="text-sm font-bold text-indigo-600 font-mono">
                   {count} docs
                 </span>
               </div>

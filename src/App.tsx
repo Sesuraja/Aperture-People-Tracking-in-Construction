@@ -559,7 +559,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
               } />
               <Route path="/incidents" element={
                  <ProtectedRoute 
-                   element={<IncidentsTab />}
+                   element={<IncidentsTab people={people || []} />}
                    userRole={userRole}
                    userUid="default"
                    permissionKey="incidents"

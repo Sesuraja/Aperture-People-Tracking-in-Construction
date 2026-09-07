@@ -132,26 +132,17 @@ export default function StreamDiagnostics() {
       }
 
       if (activeTestProtocol === 'mqtt' || activeTestProtocol === 'all') {
-        await mqttStreamService.publish('aperture/tags/ping', { TagID: 'DIAG_MQTT_PING_01', Timestamp: new Date().toISOString(), Location: 'MQTT Gate Test' });
+        await mqttStreamService.publish('aperture/tags/ping', { type: 'ping', timestamp: new Date().toISOString() });
         const rtt = Date.now() - startTime + 14;
         setMetrics((p) => ({ ...p, mqttLatencyMs: rtt, mqttPackets: p.mqttPackets + 1 }));
         addDiagLog('MQTT', 'HEARTBEAT', `MQTT Topic Publish - Roundtrip RTT ${rtt}ms`, rtt);
       }
 
-      // Test multi-protocol server ingestion
-      const ingestRes = await fetch('/api/realtime/ingest', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          protocol: 'WebSocket/MQTT Diagnostic Suite',
-          events: [
-            { TagID: 'TAG_DIAG_WS_MQTT', Timestamp: new Date().toISOString(), Location: `${zoneLabel || 'Operational Zone'} - ${siteLabel || 'Main'} Portal Gateway` }
-          ]
-        })
-      });
+      // Verify server health and real API connectivity without injecting fake test tags
+      const healthRes = await fetch('/api/health');
 
-      if (ingestRes.ok) {
-        addDiagLog('Ingest', 'INFO', `WebSocket & MQTT Database Ingestion verified on collection rfid_realtime_events`);
+      if (healthRes.ok) {
+        addDiagLog('Ingest', 'INFO', `Realtime Gateway Health verified (clean non-polluting diagnostic)`);
       }
 
       setTimeout(() => {

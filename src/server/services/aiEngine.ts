@@ -233,14 +233,14 @@ Return strictly valid JSON with this exact schema:
         contents: prompt,
         config: { responseMimeType: 'application/json' }
       });
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini API timeout')), 2500));
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini API timeout')), 12000));
       const response = await Promise.race([responsePromise, timeoutPromise]) as any;
       const parsed = parseCleanJsonResponse(response.text || '');
       return aiEngineDecisionSchema.parse(parsed);
     } catch (err: any) {
       lastError = err;
-      if (err.message && (err.message.includes('404') || err.message.includes('API_KEY_INVALID') || err.message.includes('401') || err.message.includes('403'))) {
-        break; // Quick break on auth/model invalid errors
+      if (err.message && (err.message.includes('404') || err.message.includes('API_KEY_INVALID') || err.message.includes('401') || err.message.includes('403') || err.message.includes('429') || err.message.includes('quota') || err.message.includes('RESOURCE_EXHAUSTED'))) {
+        break; // Quick break on auth/quota/model invalid errors
       }
     }
   }

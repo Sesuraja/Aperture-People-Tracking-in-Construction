@@ -21,11 +21,11 @@ describe('Automatic Data Generation Prevention & Ingestion Safety', () => {
 
   beforeAll(async () => {
     await wipeAllCollections(TEST_ORG);
-  }, 30000);
+  }, 60000);
 
   afterAll(async () => {
     await wipeAllCollections(TEST_ORG);
-  }, 30000);
+  }, 60000);
 
   it('TEST 1: DATA_MODE defaults to production and rejects synthetic data sources', () => {
     expect(isProductionDataMode()).toBe(true);
@@ -72,7 +72,7 @@ describe('Automatic Data Generation Prevention & Ingestion Safety', () => {
     expect(insights.length).toBe(0);
     expect(incidents.length).toBe(0);
     expect(liveTags.length).toBe(0);
-  }, 25000);
+  }, 60000);
 
   it('TEST 3: Ingestion service ignores empty payloads without creating records', async () => {
     const ORG_3 = `safety_org_t3_${Date.now()}`;

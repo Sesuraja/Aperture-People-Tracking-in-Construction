@@ -158,6 +158,8 @@ async function safeJsonFetch(url: string, options?: RequestInit): Promise<any> {
   return fetchPromise;
 }
 
+const updateDebounceTimers = new Map<string, any>();
+
 function notifyDataUpdated(colName: string) {
   if (typeof window !== 'undefined') {
     for (const key of Array.from(clientResponseCache.keys())) {
@@ -165,7 +167,30 @@ function notifyDataUpdated(colName: string) {
         clientResponseCache.delete(key);
       }
     }
-    window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName } }));
+    // Trailing 300ms debounce to prevent cascading update storms from multi-document writes
+    if (updateDebounceTimers.has(colName)) {
+      clearTimeout(updateDebounceTimers.get(colName));
+    }
+    const timer = setTimeout(() => {
+      updateDebounceTimers.delete(colName);
+      window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName } }));
+    }, 300);
+    updateDebounceTimers.set(colName, timer);
+  }
+}
+
+export async function batchSetDocs(colName: string, docs: any[]): Promise<void> {
+  if (!colName || !Array.isArray(docs) || docs.length === 0) return;
+  try {
+    const response = await fetch(`/api/data/${encodeURIComponent(colName)}/batch`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify(docs)
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    notifyDataUpdated(colName);
+  } catch (err) {
+    console.warn(`batchSetDocs MongoDB API error for ${colName}:`, err);
   }
 }
 

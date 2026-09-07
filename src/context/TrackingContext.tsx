@@ -111,15 +111,8 @@ function getAuthHeaders(): Record<string, string> {
 }
 
 export const SITE_ZONE_WAYPOINTS: { name: string; x: number; y: number; minX: number; maxX: number; minY: number; maxY: number }[] = [
-  { name: 'Material Storage', x: 18.0, y: 15.0, minX: 10, maxX: 26, minY: 11, maxY: 23 },
-  { name: 'Structure Work Area', x: 50.0, y: 15.0, minX: 40, maxX: 60, minY: 11, maxY: 23 },
-  { name: 'Crane Operating Zone', x: 82.0, y: 15.0, minX: 72, maxX: 90, minY: 11, maxY: 23 },
-  { name: 'Site Office', x: 18.0, y: 45.0, minX: 10, maxX: 26, minY: 40, maxY: 53 },
-  { name: 'Open Work Area', x: 50.0, y: 45.0, minX: 40, maxX: 60, minY: 40, maxY: 53 },
-  { name: 'Equipment Parking', x: 82.0, y: 45.0, minX: 72, maxX: 90, minY: 40, maxY: 53 },
-  { name: 'Excavation Area', x: 18.0, y: 75.0, minX: 10, maxX: 26, minY: 70, maxY: 83 },
-  { name: 'Assembly Point', x: 50.0, y: 75.0, minX: 40, maxX: 60, minY: 70, maxY: 83 },
-  { name: 'High Voltage Area', x: 82.0, y: 75.0, minX: 72, maxX: 90, minY: 70, maxY: 83 }
+  { name: 'Zone 1', x: 42.5, y: 27.5, minX: 20, maxX: 65, minY: 10, maxY: 45 },
+  { name: 'Zone 2', x: 42.5, y: 80.0, minX: 20, maxX: 65, minY: 70, maxY: 90 }
 ];
 
 export function TrackingProvider({ children }: { children: React.ReactNode }) {
@@ -591,7 +584,9 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         method: 'POST',
         headers: getAuthHeaders(),
         body: JSON.stringify({
+          activeProject,
           zones: zoneDefinitions,
+          replaceZones: true,
           floorplanUrl: newFloorplanUrl,
           svgSource: newSvgSource
         })
@@ -877,16 +872,31 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         ? peopleRes.value
         : [];
         
-      const loadedPeople: Person[] = rawPeople.map((p: any, idx: number) => {
-        const id = p.id || p.tagId || p.TagID || `P-${idx + 101}`;
-        const defaultWaypoint = SITE_ZONE_WAYPOINTS[idx % SITE_ZONE_WAYPOINTS.length];
-        const x = typeof p.x === 'number' && p.x >= 5 && p.x <= 95 ? p.x : defaultWaypoint.x;
-        const y = typeof p.y === 'number' && p.y >= 5 && p.y <= 95 ? p.y : defaultWaypoint.y;
-        const zone = p.currentZone || p.location || defaultWaypoint.name;
+      const loadedPeople: Person[] = rawPeople
+        .filter((p: any) => p && (p.id || p.tagId || p.TagID))
+        .map((p: any, idx: number) => {
+          const id = String(p.id || p.tagId || p.TagID).trim();
+          const defaultWaypoint = SITE_ZONE_WAYPOINTS[idx % SITE_ZONE_WAYPOINTS.length];
+          const x = typeof p.x === 'number' && p.x >= 5 && p.x <= 95 ? p.x : defaultWaypoint.x;
+          const y = typeof p.y === 'number' && p.y >= 5 && p.y <= 95 ? p.y : defaultWaypoint.y;
+          const zone = p.currentZone || p.location || defaultWaypoint.name;
+
+        const fn = String(p.firstName || p.FirstName || '').trim();
+        const ln = String(p.lastName || p.LastName || '').trim();
+        let full = '';
+        if (fn && ln) {
+          full = `${fn} ${ln}`;
+        } else if (p.name && typeof p.name === 'string' && p.name.trim() && p.name !== 'Personnel' && p.name !== 'Worker') {
+          full = p.name.trim();
+        } else if (fn) {
+          full = fn;
+        } else {
+          full = p.personName || 'Personnel';
+        }
 
         return {
           id,
-          name: p.name || p.personName || 'Personnel',
+          name: full,
           role: p.role || 'Field Personnel',
           tradeCompany: p.company || p.tradeCompany || 'Contractor',
           ppeStatus: p.ppeStatus || 'COMPLIANT',

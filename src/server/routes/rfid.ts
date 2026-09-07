@@ -1,6 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { getCollectionDocs, upsertDoc, logAuditEvent, bulkWriteRealtimeTags, cleanupStaleRealTimeTags } from '../services/db.js';
+import { 
+  getCollectionDocs, 
+  upsertDoc, 
+  logAuditEvent, 
+  bulkWriteRealtimeTags, 
+  cleanupStaleRealTimeTags,
+  bulkUpsertDocs 
+} from '../services/db.js';
 import { broadcastSseEvent } from '../services/sse.js';
 import { broadcastWebSocketEvent } from '../services/websocket.js';
 import { processTelemetryWithAI } from '../services/aiPipeline.js';
@@ -57,9 +64,12 @@ const scanSchema = z.object({
 const handleGetTotalCount = async (req: Request, res: Response) => {
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
   try {
-    // 1. Check live external cloud server first
+    // 1. Check live external cloud server first (with 4-second race)
     try {
-      const upstream = await fetchHistoryTotalCount();
+      const upstream = await Promise.race([
+        fetchHistoryTotalCount(),
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Upstream total count timeout after 4000ms')), 4000))
+      ]);
       if (upstream && typeof upstream.totalCount === 'number' && upstream.totalCount > 0) {
         if (req.query.format === 'object') {
           return res.json({ totalCount: upstream.totalCount, count: upstream.totalCount, organizationId: orgId });
@@ -136,19 +146,40 @@ const handleGetHistory = async (req: Request, res: Response) => {
       return 0.5;
     };
 
-    // 1. Check live external cloud server first
+    // 1. Check live external cloud server first (with 6-second timeout race)
     try {
-      const liveRecords = await fetchHistoryRecords(skipCount, takeCount);
+      const liveRecords = await Promise.race([
+        fetchHistoryRecords(skipCount, takeCount),
+        new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Upstream API timeout after 6000ms')), 6000))
+      ]);
+
       if (Array.isArray(liveRecords) && liveRecords.length > 0) {
         const enrichedLive: any[] = [];
         for (const rec of liveRecords) {
           const tagKey = String(rec.TagID || rec.tagId || '').toLowerCase();
           const matched = personMap.get(tagKey);
 
-          const fullName = matched?.name || (rec.FirstName ? `${rec.FirstName} ${rec.LastName || ''}`.trim() : (rec.name || `Personnel ${rec.TagID}`));
-          const parts = fullName.split(' ');
-          const fName = matched?.firstName || rec.FirstName || parts[0] || '';
-          const lName = matched?.lastName || rec.LastName || parts.slice(1).join(' ') || '';
+          const matchedFirst = String(matched?.firstName || matched?.FirstName || rec.FirstName || rec.firstName || '').trim();
+          const matchedLast = String(matched?.lastName || matched?.LastName || rec.LastName || rec.lastName || '').trim();
+          let fullName = '';
+          if (matchedFirst && matchedLast) {
+            fullName = `${matchedFirst} ${matchedLast}`;
+          } else if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown') {
+            fullName = matched.name.trim();
+          } else if (rec.FirstName && rec.LastName) {
+            fullName = `${rec.FirstName} ${rec.LastName}`.trim();
+          } else if (rec.name && rec.name.trim() && rec.name !== 'Personnel' && rec.name !== 'Unknown') {
+            fullName = rec.name.trim();
+          } else if (matchedFirst) {
+            fullName = matchedFirst;
+          } else if (matchedLast) {
+            fullName = matchedLast;
+          } else {
+            fullName = `Personnel ${rec.TagID || ''}`;
+          }
+
+          const fName = matchedFirst;
+          const lName = matchedLast;
           const role = matched?.role || (matched?.badgeId || matched?.isVisitor ? 'Visitor' : (rec.role || 'Field Personnel'));
           const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes('visitor'));
 
@@ -173,17 +204,19 @@ const handleGetHistory = async (req: Request, res: Response) => {
             durationMins
           };
           enrichedLive.push(formattedRec);
-
-          // Persist API log to MongoDB tag_history so real-time API logs are stored and queryable by date
-          const docId = `hist_${rec.TagID}_${String(enter).replace(/[: ]/g, '_')}`;
-          upsertDoc('tag_history', {
-            id: docId,
-            organizationId: orgId,
-            ...formattedRec,
-            timestamp: enter,
-            createdAt: new Date()
-          }, orgId).catch(() => {});
         }
+
+        // Bulk persist API logs to MongoDB tag_history in a single high-performance operation
+        const docsToPersist = enrichedLive.map(rec => ({
+          id: `hist_${rec.TagID}_${String(rec.EnterTime).replace(/[: ]/g, '_')}`,
+          organizationId: orgId,
+          ...rec,
+          timestamp: rec.EnterTime,
+          createdAt: new Date()
+        }));
+        bulkUpsertDocs('tag_history', docsToPersist, orgId).catch(err => {
+          console.warn('[RFID Route] Async bulkUpsertDocs error for tag_history:', err.message);
+        });
 
         // Apply date filter if specified
         let filtered = enrichedLive;
@@ -209,10 +242,27 @@ const handleGetHistory = async (req: Request, res: Response) => {
       const tagKey = String(item.TagID || item.tagId || item.epc || '').toLowerCase();
       const matched = personMap.get(tagKey);
 
-      const fullName = matched?.name || item.name || item.personName || (item.FirstName ? `${item.FirstName} ${item.LastName || ''}`.trim() : `Personnel ${item.TagID || item.id}`);
-      const parts = fullName.split(' ');
-      const firstName = matched?.firstName || item.FirstName || item.firstName || parts[0] || '';
-      const lastName = matched?.lastName || item.LastName || item.lastName || parts.slice(1).join(' ') || '';
+      const matchedFirst = String(matched?.firstName || matched?.FirstName || item.FirstName || item.firstName || '').trim();
+      const matchedLast = String(matched?.lastName || matched?.LastName || item.LastName || item.lastName || '').trim();
+      let fullName = '';
+      if (matchedFirst && matchedLast) {
+        fullName = `${matchedFirst} ${matchedLast}`;
+      } else if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown') {
+        fullName = matched.name.trim();
+      } else if (item.FirstName && item.LastName) {
+        fullName = `${item.FirstName} ${item.LastName}`.trim();
+      } else if (item.name && item.name.trim() && item.name !== 'Personnel' && item.name !== 'Unknown') {
+        fullName = item.name.trim();
+      } else if (matchedFirst) {
+        fullName = matchedFirst;
+      } else if (matchedLast) {
+        fullName = matchedLast;
+      } else {
+        fullName = `Personnel ${item.TagID || item.id || ''}`;
+      }
+
+      const firstName = matchedFirst;
+      const lastName = matchedLast;
       const role = matched?.role || item.role || (matched?.badgeId || matched?.isVisitor ? 'Visitor' : 'Field Personnel');
       const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes('visitor'));
 
@@ -285,9 +335,12 @@ const handleGetRealtime = async (req: Request, res: Response) => {
 
     let rawTags: any[] = [];
 
-    // 2. Check live external cloud server first
+    // 2. Check live external cloud server first (with 3500ms timeout race)
     try {
-      const upstreamTags = await fetchTagsInRealtime();
+      const upstreamTags = await Promise.race([
+        fetchTagsInRealtime(),
+        new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Upstream real-time tags timeout after 3500ms')), 3500))
+      ]);
       if (Array.isArray(upstreamTags) && upstreamTags.length > 0) {
         rawTags = upstreamTags;
       }
@@ -303,15 +356,33 @@ const handleGetRealtime = async (req: Request, res: Response) => {
       const ts = item.Timestamp || item.timestamp || item.lastSeen || new Date().toISOString();
       const tagKey = String(item.TagID || item.tagId || item.epc || '').toLowerCase();
       const matched = personMap.get(tagKey);
-      const fullName = matched?.name || item.personName || item.name || '';
+      const fn = String(matched?.firstName || matched?.FirstName || item.FirstName || item.firstName || '').trim();
+      const ln = String(matched?.lastName || matched?.LastName || item.LastName || item.lastName || '').trim();
+      let fullName = '';
+      if (fn && ln) {
+        fullName = `${fn} ${ln}`;
+      } else if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown') {
+        fullName = matched.name.trim();
+      } else if (item.personName && item.personName.trim()) {
+        fullName = item.personName.trim();
+      } else if (item.name && item.name.trim()) {
+        fullName = item.name.trim();
+      } else if (fn) {
+        fullName = fn;
+      } else {
+        fullName = `Tag ${item.TagID || item.tagId || ''}`;
+      }
+
       const role = matched?.role || item.role || (matched?.badgeId || matched?.isVisitor ? 'Visitor' : 'Field Personnel');
-      const company = matched?.tradeCompany || matched?.company || item.tradeCompany || '';
+      const company = matched?.tradeCompany || matched?.company || item.tradeCompany || item.company || '';
 
       return {
         TagID: item.TagID || item.tagId || item.epc || '',
         Timestamp: formatUtcTimestampMs(ts),
         Location: item.Location || item.location || item.LocationName || item.zone || 'Active Zone',
         LocationName: item.LocationName || item.Location || item.zone || 'Active Zone',
+        FirstName: fn,
+        LastName: ln,
         personName: fullName,
         name: fullName,
         role,
@@ -323,7 +394,7 @@ const handleGetRealtime = async (req: Request, res: Response) => {
         x: item.x,
         y: item.y,
         rssi: item.rssi || -60,
-        readerId: item.readerId || 'READER-01',
+        readerId: item.readerId || '',
         antennaId: item.antennaId || 1
       };
     });

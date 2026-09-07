@@ -75,7 +75,7 @@ function getFallbackCopilotResponse(question: string, context?: any, profile?: a
   const pSingular = profile?.terminology?.personnelSingular || 'Worker';
   const idLabel = profile?.terminology?.idBadgeLabel || 'RFID Tag ID';
   const zoneLabel = profile?.terminology?.zoneLabel || 'Zone';
-  const q = (question || '').trim();
+  const q = (typeof question === 'string' ? question : String(question || '')).trim();
   const qLower = q.toLowerCase();
 
   // Extract all workers from context
@@ -254,6 +254,38 @@ function getFallbackCopilotResponse(question: string, context?: any, profile?: a
 }
 
 export const aiRouter = Router();
+
+// GET /api/ai/status
+aiRouter.get(['/ai/status', '/status'], async (req: Request, res: Response) => {
+  const status = getAiConfigStatus();
+  const configured = Boolean(status.hasGeminiKey || status.hasOpenAiKey || status.hasClaudeKey);
+  return res.json({
+    success: true,
+    configured,
+    source: status.hasGeminiKey ? (process.env.GEMINI_API_KEY ? 'environment_variable' : 'runtime_key') : 'none',
+    message: configured ? `Active (${status.activeProvider} / ${status.activeModel})` : 'AI not configured (using deterministic EHS heuristic fallback)',
+    ...status
+  });
+});
+
+// POST /api/ai/config-key
+aiRouter.post(['/ai/config-key', '/config-key'], async (req: Request, res: Response) => {
+  const { geminiApiKey, openAiApiKey, claudeApiKey, provider } = req.body || {};
+  setRuntimeAiKeys({
+    geminiKey: geminiApiKey,
+    openAiKey: openAiApiKey,
+    claudeKey: claudeApiKey,
+    provider: provider || 'auto'
+  });
+  const status = getAiConfigStatus();
+  const configured = Boolean(status.hasGeminiKey || status.hasOpenAiKey || status.hasClaudeKey);
+  return res.json({
+    success: true,
+    configured,
+    message: `AI provider configured (${status.activeProvider})`,
+    status
+  });
+});
 
 // GET /api/intelligence/presets
 aiRouter.get(['/intelligence/presets', '/api/intelligence/presets'], (req: Request, res: Response) => {
@@ -506,6 +538,17 @@ function getDynamicIndustryAnalysis(cfg: any, combinedScans: any[], zones: any[]
   };
 }
 
+// GET /api/ai/insights - returns stored AI insights from MongoDB
+aiRouter.get(['/ai/insights', '/api/ai/insights'], async (req: Request, res: Response) => {
+  try {
+    const orgId = (req as any).user?.organizationId || 'default';
+    const insights = await getCollectionDocs('ai_insights', undefined, orgId);
+    return res.json({ success: true, insights, count: insights.length });
+  } catch (err: any) {
+    return res.status(500).json({ error: 'Failed to fetch AI insights' });
+  }
+});
+
 // POST /api/analyze-rfid-results & /api/ai/generate-insights
 aiRouter.post(['/analyze-rfid-results', '/ai/analyze-rfid', '/ai/generate-insights', '/generate-insights', '/api/analyze-rfid-results'], aiRateLimiter, async (req: Request, res: Response) => {
   const parseResult = analyzeRfidSchema.safeParse(req.body);
@@ -655,9 +698,12 @@ Respond ONLY with valid JSON with this exact structure:
 // POST /api/ai-copilot - Interactive Natural Language Safety & Operational AI Assistant
 aiRouter.post(['/ai-copilot', '/ai/copilot', '/api/ai-copilot', '/api/ai/copilot'], async (req: Request, res: Response) => {
   const parseResult = copilotSchema.safeParse(req.body);
-  const question = parseResult.success ? parseResult.data.question : (req.body?.question || 'Summary of operations');
-  const history = parseResult.success ? parseResult.data.history : (req.body?.history || []);
-  const context = parseResult.success ? parseResult.data.context : (req.body?.context || {});
+  if (!parseResult.success) {
+    return res.status(400).json({ error: 'Invalid question payload', details: parseResult.error.errors });
+  }
+  const question = parseResult.data.question;
+  const history = parseResult.data.history || [];
+  const context = parseResult.data.context || {};
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
   const tenantProfile = await getTenantIntelligenceProfile(orgId);
   const apiKey = getGeminiApiKey();

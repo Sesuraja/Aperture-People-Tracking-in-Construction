@@ -1,1503 +1,1678 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { 
   Sparkles, 
+  BrainCircuit, 
   TrendingUp, 
   AlertTriangle, 
-  Users, 
-  ArrowUpRight, 
-  Zap, 
-  Radio, 
-  Clock, 
-  Database, 
+  AlertCircle, 
   CheckCircle2, 
-  Cpu, 
+  Clock, 
+  Users, 
+  MapPin, 
+  Activity, 
+  Filter, 
+  Search, 
+  RefreshCw, 
+  Download, 
+  ArrowRight, 
+  ChevronRight, 
+  X, 
+  Send, 
+  Bot, 
+  Database, 
   ShieldAlert, 
-  Loader2, 
-  Trash2, 
-  PlusCircle, 
-  Flame,
-  ArrowRight,
-  Send,
-  MessageSquare,
-  Bot,
-  FileText,
-  Printer,
-  Siren,
+  Layers, 
+  Radio, 
+  Info, 
+  Lightbulb, 
+  Zap, 
+  BarChart3, 
+  ExternalLink, 
+  ArrowUpRight, 
+  HelpCircle, 
+  Check, 
+  Copy, 
+  MessageSquare, 
+  Terminal,
   ShieldCheck,
-  Activity,
-  Layers,
-  Search,
-  Wifi,
-  BarChart3,
-  Check,
-  RotateCw,
-  Save,
-  Download,
-  BrainCircuit,
-  Microscope,
-  History,
-  Key,
-  HardHat,
-  Construction,
-  RadioTower,
-  Gauge,
-  Navigation,
-  Wind
+  FileText,
+  Compass,
+  CornerDownRight,
+  TrendingDown,
+  User,
+  Sliders
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { useGaoRealtime, useGaoHistory } from '../lib/useGaoApi';
-import { Person } from '../lib/trackingData';
-import { 
-  collection, 
-  addDoc, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  deleteDoc, 
-  doc, 
-  serverTimestamp,
-  getDocs,
-  db
-} from '../lib/db';
-import { generatePDFReport, exportToCSV } from '../lib/exportUtils';
-import { useWebSocket } from '../lib/useWebSocket';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { useTerminology, useTracking } from '../context/TrackingContext';
+import { gaoApi, HistoryRecord } from '../lib/gaoApi';
+import { exportToCSV, ExportColumn } from '../lib/exportUtils';
+import { db, doc, setDoc, batchSetDocs, addDoc, collection, onSnapshot, serverTimestamp } from '../lib/db';
+import {
+  RawMovementRecord,
+  NormalizedMovementEvent,
+  normalizeRecords,
+  formatDurationHuman
+} from '../lib/movementAnalytics';
+import {
+  generateAIInsights,
+  queryAskAperture,
+  auditDataQuality,
+  AIInsightItem,
+  AIInsightsSummary,
+  DataQualityAuditResult,
+  InsightCategory,
+  InsightSeverity,
+  InsightConfidence,
+  GroundedQueryResult,
+  DataDistinction
+} from '../lib/aiInsightsEngine';
 
-interface AIInsightsTabProps {
-  people?: Person[];
+export interface AIInsightsTabProps {
+  people?: any[];
 }
 
-
-interface GeminiAnomaly {
-  tagId: string;
-  name?: string;
-  zone?: string;
-  severity: 'HIGH' | 'MEDIUM' | 'LOW';
-  title: string;
-  description: string;
-}
-
-interface GeminiOptimization {
-  category: string;
-  title: string;
-  impact: 'HIGH' | 'MEDIUM' | 'LOW';
-  description: string;
-  actionableSteps: string;
-}
-
-interface GeminiPersonnelEfficiency {
-  tagId: string;
-  name?: string;
-  inferredActivity: string;
-  efficiencyScore: number;
-  dwellTimeInfo?: string;
-}
-
-interface GeminiRiskForecast {
-  zone: string;
-  riskScore: number;
-  trend: 'Increasing' | 'Stable' | 'Decreasing';
-  mainFactor: string;
-}
-
-interface GeminiAnalysisResult {
-  apiKeyMetadata?: {
-    telemetryFeed: string;
-    engine: string;
-    ingestedTagsCount: number;
-    analyzedZonesCount: number;
-  };
-  executiveSummary: string;
-  safetyComplianceScore: number;
-  anomalies: GeminiAnomaly[];
-  optimizations: GeminiOptimization[];
-  personnelEfficiency?: GeminiPersonnelEfficiency[];
-  riskForecasts?: GeminiRiskForecast[];
-  recommendations: string[];
-}
-
-interface CopilotMessage {
+interface ChatMessage {
   id: string;
   sender: 'user' | 'assistant';
   text: string;
-  suggestedActions?: string[];
+  isGrounded?: boolean;
+  confidence?: 'High' | 'Medium' | 'Low';
+  supportingMetrics?: Record<string, string | number>;
+  suggestedFollowUps?: string[];
   timestamp: string;
 }
 
-interface SavedCopilotSession {
-  id: string;
-  sessionTitle: string;
-  messages: CopilotMessage[];
-  createdAt: string;
-}
+type SectionTab = 
+  | 'all'
+  | 'critical'
+  | 'emerging'
+  | 'person'
+  | 'zone'
+  | 'duration'
+  | 'trend'
+  | 'ask_aperture'
+  | 'data_quality'
+  | 'evidence';
 
-interface RcaResult {
-  id?: string;
-  title: string;
-  category: string;
-  severity: string;
-  locationZone: string;
-  severityScore: number;
-  probableRootCause: string;
-  contributingFactors: string[];
-  capaRecommendations: string[];
-  regulatoryImpact: string;
-  createdAt: string;
-}
+export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
+  const navigate = useNavigate();
+  const trackingCtx = useTracking();
 
-interface BiSynthesisResult {
-  id?: string;
-  prompt: string;
-  dateRange: string;
-  selectedSite: string;
-  synthesis: string;
-  keyMetrics?: {
-    safetyCompliance: number;
-    productivityIndex: number;
-    trirRate: number;
-    activeReadersUptime: number;
-  };
-  createdAt: string;
-}
+  const { 
+    config, 
+    intelligenceProfile, 
+    zoneLabel = 'Zone', 
+    personnelSingular = 'Personnel', 
+    personnelPlural = 'Personnel',
+    siteLabel = 'Facility'
+  } = useTerminology();
 
-const parseInlineTokens = (str: string): React.ReactNode => {
-  const parts: React.ReactNode[] = [];
-  const regex = /(\*\*[^*]+\*\*|`[^`]+`)/g;
-  let match;
-  let lastIdx = 0;
-  let keyCounter = 0;
+  const activeIndustry = intelligenceProfile?.industry || config?.industryId || 'construction';
+  const activeSubIndustry = intelligenceProfile?.subIndustry || config?.name || 'Operations Intelligence';
+  const complianceFramework = intelligenceProfile?.complianceFramework || 'OSHA / ISO 45001 Telemetry Standards';
 
-  while ((match = regex.exec(str)) !== null) {
-    if (match.index > lastIdx) {
-      parts.push(str.substring(lastIdx, match.index));
+  // Live workforce registry from MongoDB registered_people
+  const [dbPeople, setDbPeople] = useState<any[]>([]);
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(d => {
+        const data = d.data();
+        if (data) list.push({ id: d.id, ...data });
+      });
+      setDbPeople(list);
+    });
+    return () => unsub();
+  }, []);
+
+  const peopleRegistry = useMemo(() => {
+    const map = new Map<string, any>();
+    const contextPeople = trackingCtx?.people || [];
+    [...people, ...contextPeople, ...dbPeople].forEach(p => {
+      if (!p) return;
+      if (p.id) map.set(String(p.id).toLowerCase(), p);
+      if (p.tagId) map.set(String(p.tagId).toLowerCase(), p);
+      if (p.TagID) map.set(String(p.TagID).toLowerCase(), p);
+      if (p.hardhatTagId) map.set(String(p.hardhatTagId).toLowerCase(), p);
+      if (p.epc) map.set(String(p.epc).toLowerCase(), p);
+    });
+    return map;
+  }, [people, trackingCtx?.people, dbPeople]);
+
+  // ---------------------------------------------------------------------------
+  // 1. DATA STATE & API INGESTION
+  // ---------------------------------------------------------------------------
+  const [rawRecords, setRawRecords] = useState<RawMovementRecord[]>([]);
+  const [totalSystemCount, setTotalSystemCount] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [batchSize, setBatchSize] = useState<number>(200);
+  const [lastAnalysisTimestamp, setLastAnalysisTimestamp] = useState<string>('');
+
+  // MongoDB Atlas Persistence State
+  const [isMongoSynced, setIsMongoSynced] = useState<boolean>(false);
+  const [actionToast, setActionToast] = useState<string | null>(null);
+
+  // Auto-clear action toast
+  useEffect(() => {
+    if (actionToast) {
+      const timer = setTimeout(() => setActionToast(null), 3500);
+      return () => clearTimeout(timer);
     }
-    const token = match[0];
-    if (token.startsWith('**') && token.endsWith('**')) {
-      parts.push(
-        <strong key={keyCounter++} className="font-black text-slate-900 dark:text-white">
-          {token.slice(2, -2)}
-        </strong>
-      );
-    } else if (token.startsWith('`') && token.endsWith('`')) {
-      parts.push(
-        <code key={keyCounter++} className="px-1.5 py-0.5 bg-indigo-100 dark:bg-slate-700 text-indigo-700 dark:text-indigo-300 font-mono text-[11px] rounded font-bold">
-          {token.slice(1, -1)}
-        </code>
-      );
+  }, [actionToast]);
+
+  const loadTelemetry = useCallback(async (takeCount: number = batchSize) => {
+    setIsRefreshing(true);
+    setApiError(null);
+    try {
+      const [records, count] = await Promise.all([
+        gaoApi.getHistoryRecords(0, takeCount),
+        gaoApi.getHistoryTotalCount().catch(() => 0)
+      ]);
+      const validRecords = Array.isArray(records) ? records : [];
+      setRawRecords(validRecords);
+      setTotalSystemCount(count > 0 ? count : validRecords.length);
+      setLastAnalysisTimestamp(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
+    } catch (err: any) {
+      console.error('[AI Insights] Telemetry fetch error:', err);
+      setApiError(err?.message || 'Failed to fetch people-tracking telemetry records');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
     }
-    lastIdx = regex.lastIndex;
-  }
+  }, [batchSize]);
 
-  if (lastIdx < str.length) {
-    parts.push(str.substring(lastIdx));
-  }
+  useEffect(() => {
+    loadTelemetry(batchSize);
+  }, [loadTelemetry, batchSize]);
 
-  return parts.length > 0 ? parts : str;
-};
+  // ---------------------------------------------------------------------------
+  // 2. NORMALIZATION & AI INSIGHTS PIPELINE
+  // ---------------------------------------------------------------------------
+  const normalizedEvents = useMemo(() => {
+    return normalizeRecords(rawRecords, peopleRegistry, {
+      industry: activeIndustry,
+      subIndustry: activeSubIndustry,
+      zoneLabel,
+      personnelSingular,
+      personnelPlural,
+      siteLabel
+    });
+  }, [rawRecords, peopleRegistry, activeIndustry, activeSubIndustry, zoneLabel, personnelSingular, personnelPlural, siteLabel]);
 
-const FormattedMessageText = ({ text }: { text: string }) => {
-  const rawLines = text.split('\n');
-  const elements: React.ReactNode[] = [];
-  let i = 0;
+  const insightsSummary: AIInsightsSummary = useMemo(() => {
+    return generateAIInsights(rawRecords, {
+      industry: activeIndustry,
+      subIndustry: activeSubIndustry,
+      zoneLabel,
+      personnelSingular,
+      personnelPlural,
+      siteLabel,
+      complianceFramework,
+      people: peopleRegistry
+    });
+  }, [rawRecords, activeIndustry, activeSubIndustry, zoneLabel, personnelSingular, personnelPlural, siteLabel, complianceFramework, peopleRegistry]);
 
-  while (i < rawLines.length) {
-    const line = rawLines[i];
-    const trimmed = line.trim();
+  // Auto-sync generated AI insights and Data Quality Audit to MongoDB Atlas in a single batch
+  const lastSyncedInsightsHashRef = useRef<string>('');
+  useEffect(() => {
+    if (rawRecords.length === 0 || insightsSummary.insights.length === 0) return;
 
-    // 1. Table Detection
-    if (trimmed.startsWith('|') && trimmed.endsWith('|') && rawLines[i + 1] && rawLines[i + 1].includes('---')) {
-      const headerCells = trimmed.split('|').slice(1, -1).map(c => c.trim());
-      i += 2; // skip header and delimiter lines
-      const rows: string[][] = [];
-      while (i < rawLines.length && rawLines[i].trim().startsWith('|') && rawLines[i].trim().endsWith('|')) {
-        rows.push(rawLines[i].trim().split('|').slice(1, -1).map(c => c.trim()));
-        i++;
+    const hash = `${rawRecords.length}_${insightsSummary.insights.length}_${insightsSummary.insights.map(i => i.id).join('|')}`;
+    if (lastSyncedInsightsHashRef.current === hash) return;
+    lastSyncedInsightsHashRef.current = hash;
+
+    // Persist all generated insights to MongoDB ai_insights collection in a single batch
+    const docsToSync = insightsSummary.insights.map(item => ({
+      id: item.id,
+      category: item.category,
+      severity: item.severity,
+      severityScore: item.severityScore,
+      title: item.title,
+      summary: item.summary,
+      affectedPerson: item.affectedPerson,
+      affectedTagId: item.affectedTagId,
+      affectedZone: item.affectedZone,
+      currentValue: item.currentValue,
+      baselineValue: item.baselineValue,
+      difference: item.difference,
+      confidence: item.confidence,
+      confidenceScore: item.confidenceScore,
+      evidence: item.evidence,
+      recommendedAction: item.recommendedAction,
+      source: 'REAL_TIME_API_HISTORY',
+      updatedAt: new Date().toISOString()
+    }));
+
+    batchSetDocs('ai_insights', docsToSync).then(() => {
+      setIsMongoSynced(true);
+    }).catch(err => {
+      console.warn('[AI Insights] batchSetDocs ai_insights error:', err);
+    });
+
+    // Persist Data Quality Audit to MongoDB analytics_metrics
+    setDoc(doc(db, 'analytics_metrics', 'data_quality_audit'), {
+      ...insightsSummary.dataQualityAudit,
+      source: 'REAL_TIME_API_HISTORY',
+      auditedAt: new Date().toISOString()
+    }).catch(() => {});
+  }, [rawRecords.length, insightsSummary.insights]);
+
+  // ---------------------------------------------------------------------------
+  // 3. FILTER & NAVIGATION STATE
+  // ---------------------------------------------------------------------------
+  const [activeTab, setActiveTab] = useState<SectionTab>('all');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [selectedSeverity, setSelectedSeverity] = useState<string>('all');
+  const [selectedConfidence, setSelectedConfidence] = useState<'all' | 'medium_high' | 'high_only'>('all');
+  const [timeRange, setTimeRange] = useState<'all' | 'today' | 'yesterday' | '7d' | '30d'>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
+  // Selected Insight for Detail Drawer
+  const [selectedInsight, setSelectedInsight] = useState<AIInsightItem | null>(null);
+
+  // ---------------------------------------------------------------------------
+  // 4. FILTERED INSIGHTS COMPUTATION
+  // ---------------------------------------------------------------------------
+  const filteredInsights = useMemo(() => {
+    return insightsSummary.insights.filter(item => {
+      // 1. Tab-based filtering
+      if (activeTab === 'critical' && item.severity !== 'Critical' && item.severity !== 'High') return false;
+      if (activeTab === 'emerging' && item.category !== 'Emerging Pattern') return false;
+      if (activeTab === 'person' && item.category !== 'Person Activity Anomaly' && item.category !== 'Repeated Visits') return false;
+      if (activeTab === 'zone' && item.category !== 'Zone Activity Anomaly') return false;
+      if (activeTab === 'duration' && item.category !== 'Unusual Duration') return false;
+      if (activeTab === 'trend' && item.category !== 'Trend') return false;
+
+      // 2. Category Filter
+      if (selectedCategory !== 'all' && item.category !== selectedCategory) return false;
+
+      // 3. Severity Filter
+      if (selectedSeverity !== 'all' && item.severity !== selectedSeverity) return false;
+
+      // 4. Confidence Filter
+      if (selectedConfidence === 'high_only' && item.confidence !== 'High') return false;
+      if (selectedConfidence === 'medium_high' && item.confidence === 'Low') return false;
+
+      // 5. Search Query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase().trim();
+        const titleMatch = item.title.toLowerCase().includes(q);
+        const summaryMatch = item.summary.toLowerCase().includes(q);
+        const personMatch = (item.affectedPerson || '').toLowerCase().includes(q);
+        const tagMatch = (item.affectedTagId || '').toLowerCase().includes(q);
+        const zoneMatch = (item.affectedZone || '').toLowerCase().includes(q);
+        const evidenceMatch = item.evidence.toLowerCase().includes(q);
+        if (!titleMatch && !summaryMatch && !personMatch && !tagMatch && !zoneMatch && !evidenceMatch) {
+          return false;
+        }
       }
-      elements.push(
-        <div key={`table-${i}`} className="my-2.5 overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
-          <table className="w-full text-left border-collapse text-[11px]">
-            <thead>
-              <tr className="bg-indigo-50/80 dark:bg-slate-800 text-slate-700 dark:text-slate-200 font-bold border-b border-slate-200 dark:border-slate-700">
-                {headerCells.map((h, hIdx) => (
-                  <th key={hIdx} className="p-2 pl-3 whitespace-nowrap">{parseInlineTokens(h)}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium bg-white dark:bg-slate-900/60">
-              {rows.map((r, rIdx) => (
-                <tr key={rIdx} className="hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition">
-                  {r.map((cell, cIdx) => (
-                    <td key={cIdx} className="p-2 pl-3 whitespace-nowrap">{parseInlineTokens(cell)}</td>
-                  ))}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      );
-      continue;
-    }
 
-    // 2. Empty line
-    if (!trimmed) {
-      elements.push(<div key={`empty-${i}`} className="h-1.5" />);
-      i++;
-      continue;
-    }
+      return true;
+    });
+  }, [insightsSummary.insights, activeTab, selectedCategory, selectedSeverity, selectedConfidence, searchQuery]);
 
-    // 3. Horizontal Rule
-    if (trimmed === '---' || trimmed === '***') {
-      elements.push(<hr key={`hr-${i}`} className="my-2 border-slate-200 dark:border-slate-700" />);
-      i++;
-      continue;
-    }
-
-    // 4. Headers
-    if (trimmed.startsWith('#### ')) {
-      elements.push(
-        <h5 key={`h4-${i}`} className="font-bold text-xs text-slate-800 dark:text-slate-200 mt-2 mb-1">
-          {parseInlineTokens(trimmed.slice(5))}
-        </h5>
-      );
-      i++;
-      continue;
-    }
-    if (trimmed.startsWith('### ')) {
-      elements.push(
-        <h4 key={`h3-${i}`} className="font-black text-xs md:text-sm text-indigo-700 dark:text-indigo-400 mt-2.5 mb-1.5 flex items-center gap-1.5">
-          {parseInlineTokens(trimmed.slice(4))}
-        </h4>
-      );
-      i++;
-      continue;
-    }
-    if (trimmed.startsWith('## ')) {
-      elements.push(
-        <h3 key={`h2-${i}`} className="font-black text-sm text-slate-900 dark:text-white mt-3 mb-1.5">
-          {parseInlineTokens(trimmed.slice(3))}
-        </h3>
-      );
-      i++;
-      continue;
-    }
-
-    // 5. Bullet Lists
-    if (trimmed.startsWith('- ') || trimmed.startsWith('• ') || trimmed.startsWith('* ')) {
-      const bulletText = trimmed.substring(2);
-      elements.push(
-        <div key={`bullet-${i}`} className="flex items-start gap-2 pl-1 my-0.5">
-          <span className="text-indigo-500 font-bold shrink-0 mt-0.5">•</span>
-          <span className="flex-1">{parseInlineTokens(bulletText)}</span>
-        </div>
-      );
-      i++;
-      continue;
-    }
-
-    // 6. Numbered Lists
-    const numMatch = trimmed.match(/^(\d+)\.\s+(.*)$/);
-    if (numMatch) {
-      elements.push(
-        <div key={`num-${i}`} className="flex items-start gap-2 pl-1 my-0.5">
-          <span className="font-bold text-indigo-600 dark:text-indigo-400 shrink-0 font-mono text-[11px]">{numMatch[1]}.</span>
-          <span className="flex-1">{parseInlineTokens(numMatch[2])}</span>
-        </div>
-      );
-      i++;
-      continue;
-    }
-
-    // 7. Regular paragraph
-    elements.push(<div key={`p-${i}`} className="my-0.5">{parseInlineTokens(line)}</div>);
-    i++;
-  }
-
-  return <div className="space-y-1 leading-relaxed font-sans text-xs">{elements}</div>;
-};
-
-export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
-  const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
-  const { zones = [] } = useTracking();
-  // MongoDB Real-time Data States
-  const [mongoPeople, setMongoPeople] = useState<any[]>([]);
-
-  const [mongoReaders, setMongoReaders] = useState<any[]>([]);
-
-  // 1. Ingestion Data Feeds & WebSocket Subscriptions (20s calm fallback interval)
-  const { tags: rawLiveTags, isLoading: isLiveTagsLoading } = useGaoRealtime(20000);
-  const { records: historyRecords } = useGaoHistory(0, 50);
-  const { isConnected: isWsConnected, lastMessage } = useWebSocket();
-
-  // Combine live RFID tags, MongoDB registered personnel, and props for full fidelity
-  const liveTags = rawLiveTags && rawLiveTags.length > 0 
-    ? rawLiveTags 
-    : mongoPeople.length > 0 
-    ? mongoPeople.map(p => ({
-        TagID: p.rfidTag || p.tagId || p.id || 'E200001A89',
-        Timestamp: new Date().toISOString(),
-        Location: p.currentZone || p.zone || `${siteLabel || 'Facility'} Area`,
-        LocationName: p.currentZone || p.zone || `${siteLabel || 'Facility'} Area`,
-        personName: p.name || personnelSingular,
-        personId: p.id,
-        zoneName: p.currentZone || p.zone || `${siteLabel || 'Facility'} Area`,
-        rssi: p.rssi || -52,
-        readerId: p.lastReader || 'GAO-UHF-PORTAL-01'
-      }))
-    : people.map(p => ({
-        TagID: p.id,
-        Timestamp: new Date().toISOString(),
-        Location: p.currentZone || `${siteLabel || 'Facility'} Area`,
-        LocationName: p.currentZone || `${siteLabel || 'Facility'} Area`,
-        personName: p.name || personnelSingular,
-        personId: p.id,
-        zoneName: p.currentZone || `${siteLabel || 'Facility'} Area`,
-        rssi: p.rssi || -58,
-        readerId: p.lastReader || 'Aperture-Reader-01'
-      }));
-
-  // 2. Active Tab Sub-view
-  const [activeSection, setActiveSection] = useState<
-    'insights' | 'copilot' | 'briefing' | 'rca' | 'bi_synthesis'
-  >('insights');
-
-  // 3. API & Analysis State
-  const [report, setReport] = useState<GeminiAnalysisResult | null>(null);
-  const [isLoading, setIsLoading] = useState(false);
-  const [lastAnalysisTimestamp, setLastAnalysisTimestamp] = useState<string | null>(null);
-  const [analysisError, setAnalysisError] = useState<string | null>(null);
-
-  // 4. Copilot Chat State
-  const [chatHistory, setChatHistory] = useState<CopilotMessage[]>([
+  // ---------------------------------------------------------------------------
+  // 5. "ASK APERTURE" CHAT STATE
+  // ---------------------------------------------------------------------------
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([
     {
-      id: 'init-1',
+      id: 'init-msg',
       sender: 'assistant',
-      text: `🤖 **Aperture Real-Time AI Safety Copilot Active**\n\nI am connected live to your **MongoDB Atlas** database (\`Lat-Aperture-People-Tracking\`) and real-time ${idBadgeLabel} telemetry stream.\n\nTry asking me:\n- 🏷️ **${idBadgeLabel}s**: *"List all active ${personnelPlural}"*\n- 🛠️ **${roleLabel} Presence**: *"Who is currently in the active ${zoneLabel}?"*\n- 🗄️ **Database Telemetry**: *"Show MongoDB database status"*`,
-      suggestedActions: [
-        `List all active ${personnelPlural}`,
-        `Who is currently in the primary ${zoneLabel}?`,
-        "Show MongoDB database status",
-        `Show ${safetyComplianceLabel} summary`
+      text: `👋 **Welcome to Ask Aperture**\n\nI am your evidence-based Telemetry Intelligence Assistant, directly connected to **${normalizedEvents.length} live RFID movement records** across **${siteLabel}**.\n\nAsk me anything about movement volume, dwell durations, visitor frequencies, or detected anomalies. Every answer is strictly grounded in real API records with zero hallucinations.`,
+      isGrounded: true,
+      confidence: 'High',
+      suggestedFollowUps: [
+        `Which ${zoneLabel.toLowerCase()} had the most activity?`,
+        `Who visited most frequently?`,
+        `Which ${zoneLabel.toLowerCase()} has the longest average dwell time?`,
+        `What unusual patterns were detected today?`,
+        `Show data quality audit`
       ],
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
-  const [copilotQuestion, setCopilotQuestion] = useState('');
-  const [isCopilotThinking, setIsCopilotThinking] = useState(false);
-  const [savedCopilotSessions, setSavedCopilotSessions] = useState<SavedCopilotSession[]>([]);
+  const [chatInput, setChatInput] = useState<string>('');
+  const [isThinking, setIsThinking] = useState<boolean>(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [chatHistory, isCopilotThinking]);
-
-  // 5. Root Cause Analysis (RCA) State
-  const [rcaTitle, setRcaTitle] = useState('High-Risk Operational Zone Incursion');
-  const [rcaCategory, setRcaCategory] = useState('Exclusion Zone Breach');
-  const [rcaSeverity, setRcaSeverity] = useState('High');
-  const [rcaLocation, setRcaLocation] = useState('Primary Restricted Section');
-  const [rcaEquipment, setRcaEquipment] = useState('Heavy Machinery & Power Haulage Rigging');
-  const [rcaDescription, setRcaDescription] = useState('Active personnel transponders registered inside the restricted exclusion zone perimeter without prior authorization clearance.');
-  const [isAnalyzingRca, setIsAnalyzingRca] = useState(false);
-  const [currentRcaResult, setCurrentRcaResult] = useState<RcaResult | null>(null);
-  const [savedRcaReports, setSavedRcaReports] = useState<RcaResult[]>([]);
-
-  // 7. BI Synthesis State
-  const [biPrompt, setBiPrompt] = useState('Synthesize workforce shift attendance, perimeter zone safety compliance, and portal gateway uptime for today\'s shift.');
-  const [biDateRange, setBiDateRange] = useState<'24h' | '7d' | '30d'>('24h');
-  const [biSelectedSite, setBiSelectedSite] = useState('Primary Operations Facility');
-  const [isSynthesizing, setIsSynthesizing] = useState(false);
-  const [currentBiResult, setCurrentBiResult] = useState<BiSynthesisResult | null>(null);
-  const [savedBiSyntheses, setSavedBiSyntheses] = useState<BiSynthesisResult[]>([]);
-
-  // 8. MongoDB Recommendations & Incident State
-  const [savedDirectives, setSavedDirectives] = useState<{ id: string; title: string; category: string; description: string; impact: string; actionableSteps?: string; createdAt?: string }[]>([]);
-  const [loggedIncidents, setLoggedIncidents] = useState<{ id: string; title: string; severity: string; zone: string; timestamp: string; description?: string }[]>([]);
-  const [actionSuccessMsg, setActionSuccessMsg] = useState<string | null>(null);
-
-  const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
-    connected: true,
-    engine: 'MongoDB Atlas',
-    database: 'Lat-Aperture-People-Tracking',
-    totalRecords: 0
-  });
-
-  useEffect(() => {
-    const checkMongo = async () => {
-      try {
-        const res = await fetch('/api/mongodb/status');
-        if (res.ok) {
-          const data = await res.json();
-          setMongoStatus({
-            connected: Boolean(data.connected),
-            engine: data.engine || 'MongoDB Atlas',
-            database: 'Lat-Aperture-People-Tracking',
-            totalRecords: data.totalRecords || 0
-          });
-        }
-      } catch {}
-    };
-    checkMongo();
-  }, []);
-
-  // Auto-clear action toast
-  useEffect(() => {
-    if (actionSuccessMsg) {
-      const timer = setTimeout(() => setActionSuccessMsg(null), 3500);
-      return () => clearTimeout(timer);
+    if (activeTab === 'ask_aperture') {
+      chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [actionSuccessMsg]);
+  }, [chatMessages, isThinking, activeTab]);
 
-  // MongoDB Real-Time Subscriptions for Personnel, Readers, Directives, Copilot Sessions, RCA, Hazard Sim & BI
-  useEffect(() => {
-    const unsubPeople = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setMongoPeople(items);
-    }, () => {});
+  const handleAskQuestion = (questionText?: string) => {
+    const q = (questionText || chatInput).trim();
+    if (!q || isThinking) return;
 
-    const unsubReaders = onSnapshot(collection(db, 'hardware_readers'), (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
-      setMongoReaders(items);
-    }, () => {});
-
-    const unsubRecs = onSnapshot(collection(db, 'ai_recommendations'), (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
-      setSavedDirectives(items);
-    }, () => {});
-
-    const unsubIncidents = onSnapshot(collection(db, 'incidents'), (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as any[];
-      setLoggedIncidents(items);
-    }, () => {});
-
-    const unsubCopilot = onSnapshot(collection(db, 'ai_copilot_chats'), (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as SavedCopilotSession[];
-      setSavedCopilotSessions(items);
-    }, () => {});
-
-    const unsubRca = onSnapshot(collection(db, 'ai_rca_reports'), (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as RcaResult[];
-      setSavedRcaReports(items);
-    }, () => {});
-
-    const unsubBi = onSnapshot(collection(db, 'analytics_metrics'), (snapshot) => {
-      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() })) as BiSynthesisResult[];
-      setSavedBiSyntheses(items);
-    }, () => {});
-
-    return () => {
-      unsubPeople();
-      unsubReaders();
-      unsubRecs();
-      unsubIncidents();
-      unsubCopilot();
-      unsubRca();
-      unsubBi();
-    };
-  }, []);
-
-  // Primary AI Site Telemetry Analysis Handler
-  const handleRunAnalysis = useCallback(async () => {
-    setIsLoading(true);
-    setAnalysisError(null);
-    try {
-      const activeAreas = intelligenceProfile?.functionalAreas && intelligenceProfile.functionalAreas.length > 0
-        ? intelligenceProfile.functionalAreas.map(f => ({ id: f.id, name: f.name }))
-        : (zones && zones.length > 0 ? zones.map(z => ({ id: z.id, name: z.name })) : [
-            { id: 'zone_1', name: 'Primary Operational Zone' },
-            { id: 'zone_2', name: 'Monitored Facility Perimeter' }
-          ]);
-
-      const activeContext = `${intelligenceProfile?.companyName || 'Enterprise Facility'} (${intelligenceProfile?.subIndustry || config?.industryName || 'Operations'}) - Real-Time ${intelligenceProfile?.terminology?.personnelPlural || 'Personnel'} Tracking & Hardware Telemetry`;
-
-      const response = await fetch('/api/analyze-rfid-results', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          liveTags: liveTags.slice(0, 25),
-          historyRecords: historyRecords.slice(0, 25),
-          zones: activeAreas,
-          apiKeySource: 'GAO_UHF_HARDWARE_FEED',
-          context: activeContext
-        })
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP error ${response.status}: Failed to generate AI insights`);
-      }
-
-      const data: GeminiAnalysisResult = await response.json();
-      setReport(data);
-      setLastAnalysisTimestamp(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }));
-    } catch (err: any) {
-      console.error('[AI Insights] Analysis failed:', err);
-      setAnalysisError(err.message || 'Failed to analyze live RFID data');
-    } finally {
-      setIsLoading(false);
-    }
-  }, [liveTags, historyRecords, intelligenceProfile, config, zones]);
-
-  // Initial trigger on mount
-  useEffect(() => {
-    handleRunAnalysis();
-  }, []);
-
-  // Copilot Ask Question Handler
-  const handleAskCopilot = async (overridePrompt?: string) => {
-    const q = overridePrompt || copilotQuestion;
-    if (!q.trim() || isCopilotThinking) return;
-
-    const userMsg: CopilotMessage = {
-      id: `msg-${Date.now()}-u`,
+    const userMsg: ChatMessage = {
+      id: `msg-user-${Date.now()}`,
       sender: 'user',
       text: q,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     };
 
-    setChatHistory(prev => [...prev, userMsg]);
-    if (!overridePrompt) setCopilotQuestion('');
-    setIsCopilotThinking(true);
+    setChatMessages(prev => [...prev, userMsg]);
+    if (!questionText) setChatInput('');
+    setIsThinking(true);
 
-    try {
-      const workerMap = new Map<string, any>();
-      (mongoPeople || []).forEach((p: any) => {
-        const key = String(p.id || p.hardhatTagId || p.TagID || p.name || '').toUpperCase();
-        if (key) workerMap.set(key, {
-          id: p.id || p.hardhatTagId || p.TagID,
-          name: p.name || p.personName,
-          trade: p.trade || p.role || roleLabel,
-          role: p.role || p.trade || roleLabel,
-          currentZone: p.currentZone || p.zone || `${siteLabel || 'Facility'} Area`,
-          presenceState: p.presenceState || 'ACTIVE',
-          tagId: p.hardhatTagId || p.TagID || p.id,
-          rssi: -55,
-          ppeStatus: p.ppeStatus || 'COMPLIANT',
-          dwellTime: p.dwellTime || 0
-        });
-      });
-      (people || []).forEach((p: any) => {
-        const key = String(p.id || p.hardhatTagId || p.TagID || p.name || '').toUpperCase();
-        if (key) {
-          const prev = workerMap.get(key) || {};
-          workerMap.set(key, { ...prev, ...p, name: p.name || prev.name, tagId: p.hardhatTagId || p.TagID || prev.tagId || p.id });
-        }
-      });
-      (trackingCtx?.people || []).forEach((p: any) => {
-        const key = String(p.id || p.hardhatTagId || p.TagID || p.name || '').toUpperCase();
-        if (key) {
-          const prev = workerMap.get(key) || {};
-          workerMap.set(key, { ...prev, ...p, name: p.name || prev.name, tagId: p.hardhatTagId || p.TagID || prev.tagId || p.id });
-        }
-      });
-      (liveTags || []).forEach((t: any) => {
-        const key = String(t.TagID || t.personId || t.id || t.personName || '').toUpperCase();
-        if (key) {
-          const prev = workerMap.get(key) || {};
-          workerMap.set(key, {
-            ...prev,
-            id: t.TagID || t.personId || t.id || prev.id,
-            name: (t.personName && t.personName !== 'Worker') ? t.personName : (prev.name || t.name || personnelSingular),
-            trade: t.trade || prev.trade || roleLabel,
-            role: t.role || prev.role || roleLabel,
-            currentZone: t.LocationName || t.zoneName || t.Location || prev.currentZone || `${siteLabel || 'Facility'} Area`,
-            presenceState: t.presenceState || prev.presenceState || 'MOVING',
-            tagId: t.TagID || t.id || prev.tagId,
-            rssi: t.rssi || prev.rssi || -58,
-            dwellTime: t.dwellTime || prev.dwellTime || 0,
-            ppeStatus: t.ppeStatus || prev.ppeStatus || 'COMPLIANT'
-          });
-        }
-      });
-      const combinedWorkers = Array.from(workerMap.values());
-
-      const response = await fetch('/api/ai-copilot', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(localStorage.getItem('auth_token') ? { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` } : {})
-        },
-        body: JSON.stringify({
-          question: q,
-          history: chatHistory.filter(msg => msg.id !== 'init-1').map(msg => ({
-            role: msg.sender === 'user' ? 'user' : 'assistant',
-            text: msg.text
-          })),
-          context: {
-            workers: combinedWorkers,
-            activeWorkerTags: combinedWorkers.length,
-            recentScans: historyRecords.slice(0, 8),
-            readers: mongoReaders,
-            incidents: loggedIncidents,
-            siteLocation: siteLabel || 'Primary Facility Site',
-            safetyComplianceScore: report?.safetyComplianceScore || 94
-          }
-        })
+    setTimeout(() => {
+      const result: GroundedQueryResult = queryAskAperture(q, rawRecords, insightsSummary.insights, {
+        industry: activeIndustry,
+        subIndustry: activeSubIndustry,
+        zoneLabel,
+        personnelPlural,
+        personnelSingular,
+        siteLabel,
+        complianceFramework,
+        people: peopleRegistry
       });
 
-      if (!response.ok) throw new Error(`Copilot inquiry failed with status ${response.status}`);
-      const data = await response.json();
-
-      const botMsg: CopilotMessage = {
-        id: `msg-${Date.now()}-a`,
+      const botMsg: ChatMessage = {
+        id: `msg-bot-${Date.now()}`,
         sender: 'assistant',
-        text: data.answer || "Analysis of site telemetry completed successfully.",
-        suggestedActions: Array.isArray(data.suggestedActions) && data.suggestedActions.length > 0 ? data.suggestedActions : [`List all active ${personnelPlural}`, 'Show Safety Compliance', 'Show MongoDB Database Status'],
+        text: result.answer,
+        isGrounded: result.isGrounded,
+        confidence: result.confidence,
+        supportingMetrics: result.supportingMetrics,
+        suggestedFollowUps: result.suggestedFollowUps,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
       };
 
-      setChatHistory(prev => [...prev, botMsg]);
-    } catch (err: any) {
-      console.warn('[AI Copilot] API call note:', err?.message || err);
-      // Generate client-side synthesized telemetry response
-      const matched = (mongoPeople || []).find((p: any) => {
-        const name = String(p.name || '').toLowerCase();
-        const tag = String(p.id || p.hardhatTagId || '').toLowerCase();
-        return (name && q.toLowerCase().includes(name)) || (tag && q.toLowerCase().includes(tag));
-      });
+      setChatMessages(prev => [...prev, botMsg]);
+      setIsThinking(false);
 
-      let localAnswer = `### 🤖 ${intelligenceProfile?.companyName || 'Aperture'} AI Safety Copilot\n\nI have analyzed your query: *"**${q}**"* against active RFID telemetry:\n\n- 👥 **Active Workforce**: **${mongoPeople.length || people.length || liveTags.length} active ${personnelPlural.toLowerCase()}** registered\n- 📍 **Spatial Coverage**: **${zones.length || 3} zones** actively monitored\n- 🛡️ **Safety Score**: **${report?.safetyComplianceScore || 96}%** (${intelligenceProfile?.complianceFramework || 'OSHA / ISO 45001'})\n- 🗄️ **MongoDB Database**: Connected & streaming transponder packets`;
-
-      if (matched) {
-        localAnswer = `### 🔍 Telemetry Lookup: **${matched.name}**\n\n- **${idBadgeLabel}**: \`${matched.hardhatTagId || matched.id}\`\n- **Assigned Role**: **${matched.role || matched.trade || roleLabel}**\n- **Current ${zoneLabel}**: **${matched.currentZone || matched.zone || `${siteLabel || 'Facility'} Area`}**\n- **Safety Status**: **${matched.ppeStatus || 'COMPLIANT'}** ✓\n\n*Verified by real-time RFID gateway telemetry.*`;
-      } else if (q.toLowerCase().includes('list') || q.toLowerCase().includes('who is') || q.toLowerCase().includes('roster')) {
-        const rows = (mongoPeople.length > 0 ? mongoPeople : people).slice(0, 10).map((p: any, idx: number) => 
-          `| ${idx + 1} | **${p.name || `${personnelSingular} ${idx + 1}`}** | \`${p.hardhatTagId || p.id}\` | ${p.role || p.trade || roleLabel} | **${p.currentZone || p.zone || 'Site'}** | \`${p.presenceState || 'ACTIVE'}\` |`
-        ).join('\n');
-        localAnswer = `### 👥 Active On-Site ${personnelPlural} Roster (${(mongoPeople.length || people.length)} Total)\n\n| # | Name | ${idBadgeLabel} | ${roleLabel} | Current ${zoneLabel} | Motion State |\n|---|------|------------|------|--------------|--------------|\n${rows}`;
-      }
-
-      setChatHistory(prev => [
-        ...prev,
-        {
-          id: `msg-${Date.now()}-local`,
-          sender: 'assistant',
-          text: localAnswer,
-          suggestedActions: [`List all active ${personnelPlural}`, `Show Safety Compliance`, "Show MongoDB database status"],
-          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-        }
-      ]);
-    } finally {
-      setIsCopilotThinking(false);
-    }
+      // Persist to MongoDB ai_copilot_chats
+      addDoc(collection(db, 'ai_copilot_chats'), {
+        question: q,
+        answer: result.answer,
+        isGrounded: result.isGrounded,
+        confidence: result.confidence,
+        supportingMetrics: result.supportingMetrics,
+        source: 'REAL_TIME_API_HISTORY',
+        timestamp: serverTimestamp()
+      }).catch(() => {});
+    }, 350);
   };
 
-  // Save Copilot Chat Session to MongoDB
-  const handleSaveCopilotSession = async () => {
-    try {
-      const title = `${intelligenceProfile?.industryName || 'Operational'} Safety Consultation - ${new Date().toLocaleDateString()} (${chatHistory.length} msgs)`;
-      await addDoc(collection(db, 'ai_copilot_chats'), {
-        sessionTitle: title,
-        messages: chatHistory,
-        createdAt: new Date().toISOString()
-      });
-      setActionSuccessMsg('Copilot session saved to MongoDB successfully.');
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Save Directive to MongoDB
-  const handleSaveDirectiveToMongo = async (opt: GeminiOptimization) => {
-    try {
-      await addDoc(collection(db, 'ai_recommendations'), {
-        title: opt.title,
-        category: opt.category,
-        impact: opt.impact,
-        description: opt.description,
-        actionableSteps: opt.actionableSteps,
-        createdAt: new Date().toISOString()
-      });
-      setActionSuccessMsg(`Saved directive: "${opt.title}" to MongoDB.`);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Log Anomaly as Active Incident to MongoDB
-  const handleLogAnomalyToIncidents = async (anomaly: GeminiAnomaly) => {
-    try {
-      await addDoc(collection(db, 'incidents'), {
-        title: anomaly.title,
-        severity: anomaly.severity,
-        zone: anomaly.zone || siteLabel || 'Operational Area',
-        description: anomaly.description,
-        tagId: anomaly.tagId,
-        personName: anomaly.name || `Unassigned ${personnelSingular}`,
-        timestamp: new Date().toISOString(),
-        status: 'OPEN'
-      });
-      setActionSuccessMsg(`Logged safety incident "${anomaly.title}" to MongoDB.`);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Run AI RCA Generator
-  const handleRunRca = async () => {
-    setIsAnalyzingRca(true);
-    try {
-      const res = await fetch('/api/analyze-incident', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          title: rcaTitle,
-          category: rcaCategory,
-          severity: rcaSeverity,
-          locationZone: rcaLocation,
-          equipmentInvolved: rcaEquipment,
-          description: rcaDescription
-        })
-      });
-      const data = await res.json();
-      setCurrentRcaResult({
-        title: rcaTitle,
-        category: rcaCategory,
-        severity: rcaSeverity,
-        locationZone: rcaLocation,
-        severityScore: data.severityScore || 82,
-        probableRootCause: data.probableRootCause || 'Access threshold interlock delay during active operational cycle.',
-        contributingFactors: data.contributingFactors || [
-          'High ambient operational acoustic noise masking alarm siren.',
-          `${organizationType} shift handover overlap without zone isolation.`,
-          'Antenna portal RSSI sensitivity calibration required.'
-        ],
-        capaRecommendations: data.capaRecommendations || [
-          `Enable automatic strobe light and siren interlock at ${zoneLabel} threshold.`,
-          `Conduct mandatory 5-minute pre-shift safety briefing with ${organizationType} crew.`,
-          `Re-verify ${idBadgeLabel} positioning to ensure optimal antenna telemetry.`
-        ],
-        regulatoryImpact: data.regulatoryImpact || (intelligenceProfile?.complianceFramework ? `${intelligenceProfile.complianceFramework} Standard CAPA Compliance Required.` : 'Regulatory Safety Standard Compliance Required.'),
-        createdAt: new Date().toISOString()
-      });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsAnalyzingRca(false);
-    }
-  };
-
-  // Save RCA to MongoDB
-  const handleSaveRcaToMongo = async () => {
-    if (!currentRcaResult) return;
-    try {
-      await addDoc(collection(db, 'ai_rca_reports'), {
-        ...currentRcaResult,
-        createdAt: new Date().toISOString()
-      });
-      setActionSuccessMsg('RCA Report persisted to MongoDB.');
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Run BI Synthesis
-  const handleRunBiSynthesis = async () => {
-    setIsSynthesizing(true);
-    try {
-      const res = await fetch('/api/analyze-telemetry', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: biPrompt,
-          dateRange: biDateRange,
-          selectedSite: biSelectedSite,
-          metricsContext: {
-            totalTags: liveTags.length,
-            historyCount: historyRecords.length
-          }
-        })
-      });
-      const data = await res.json();
-      setCurrentBiResult({
-        prompt: biPrompt,
-        dateRange: biDateRange,
-        selectedSite: biSelectedSite,
-        synthesis: data.synthesis || 'Enterprise construction telemetry synthesized from real data only.',
-        keyMetrics: data.keyMetrics || null,
-        createdAt: new Date().toISOString()
-      });
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsSynthesizing(false);
-    }
-  };
-
-  // Save BI Synthesis to MongoDB
-  const handleSaveBiToMongo = async () => {
-    if (!currentBiResult) return;
-    try {
-      await addDoc(collection(db, 'analytics_metrics'), {
-        ...currentBiResult,
-        createdAt: new Date().toISOString()
-      });
-      setActionSuccessMsg('Enterprise BI report saved to MongoDB.');
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  // Export Daily Shift Briefing to PDF
-  const handleExportBriefingPDF = () => {
-    const columns = [
-      { key: 'category', label: 'Safety Domain' },
-      { key: 'status', label: 'EHS Compliance Status' },
-      { key: 'details', label: 'Construction Zone Telemetry Findings' }
+  // ---------------------------------------------------------------------------
+  // 6. CSV EXPORT HANDLER
+  // ---------------------------------------------------------------------------
+  const handleExportCSV = () => {
+    if (insightsSummary.insights.length === 0) return;
+    const columns: ExportColumn[] = [
+      { key: 'category', label: 'Category' },
+      { key: 'severity', label: 'Severity' },
+      { key: 'title', label: 'Title' },
+      { key: 'currentValue', label: 'Current Value' },
+      { key: 'baselineValue', label: 'Baseline Value' },
+      { key: 'difference', label: 'Difference' },
+      { key: 'confidence', label: 'Confidence' },
+      { key: 'affectedPerson', label: 'Affected Person' },
+      { key: 'affectedZone', label: 'Affected Zone' },
+      { key: 'evidence', label: 'Evidence' },
+      { key: 'recommendedAction', label: 'Recommended Action' }
     ];
-    const rows = [
-      { category: 'Executive Summary', status: 'Optimal', details: report?.executiveSummary || 'UHF hardhat RFID readers active across all 5 construction zones.' },
-      { category: 'Heavy Crane Swing Radius', status: 'High-Risk Monitored', details: 'Permit-to-work verification active within 12m hoist radius.' },
-      { category: 'Excavation Pit & Shoring', status: 'Active Watch', details: 'Lone worker 20-minute welfare check timer active.' },
-      { category: 'Scaffolding Tiers 3 & 4', status: 'Compliant', details: 'Wind shear & 100% tie-off monitoring active.' },
-      { category: 'Shift Toolbox Topics', status: 'Briefed', details: 'Review Crane turnstile alarms & hardhat RFID tag battery levels.' }
-    ];
-    generatePDFReport(
-      'Daily Construction Shift EHS Safety Audit',
-      'Metro Tower Project - Aperture People Tracking Intelligence',
-      columns,
-      rows,
-      [
-        { label: 'Active Personnel', value: liveTags.length },
-        { label: 'Safety Score', value: `${report?.safetyComplianceScore || 96}/100` },
-        { label: 'EHS Status', value: 'COMPLIANT' }
-      ]
+
+    const rows = insightsSummary.insights.map(i => ({
+      category: i.category,
+      severity: i.severity,
+      title: i.title,
+      currentValue: i.currentValue,
+      baselineValue: i.baselineValue,
+      difference: i.difference,
+      confidence: `${i.confidence} (${i.confidenceScore}%)`,
+      affectedPerson: i.affectedPerson || 'N/A',
+      affectedZone: i.affectedZone || 'N/A',
+      evidence: i.evidence,
+      recommendedAction: i.recommendedAction
+    }));
+
+    exportToCSV('Aperture_AI_Insights_Report', rows, columns);
+  };
+
+  // ---------------------------------------------------------------------------
+  // 7. HELPER BADGE STYLES
+  // ---------------------------------------------------------------------------
+  const getSeverityBadge = (severity: InsightSeverity) => {
+    switch (severity) {
+      case 'Critical':
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-black bg-rose-500/15 text-rose-600 dark:text-rose-400 border border-rose-500/30">
+          <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse" />
+          CRITICAL
+        </span>;
+      case 'High':
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/30">
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+          HIGH
+        </span>;
+      case 'Medium':
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-500/15 text-blue-600 dark:text-blue-400 border border-blue-500/30">
+          <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+          MEDIUM
+        </span>;
+      case 'Low':
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-slate-500/15 text-slate-600 dark:text-slate-400 border border-slate-500/30">
+          LOW
+        </span>;
+      case 'Informational':
+      default:
+        return <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30">
+          INFO
+        </span>;
+    }
+  };
+
+  const getConfidenceBadge = (confidence: InsightConfidence, score: number) => {
+    const color = confidence === 'High' 
+      ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+      : confidence === 'Medium'
+      ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+      : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20';
+
+    return (
+      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold border ${color}`}>
+        <Sparkles size={11} />
+        {confidence} ({score}%)
+      </span>
     );
   };
 
+  const getDataDistinctionBadge = (distinction: DataDistinction) => {
+    switch (distinction) {
+      case 'Real API event':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800/50">RAW API TELEMETRY</span>;
+      case 'Statistical anomaly':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-purple-50 dark:bg-purple-950/40 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-800/50">STATISTICAL ANOMALY</span>;
+      case 'Derived metric':
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/50">DERIVED METRIC</span>;
+      case 'AI interpretation':
+      default:
+        return <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-teal-50 dark:bg-teal-950/40 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800/50">AI INTERPRETATION</span>;
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // 8. RENDER VIEW
+  // ---------------------------------------------------------------------------
   return (
-    <div className="space-y-6 w-full max-w-[1760px] mx-auto pb-16 min-w-0 p-4 sm:p-6">
-      
-      {/* 1. TOP API KEY & LIVE HARDWARE TELEMETRY DIAGNOSTICS CARD */}
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-5 lg:p-6 shadow-sm">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          
-          <div className="space-y-1.5">
-            <div className="flex items-center gap-2.5 flex-wrap">
-              {mongoStatus.connected ? (
-                <span className="flex items-center gap-1.5 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-400 text-xs font-bold rounded-full">
-                  <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                  <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
-                  <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
-                </span>
-              ) : (
-                <span className="flex items-center gap-1.5 px-3 py-1 bg-rose-500/10 border border-rose-500/20 text-rose-700 dark:text-rose-400 text-xs font-bold rounded-full">
-                  <span className="w-2 h-2 rounded-full bg-rose-500" />
-                  <Database size={13} className="text-rose-600 dark:text-rose-400" />
-                  <span>MongoDB Disconnected</span>
-                </span>
-              )}
-              <span className="flex items-center gap-1.5 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 text-indigo-700 dark:text-indigo-400 text-xs font-bold rounded-full font-mono">
-                <Key size={13} />
-                GAO-UHF-SITE-9942 • Live Ingestion
-              </span>
-              <span className="flex items-center gap-1.5 px-3 py-1 bg-purple-500/10 border border-purple-500/20 text-purple-700 dark:text-purple-400 text-xs font-bold rounded-full">
-                <BrainCircuit size={13} />
-                Gemini 3.7 Flash EHS Engine
-              </span>
+    <div className="space-y-6 w-full max-w-[1760px] mx-auto pb-20 min-w-0 p-4 sm:p-6 text-slate-900 dark:text-slate-100">
+
+      {/* 1. HEADER & STATUS BAR */}
+      <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm">
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-3 flex-wrap">
+            <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/60 rounded-2xl border border-indigo-100 dark:border-indigo-800/50 text-indigo-600 dark:text-indigo-400">
+              <BrainCircuit size={26} />
             </div>
-
-            <h2 className="text-xl lg:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
-              <HardHat className="text-amber-500 w-6 h-6 shrink-0" />
-              <span>Construction People Tracking & EHS AI Intelligence</span>
-            </h2>
-            <p className="text-xs text-slate-600 dark:text-slate-400 max-w-3xl leading-relaxed">
-              Every insight is synthesized from live RFID hardhat badges, reader portal antenna RSSI telemetry, and construction safety compliance zones.
-            </p>
+            <div>
+              <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2.5">
+                AI Insights Intelligence Center
+                <Badge variant="outline" className="text-xs bg-indigo-500/10 border-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-bold uppercase tracking-wider">
+                  Real Telemetry Engine
+                </Badge>
+              </h1>
+              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
+                Evidence-based intelligence analyzing live people-movement API telemetry across {siteLabel}.
+              </p>
+            </div>
           </div>
-
-          <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={handleRunAnalysis}
-              disabled={isLoading}
-              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-xs font-bold rounded-2xl flex items-center gap-2 shadow-sm transition cursor-pointer"
-            >
-              {isLoading ? (
-                <>
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                  <span>Analyzing Ingestion Feed...</span>
-                </>
-              ) : (
-                <>
-                  <RotateCw className="w-4 h-4" />
-                  <span>Re-Analyze Live Data</span>
-                </>
-              )}
-            </button>
-          </div>
-
         </div>
 
-        {/* Real-Time Telemetry Hardware Status Strip */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-4 mt-4 border-t border-slate-100 dark:border-slate-800 text-xs">
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between">
-            <span className="text-[10px] font-bold uppercase text-slate-500">Active Hardhat Badges</span>
-            <div className="text-base font-black text-slate-900 dark:text-white mt-1 flex items-center justify-between">
-              <span>{liveTags.length} Personnel</span>
-              <Users size={16} className="text-indigo-500" />
-            </div>
+        {/* Global Controls & Status */}
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Industry Badge */}
+          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700/60 text-xs">
+            <Layers size={14} className="text-slate-400" />
+            <span className="font-bold capitalize text-slate-700 dark:text-slate-300">{activeSubIndustry}</span>
+            <span className="text-slate-400">·</span>
+            <span className="text-slate-500 dark:text-slate-400 font-medium">{activeIndustry}</span>
           </div>
 
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between">
-            <span className="text-[10px] font-bold uppercase text-slate-500">Connected Readers</span>
-            <div className="text-base font-black text-slate-900 dark:text-white mt-1 flex items-center justify-between">
-              <span>{mongoReaders.length > 0 ? `${mongoReaders.length} Portals` : '4 Portals (UHF)'}</span>
-              <RadioTower size={16} className="text-emerald-500" />
-            </div>
+          {/* MongoDB Atlas Persistence Badge */}
+          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/50 text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+            <Database size={14} className="text-indigo-600 dark:text-indigo-400" />
+            <span>MongoDB Atlas</span>
+            <span className="font-mono font-bold bg-indigo-100 dark:bg-indigo-900/60 px-1.5 py-0.5 rounded text-[11px]">
+              {isMongoSynced ? 'Persisted' : 'Syncing'}
+            </span>
           </div>
 
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between">
-            <span className="text-[10px] font-bold uppercase text-slate-500">WebSocket Latency</span>
-            <div className="text-base font-black text-emerald-600 dark:text-emerald-400 mt-1 flex items-center justify-between">
-              <span>{isWsConnected ? '0 ms (Real-Time)' : 'Polling (2.5s)'}</span>
-              <Activity size={16} className="text-emerald-500" />
-            </div>
+          {/* Telemetry Record Count Badge */}
+          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/50 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
+            <Radio size={14} className="animate-pulse text-emerald-500" />
+            <span>Live GAO RFID Feed</span>
+            <span className="font-mono font-bold bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded text-[11px]">
+              {normalizedEvents.length.toLocaleString()} events
+            </span>
           </div>
 
-          <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between">
-            <span className="text-[10px] font-bold uppercase text-slate-500">Last Telemetry Sync</span>
-            <div className="text-base font-black text-slate-900 dark:text-white mt-1 flex items-center justify-between">
-              <span>{lastAnalysisTimestamp || 'Synchronized'}</span>
-              <Clock size={16} className="text-purple-500" />
-            </div>
+          {/* Batch Size Selector */}
+          <div className="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl px-2.5 py-1">
+            <span className="text-[11px] font-semibold text-slate-500">Scan:</span>
+            <select
+              value={batchSize}
+              onChange={(e) => setBatchSize(Number(e.target.value))}
+              disabled={isRefreshing}
+              aria-label="Select Telemetry Batch Size"
+              className="bg-transparent text-xs font-bold text-slate-800 dark:text-slate-200 border-none outline-none cursor-pointer"
+            >
+              <option value={100} className="dark:bg-slate-900">100 records</option>
+              <option value={250} className="dark:bg-slate-900">250 records</option>
+              <option value={500} className="dark:bg-slate-900">500 records</option>
+              <option value={1000} className="dark:bg-slate-900">1,000 records</option>
+            </select>
           </div>
+
+          {/* Refresh Button */}
+          <button
+            onClick={() => loadTelemetry(batchSize)}
+            disabled={isRefreshing}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-2xl text-xs font-bold transition shadow-sm cursor-pointer"
+          >
+            <RefreshCw size={13} className={isRefreshing ? 'animate-spin' : ''} />
+            <span>{isRefreshing ? 'Analyzing...' : 'Re-Run Pipeline'}</span>
+          </button>
+
+          {/* Export CSV */}
+          <button
+            onClick={handleExportCSV}
+            disabled={insightsSummary.insights.length === 0}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-white dark:bg-slate-800 hover:bg-slate-50 dark:hover:bg-slate-700/60 border border-slate-200 dark:border-slate-700 rounded-2xl text-xs font-bold text-slate-700 dark:text-slate-200 transition shadow-2xs cursor-pointer disabled:opacity-40"
+          >
+            <Download size={13} />
+            <span>Export CSV</span>
+          </button>
         </div>
       </div>
 
-      {/* Toast Notification */}
-      {actionSuccessMsg && (
-        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 rounded-2xl flex items-center gap-2 text-xs font-bold text-emerald-800 dark:text-emerald-300">
-          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>{actionSuccessMsg}</span>
+      {/* Action Toast Notification */}
+      {actionToast && (
+        <div className="p-3.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 text-xs font-semibold flex items-center justify-between shadow-2xs">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 size={15} className="text-emerald-600" />
+            <span>{actionToast}</span>
+          </div>
+          <button onClick={() => setActionToast(null)} className="text-slate-400 hover:text-slate-600 cursor-pointer">
+            <X size={14} />
+          </button>
         </div>
       )}
 
-      {/* 2. SUB-NAVIGATION NAVIGATION PILLS */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1">
-        {[
-          { id: 'insights', label: 'Safety & Anomaly Insights', icon: ShieldCheck },
-          { id: 'copilot', label: 'EHS AI Safety Copilot', icon: Bot }
-        ].map((tab) => {
-          const Icon = tab.icon;
-          const isActive = activeSection === tab.id;
-          return (
-            <button
-              key={tab.id}
-              onClick={() => setActiveSection(tab.id as any)}
-              className={`px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 transition whitespace-nowrap cursor-pointer shrink-0 ${
-                isActive
-                  ? 'bg-slate-900 text-white dark:bg-white dark:text-slate-900 shadow-sm'
-                  : 'bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 border border-slate-200/80 dark:border-slate-700'
-              }`}
-            >
-              <Icon size={15} />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
+      {/* 2. DYNAMIC INDUSTRY CONTEXT BANNER */}
+      <div className="bg-gradient-to-r from-indigo-50/70 via-slate-50 to-blue-50/70 dark:from-slate-900/90 dark:via-slate-900/60 dark:to-indigo-950/40 border border-indigo-100 dark:border-slate-800 rounded-3xl p-4 sm:p-5 flex flex-col md:flex-row md:items-center justify-between gap-4 text-xs shadow-2xs">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2 text-indigo-700 dark:text-indigo-400 font-bold">
+            <Compass size={15} />
+            <span className="uppercase tracking-wider font-mono">Dynamic Industry Adaptation Active</span>
+          </div>
+          <p className="text-slate-600 dark:text-slate-300 font-medium">
+            AI anomaly thresholds and interpretations calibrate dynamically to **{activeSubIndustry}** ({activeIndustry}) and **{complianceFramework}**. Under no circumstances does the engine fabricate variables beyond real people-movement telemetry.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="px-2.5 py-1 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 font-medium text-slate-600 dark:text-slate-300 text-[11px]">
+            Spatial Unit: <strong>{zoneLabel}</strong>
+          </span>
+          <span className="px-2.5 py-1 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 font-medium text-slate-600 dark:text-slate-300 text-[11px]">
+            Personnel Unit: <strong>{personnelPlural}</strong>
+          </span>
+          <span className="px-2.5 py-1 bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 font-medium text-slate-600 dark:text-slate-300 text-[11px]">
+            Facility: <strong>{siteLabel}</strong>
+          </span>
+        </div>
       </div>
 
-      {/* 3. SECTION 1: SITE SAFETY & ANOMALY INSIGHTS */}
-      {activeSection === 'insights' && (
-        <div className="space-y-6">
-          
-          {/* Executive Safety Score & Summary Card */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-            
-            {/* Score Card */}
-            <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-indigo-600 dark:text-indigo-400 tracking-wider">
-                  OSHA Safety Index
-                </span>
-                <h3 className="text-base font-bold text-slate-900 dark:text-white mt-1">
-                  Site Personnel Compliance
-                </h3>
-              </div>
-
-              <div className="my-6 text-center">
-                <div className="text-5xl font-black text-emerald-600 dark:text-emerald-400">
-                  {report?.safetyComplianceScore ?? (mongoPeople.length > 0 ? 100 : 0)}%
-                </div>
-                <p className="text-xs font-semibold text-slate-500 mt-2">
-                  {mongoPeople.length > 0 ? "Zero Lost-Time Incidents in Current Shift" : "No Active Personnel Logged"}
-                </p>
-                <div className="w-full bg-slate-100 dark:bg-slate-800 h-2.5 rounded-full mt-3 overflow-hidden">
-                  <div 
-                    className="bg-emerald-500 h-full rounded-full transition-all duration-700" 
-                    style={{ width: `${report?.safetyComplianceScore ?? (mongoPeople.length > 0 ? 100 : 0)}%` }}
-                  />
-                </div>
-              </div>
-
-              <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex justify-between text-xs text-slate-500 font-bold">
-                <span>Active Tagged Personnel: {mongoPeople.length}</span>
-                <span className={mongoPeople.length > 0 ? "text-emerald-600" : "text-slate-400"}>
-                  {mongoPeople.length > 0 ? "Optimal" : "Idle"}
-                </span>
-              </div>
-            </div>
-
-            {/* Executive Synthesis Card */}
-            <div className="lg:col-span-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm flex flex-col justify-between">
-              <div>
-                <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-                  <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                    <Sparkles className="w-4 h-4 text-indigo-500" />
-                    <span>Executive AI Safety & Telemetry Assessment</span>
-                  </h3>
-                  <Badge className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-black text-[10px] uppercase">
-                    Gemini Grounded
-                  </Badge>
-                </div>
-
-                <p className="text-xs lg:text-sm text-slate-700 dark:text-slate-300 leading-relaxed font-medium mt-4">
-                  {report?.executiveSummary || (
-                    mongoPeople.length > 0
-                      ? `Active hardware RFID telemetry is tracking ${mongoPeople.length} personnel across configured site zones. Click "Analyze Ingestion Feed" to synthesize real-time Gemini AI safety compliance, dwell times, and anomaly assessments.`
-                      : "No personnel or zones currently registered in MongoDB. Register hardware and site personnel to begin automated AI safety monitoring."
-                  )}
-                </p>
-              </div>
-
-              <div className="mt-4 pt-4 border-t border-slate-100 dark:border-slate-800 grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <div className="p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Anomalies Detected</span>
-                  <span className={`text-xs font-black ${(report?.anomalies?.length || 0) > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                    {(report?.anomalies?.length || 0)} Flagged
-                  </span>
-                </div>
-                <div className="p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Monitored Zones</span>
-                  <span className="text-xs font-black text-indigo-600">
-                    {zones.length} Active Zones
-                  </span>
-                </div>
-                <div className="p-2.5 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase block">Muster Roll Call</span>
-                  <span className="text-xs font-black text-emerald-600">
-                    {mongoPeople.length > 0 ? '100% Gate Verified' : '0 Logged'}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-          </div>
-
-          {/* Predictive Zone Risk Radar */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-amber-500 tracking-wider">Predictive Telemetry</span>
-                <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <Gauge className="w-5 h-5 text-amber-500" />
-                  <span>Active Zone Hazard Probabilities</span>
-                </h3>
-              </div>
-              <span className="text-xs font-bold text-slate-400">Live Calculated via RSSI & Dwell Time</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {(report?.riskForecasts && report.riskForecasts.length > 0) ? (
-                report.riskForecasts.map((rf, idx) => (
-                  <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs text-slate-900 dark:text-white">{rf.zone}</span>
-                      <Badge className={`text-[10px] font-black shrink-0 ${
-                        rf.riskScore > 75 
-                          ? 'bg-rose-600 text-white' 
-                          : rf.riskScore > 50 
-                          ? 'bg-amber-500 text-white' 
-                          : 'bg-emerald-600 text-white'
-                      }`}>
-                        {rf.riskScore}%
-                      </Badge>
-                    </div>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
-                      {rf.mainFactor}
-                    </p>
-                    <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700 flex justify-between items-center text-[10px] font-bold text-slate-500">
-                      <span>Trend</span>
-                      <span className={rf.trend === 'Increasing' ? 'text-rose-500' : 'text-emerald-500'}>
-                        {rf.trend}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              ) : (Array.isArray(zones) && zones.length > 0) ? (
-                zones.slice(0, 4).map((z, idx) => (
-                  <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-xs text-slate-900 dark:text-white">{z.name}</span>
-                      <Badge className="bg-emerald-600 text-white text-[10px] font-black shrink-0">
-                        Normal
-                      </Badge>
-                    </div>
-                    <p className="text-[11px] text-slate-600 dark:text-slate-400 font-medium leading-relaxed">
-                      Real-time telemetry within normal safety operating parameters.
-                    </p>
-                    <div className="pt-2 border-t border-slate-200/60 dark:border-slate-700 flex justify-between items-center text-[10px] font-bold text-slate-500">
-                      <span>Telemetry</span>
-                      <span className="text-emerald-500 font-bold">Connected</span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="col-span-full py-8 text-center text-xs text-slate-400 font-semibold border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-                  No zones configured yet in MongoDB. Create zones on the Map to view predictive hazard analytics.
-                </div>
-              )}
+      {/* 3. SUMMARY KPI CARDS */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3.5">
+        
+        {/* Total Insights */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-5 shadow-2xs space-y-2">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+            <span className="text-xs font-bold uppercase tracking-wider">Total Insights</span>
+            <div className="p-2 bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 rounded-xl">
+              <Sparkles size={16} />
             </div>
           </div>
-
-          {/* Flagged Anomalies & Site Directives (Two-Column Layout) */}
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            
-            {/* Flagged Construction Safety Anomalies */}
-            <div className="lg:col-span-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-                <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <AlertTriangle className="w-5 h-5 text-rose-500" />
-                  <span>Flagged Worker & Zone Anomalies</span>
-                </h3>
-                <span className="text-[10px] font-bold text-slate-400">1-Click Incident Logging</span>
-              </div>
-
-              <div className="space-y-3">
-                {(report?.anomalies || []).map((anomaly, idx) => (
-                  <div 
-                    key={idx} 
-                    className="p-4 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-100 dark:border-rose-900/40 rounded-2xl space-y-2 flex flex-col justify-between"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-rose-600 text-white font-black text-[9px] uppercase shrink-0">
-                          {anomaly.severity}
-                        </Badge>
-                        <span className="font-bold text-xs text-slate-900 dark:text-white truncate">
-                          {anomaly.title}
-                        </span>
-                      </div>
-                      <span className="text-[10px] font-mono text-slate-400 shrink-0">
-                        {anomaly.tagId}
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                      {anomaly.description}
-                    </p>
-
-                    <div className="pt-2 flex items-center justify-between text-xs">
-                      <span className="text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
-                        📍 {anomaly.zone || 'Site Zone'} • {anomaly.name || 'Worker'}
-                      </span>
-                      <button
-                        onClick={() => handleLogAnomalyToIncidents(anomaly)}
-                        className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-bold rounded-xl flex items-center gap-1 shadow-sm transition cursor-pointer"
-                      >
-                        <PlusCircle size={12} /> Log to Incidents
-                      </button>
-                    </div>
-                  </div>
-                ))}
-
-                {(!report?.anomalies || report.anomalies.length === 0) && (
-                  <div className="text-center py-8 text-xs text-slate-400 font-semibold border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-                    No critical worker anomalies currently flagged.
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Hardware & Site Flow Directives */}
-            <div className="lg:col-span-6 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-                <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-amber-500" />
-                  <span>Hardware & Site Flow Tuning Directives</span>
-                </h3>
-                <span className="text-[10px] font-bold text-slate-400">1-Click Mongo Persistence</span>
-              </div>
-
-              <div className="space-y-3">
-                {(report?.optimizations || []).map((opt, idx) => (
-                  <div 
-                    key={idx} 
-                    className="p-4 bg-slate-50 dark:bg-slate-800/40 border border-slate-150 dark:border-slate-700/60 rounded-2xl space-y-2 flex flex-col justify-between"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <Badge className="bg-amber-500 text-white font-black text-[9px] uppercase shrink-0">
-                          {opt.impact} IMPACT
-                        </Badge>
-                        <span className="font-bold text-xs text-slate-900 dark:text-white">
-                          {opt.title}
-                        </span>
-                      </div>
-                      <span className="text-[10px] font-bold text-indigo-500 uppercase shrink-0">
-                        {opt.category}
-                      </span>
-                    </div>
-
-                    <p className="text-xs text-slate-600 dark:text-slate-300 font-medium">
-                      {opt.description}
-                    </p>
-
-                    <div className="p-2.5 bg-white dark:bg-slate-800 rounded-xl border border-slate-200/60 dark:border-slate-700 text-[11px] font-mono text-slate-700 dark:text-slate-300">
-                      {opt.actionableSteps}
-                    </div>
-
-                    <div className="pt-2 flex justify-end">
-                      <button
-                        onClick={() => handleSaveDirectiveToMongo(opt)}
-                        className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white text-[10px] font-bold rounded-xl flex items-center gap-1 shadow-sm transition cursor-pointer"
-                      >
-                        <Save size={12} /> Save Directive to MongoDB
-                      </button>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Saved MongoDB Directives */}
-                {savedDirectives.length > 0 && (
-                  <div className="pt-3 border-t border-slate-200 dark:border-slate-700 space-y-2">
-                    <div className="flex items-center justify-between text-[11px] font-bold text-slate-500 dark:text-slate-400">
-                      <span className="flex items-center gap-1.5">
-                        <Database size={12} className="text-emerald-500" />
-                        Persisted Directives in MongoDB ({savedDirectives.length})
-                      </span>
-                    </div>
-                    {savedDirectives.map((sd) => (
-                      <div key={sd.id} className="p-3 bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/50 rounded-xl flex items-center justify-between gap-2 text-xs">
-                        <div>
-                          <div className="font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                            <span>{sd.title}</span>
-                            <Badge className="bg-emerald-600 text-white text-[9px] font-black">{sd.impact || 'OPTIMIZATION'}</Badge>
-                          </div>
-                          <p className="text-[11px] text-slate-600 dark:text-slate-300 mt-0.5">{sd.description}</p>
-                        </div>
-                        <button
-                          onClick={async () => {
-                            if (sd.id) await deleteDoc(doc(db, 'ai_recommendations', sd.id));
-                            setActionSuccessMsg('Directive removed from MongoDB');
-                          }}
-                          className="text-slate-400 hover:text-rose-500 p-1.5 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer shrink-0"
-                          title="Delete Directive from MongoDB"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
+          <div className="text-2xl sm:text-3xl font-black text-slate-900 dark:text-white">
+            {insightsSummary.totalInsights}
           </div>
-
-          {/* Trade & Personnel Activity Classifier */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-[10px] font-black uppercase text-indigo-500 tracking-wider">Trade Telemetry</span>
-                <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <Users className="w-5 h-5 text-indigo-500" />
-                  <span>Personnel Activity & Dwell Classification</span>
-                </h3>
-              </div>
-              <span className="text-xs font-bold text-slate-400">Classified from Real-Time Movements</span>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {(report?.personnelEfficiency && report.personnelEfficiency.length > 0) ? (
-                report.personnelEfficiency.map((worker, idx) => (
-                  <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-2">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="font-bold text-xs text-slate-900 dark:text-white">{worker.name}</h4>
-                        <span className="text-[10px] font-mono text-slate-400">{worker.tagId}</span>
-                      </div>
-                      <Badge className="bg-indigo-50 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-bold text-[9px]">
-                        {worker.efficiencyScore}% Efficiency
-                      </Badge>
-                    </div>
-                    <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
-                      ⚡ {worker.inferredActivity}
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-semibold pt-1 border-t border-slate-200/60 dark:border-slate-700">
-                      ⏱️ {worker.dwellTimeInfo}
-                    </div>
-                  </div>
-                ))
-              ) : mongoPeople.length > 0 ? (
-                mongoPeople.slice(0, 4).map((p, idx) => (
-                  <div key={idx} className="p-4 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-150 dark:border-slate-700/60 flex flex-col justify-between space-y-2">
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <h4 className="font-bold text-xs text-slate-900 dark:text-white">{p.name}</h4>
-                        <span className="text-[10px] font-mono text-slate-400">{p.tagId || p.rfid || p.id}</span>
-                      </div>
-                      <Badge className="bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-bold text-[9px]">
-                        Active Tag
-                      </Badge>
-                    </div>
-                    <div className="text-[11px] font-medium text-slate-700 dark:text-slate-300">
-                      ⚡ Role: {p.role || p.trade || 'Site Personnel'}
-                    </div>
-                    <div className="text-[10px] text-slate-400 font-semibold pt-1 border-t border-slate-200/60 dark:border-slate-700">
-                      📍 Zone: {p.zone || 'General Site'}
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="col-span-full py-8 text-center text-xs text-slate-400 font-semibold border border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
-                  No personnel registered yet. Register workers to generate live activity and dwell classification.
-                </div>
-              )}
-            </div>
-          </div>
-
+          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            Mathematical anomalies detected
+          </p>
         </div>
-      )}
 
-      {/* 4. SECTION 2: EHS AI SAFETY COPILOT */}
-      {activeSection === 'copilot' && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+        {/* Critical & High */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-5 shadow-2xs space-y-2">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+            <span className="text-xs font-bold uppercase tracking-wider">Critical / High</span>
+            <div className="p-2 bg-rose-50 dark:bg-rose-950/50 text-rose-600 dark:text-rose-400 rounded-xl">
+              <AlertTriangle size={16} />
+            </div>
+          </div>
+          <div className="text-2xl sm:text-3xl font-black text-rose-600 dark:text-rose-400">
+            {insightsSummary.criticalAndHighCount}
+          </div>
+          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            Substantial statistical deviations
+          </p>
+        </div>
+
+        {/* Emerging Patterns */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-5 shadow-2xs space-y-2">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+            <span className="text-xs font-bold uppercase tracking-wider">Emerging Patterns</span>
+            <div className="p-2 bg-amber-50 dark:bg-amber-950/50 text-amber-600 dark:text-amber-400 rounded-xl">
+              <TrendingUp size={16} />
+            </div>
+          </div>
+          <div className="text-2xl sm:text-3xl font-black text-amber-600 dark:text-amber-400">
+            {insightsSummary.emergingPatternsCount}
+          </div>
+          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            Accelerating movement shifts
+          </p>
+        </div>
+
+        {/* Average Confidence */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-5 shadow-2xs space-y-2">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+            <span className="text-xs font-bold uppercase tracking-wider">Avg Confidence</span>
+            <div className="p-2 bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 rounded-xl">
+              <ShieldCheck size={16} />
+            </div>
+          </div>
+          <div className="text-2xl sm:text-3xl font-black text-emerald-600 dark:text-emerald-400">
+            {insightsSummary.averageConfidenceScore}%
+          </div>
+          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            Based on sample size &amp; std dev
+          </p>
+        </div>
+
+        {/* Data Quality Health */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 sm:p-5 shadow-2xs space-y-2 col-span-2 sm:col-span-1">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400">
+            <span className="text-xs font-bold uppercase tracking-wider">Data Quality</span>
+            <div className="p-2 bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 rounded-xl">
+              <Database size={16} />
+            </div>
+          </div>
+          <div className="text-2xl sm:text-3xl font-black text-blue-600 dark:text-blue-400">
+            {insightsSummary.dataQualityScore}%
+          </div>
+          <p className="text-[11px] font-medium text-slate-500 dark:text-slate-400">
+            Telemetry integrity score
+          </p>
+        </div>
+
+      </div>
+
+      {/* 4. VIEW SELECTION TABS */}
+      <div className="flex items-center gap-1.5 overflow-x-auto pb-1 border-b border-slate-200 dark:border-slate-800 text-xs scrollbar-none font-bold">
+        <button
+          onClick={() => setActiveTab('all')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'all'
+              ? 'bg-indigo-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Sparkles size={14} />
+          All Insights ({insightsSummary.totalInsights})
+        </button>
+
+        <button
+          onClick={() => setActiveTab('critical')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'critical'
+              ? 'bg-rose-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <AlertTriangle size={14} />
+          Critical &amp; High ({insightsSummary.criticalAndHighCount})
+        </button>
+
+        <button
+          onClick={() => setActiveTab('emerging')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'emerging'
+              ? 'bg-amber-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <TrendingUp size={14} />
+          Emerging Patterns ({insightsSummary.emergingPatternsCount})
+        </button>
+
+        <button
+          onClick={() => setActiveTab('person')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'person'
+              ? 'bg-indigo-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Users size={14} />
+          {personnelSingular} Insights
+        </button>
+
+        <button
+          onClick={() => setActiveTab('zone')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'zone'
+              ? 'bg-indigo-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <MapPin size={14} />
+          {zoneLabel} Insights
+        </button>
+
+        <button
+          onClick={() => setActiveTab('duration')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'duration'
+              ? 'bg-indigo-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Clock size={14} />
+          Duration Outliers
+        </button>
+
+        <button
+          onClick={() => setActiveTab('trend')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'trend'
+              ? 'bg-indigo-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Activity size={14} />
+          Trends &amp; Velocity
+        </button>
+
+        <button
+          onClick={() => setActiveTab('ask_aperture')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'ask_aperture'
+              ? 'bg-indigo-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Bot size={14} />
+          Ask Aperture (AI Query)
+        </button>
+
+        <button
+          onClick={() => setActiveTab('data_quality')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'data_quality'
+              ? 'bg-indigo-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <Database size={14} />
+          Data Quality ({insightsSummary.dataQualityScore}%)
+        </button>
+
+        <button
+          onClick={() => setActiveTab('evidence')}
+          className={`px-3.5 py-2 rounded-xl transition whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+            activeTab === 'evidence'
+              ? 'bg-indigo-600 text-white shadow-2xs'
+              : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+          }`}
+        >
+          <FileText size={14} />
+          Evidence Log
+        </button>
+      </div>
+
+      {/* 5. FILTER BAR (when viewing insight cards) */}
+      {activeTab !== 'ask_aperture' && activeTab !== 'data_quality' && activeTab !== 'evidence' && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-4 shadow-2xs flex flex-wrap items-center justify-between gap-3 text-xs">
           
-          {/* Chat Console */}
-          <div className="lg:col-span-8 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm flex flex-col h-[650px]">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-              <div>
-                <h3 className="text-base font-black text-slate-900 dark:text-white flex items-center gap-2">
-                  <Bot className="w-5 h-5 text-indigo-600" />
-                  <span>Construction EHS AI Copilot</span>
-                </h3>
-                <p className="text-xs text-slate-500">Query live hardhat RFID movements and safety permits using natural language.</p>
-              </div>
+          <div className="flex items-center gap-2.5 flex-wrap flex-1 min-w-[280px]">
+            {/* Search Input */}
+            <div className="relative flex-1 min-w-[200px]">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder={`Search insights by person, tag, ${zoneLabel.toLowerCase()}, or keyword...`}
+                className="w-full pl-9 pr-8 py-1.5 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 rounded-2xl text-xs text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-indigo-500 font-medium"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  aria-label="Clear Search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                >
+                  <X size={13} />
+                </button>
+              )}
+            </div>
+
+            {/* Category Filter */}
+            <select
+              value={selectedCategory}
+              onChange={(e) => setSelectedCategory(e.target.value)}
+              aria-label="Filter by Insight Category"
+              className="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
+            >
+              <option value="all">All Categories</option>
+              <option value="Unusual Duration">Unusual Duration</option>
+              <option value="Repeated Visits">Repeated Visits</option>
+              <option value="Zone Activity Anomaly">Zone Activity Anomaly</option>
+              <option value="Person Activity Anomaly">Person Activity Anomaly</option>
+              <option value="Time Pattern Anomaly">Time Pattern Anomaly</option>
+              <option value="Emerging Pattern">Emerging Pattern</option>
+              <option value="Trend">Trend Insights</option>
+              <option value="Data Quality">Data Quality</option>
+            </select>
+
+            {/* Severity Filter */}
+            <select
+              value={selectedSeverity}
+              onChange={(e) => setSelectedSeverity(e.target.value)}
+              aria-label="Filter by Severity"
+              className="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
+            >
+              <option value="all">All Severities</option>
+              <option value="Critical">Critical Only</option>
+              <option value="High">High Severity</option>
+              <option value="Medium">Medium Severity</option>
+              <option value="Low">Low Severity</option>
+              <option value="Informational">Informational</option>
+            </select>
+
+            {/* Confidence Filter */}
+            <select
+              value={selectedConfidence}
+              onChange={(e) => setSelectedConfidence(e.target.value as any)}
+              aria-label="Filter by Confidence"
+              className="bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl px-3 py-1.5 text-xs font-semibold text-slate-700 dark:text-slate-300 outline-none cursor-pointer"
+            >
+              <option value="all">All Confidence</option>
+              <option value="medium_high">Medium &amp; High</option>
+              <option value="high_only">High Confidence Only</option>
+            </select>
+          </div>
+
+          {/* Active Count & Reset */}
+          <div className="flex items-center gap-2">
+            <span className="text-slate-500 dark:text-slate-400 font-medium">
+              Showing <strong>{filteredInsights.length}</strong> of {insightsSummary.totalInsights}
+            </span>
+            {(searchQuery || selectedCategory !== 'all' || selectedSeverity !== 'all' || selectedConfidence !== 'all') && (
               <button
-                onClick={handleSaveCopilotSession}
-                className="px-3.5 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-sm transition cursor-pointer"
+                onClick={() => {
+                  setSearchQuery('');
+                  setSelectedCategory('all');
+                  setSelectedSeverity('all');
+                  setSelectedConfidence('all');
+                }}
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline font-bold"
               >
-                <Save size={13} /> Save Session to MongoDB
+                Reset
               </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ----------------------------------------------------------------------- */}
+      {/* 6. MAIN CONTENT DISPLAY (SUB-VIEWS) */}
+      {/* ----------------------------------------------------------------------- */}
+
+      {/* VIEW A: INSIGHT CARDS GRID */}
+      {activeTab !== 'ask_aperture' && activeTab !== 'data_quality' && activeTab !== 'evidence' && (
+        <div className="space-y-4">
+          {isLoading ? (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-12 text-center space-y-3">
+              <RefreshCw size={32} className="animate-spin text-indigo-600 mx-auto" />
+              <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">Analyzing Movement Telemetry...</h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                Computing historical baselines, transit frequencies, dwell z-scores, and cross-zone patterns.
+              </p>
+            </div>
+          ) : filteredInsights.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-12 text-center space-y-3">
+              <CheckCircle2 size={36} className="text-emerald-500 mx-auto" />
+              <h3 className="text-base font-bold text-slate-800 dark:text-slate-200">
+                {rawRecords.length === 0 
+                  ? 'No Telemetry Records Available'
+                  : 'No Significant AI Insights Detected'}
+              </h3>
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                {rawRecords.length === 0
+                  ? 'More historical data is required to identify reliable patterns. Ensure RFID readers are actively publishing telemetry.'
+                  : 'All evaluated movement events conform to baseline standards. No statistical anomalies exceed detection thresholds under current filters.'}
+              </p>
+              {(searchQuery || selectedCategory !== 'all' || selectedSeverity !== 'all' || selectedConfidence !== 'all') && (
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedCategory('all');
+                    setSelectedSeverity('all');
+                    setSelectedConfidence('all');
+                    setActiveTab('all');
+                  }}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-2xl text-xs font-bold shadow-sm"
+                >
+                  Clear All Filters
+                </button>
+              )}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+              {filteredInsights.map(insight => (
+                <div
+                  key={insight.id}
+                  onClick={() => setSelectedInsight(insight)}
+                  className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 hover:border-indigo-400 dark:hover:border-indigo-600 rounded-3xl p-5 shadow-2xs hover:shadow-md transition cursor-pointer flex flex-col justify-between space-y-4"
+                >
+                  {/* Top Header: Category & Severity */}
+                  <div className="space-y-2.5">
+                    <div className="flex items-center justify-between gap-2 flex-wrap">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                          {insight.category}
+                        </span>
+                        {getDataDistinctionBadge(insight.dataDistinction)}
+                      </div>
+                      <div className="flex items-center gap-1.5">
+                        {getSeverityBadge(insight.severity)}
+                      </div>
+                    </div>
+
+                    {/* Title & Summary */}
+                    <div>
+                      <h2 className="text-base font-bold text-slate-900 dark:text-white group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition leading-snug">
+                        {insight.title}
+                      </h2>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1 font-medium">
+                        {insight.summary}
+                      </p>
+                    </div>
+
+                    {/* Target Entities */}
+                    {(insight.affectedPerson || insight.affectedZone) && (
+                      <div className="flex items-center gap-2 flex-wrap pt-1">
+                        {insight.affectedPerson && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/50">
+                            <User size={11} />
+                            {insight.affectedPerson}
+                          </span>
+                        )}
+                        {insight.affectedZone && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                            <MapPin size={11} />
+                            {insight.affectedZone}
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Middle: Metric Comparison Box */}
+                  <div className="bg-slate-50 dark:bg-slate-800/60 rounded-2xl p-3 border border-slate-100 dark:border-slate-800 text-xs grid grid-cols-3 gap-2 text-center">
+                    <div>
+                      <span className="block text-[10px] uppercase font-bold text-slate-400">Current</span>
+                      <span className="font-mono font-bold text-slate-800 dark:text-slate-200 truncate block">
+                        {insight.currentValue}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] uppercase font-bold text-slate-400">Baseline</span>
+                      <span className="font-mono font-medium text-slate-600 dark:text-slate-400 truncate block">
+                        {insight.baselineValue}
+                      </span>
+                    </div>
+                    <div>
+                      <span className="block text-[10px] uppercase font-bold text-slate-400">Difference</span>
+                      <span className={`font-mono font-black truncate block ${
+                        insight.difference.startsWith('+') ? 'text-amber-600 dark:text-amber-400' : 'text-slate-700 dark:text-slate-300'
+                      }`}>
+                        {insight.difference}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Evidence Snippet */}
+                  <div className="text-[11px] text-slate-600 dark:text-slate-300 bg-slate-50/70 dark:bg-slate-850/50 p-2.5 rounded-xl border border-slate-200/60 dark:border-slate-800/80">
+                    <span className="font-bold text-slate-800 dark:text-slate-200 block mb-0.5">Evidence:</span>
+                    <p className="line-clamp-2 italic">{insight.evidence}</p>
+                  </div>
+
+                  {/* Recommendation Snippet */}
+                  <div className="text-[11px] text-slate-700 dark:text-slate-300 bg-amber-50/60 dark:bg-amber-950/20 p-2.5 rounded-xl border border-amber-200/50 dark:border-amber-900/30 flex items-start gap-1.5">
+                    <Lightbulb size={13} className="text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold text-amber-900 dark:text-amber-300 block mb-0.5">Recommendation:</span>
+                      <p className="line-clamp-2">{insight.recommendedAction}</p>
+                    </div>
+                  </div>
+
+                  {/* Bottom Footer: Confidence & Click Action */}
+                  <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-xs">
+                    <div>
+                      {getConfidenceBadge(insight.confidence, insight.confidenceScore)}
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 group-hover:translate-x-0.5 transition">
+                      Inspect Details
+                      <ChevronRight size={13} />
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* VIEW B: "ASK APERTURE" NATURAL LANGUAGE GROUNDED QUERY ASSISTANT */}
+      {activeTab === 'ask_aperture' && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-6">
+          
+          {/* Header */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-indigo-50 dark:bg-indigo-950/60 rounded-2xl border border-indigo-200 dark:border-indigo-800 text-indigo-600 dark:text-indigo-400">
+                <Bot size={24} />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  Ask Aperture
+                  <span className="text-[11px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+                    Grounded in Real Telemetry
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Ask analytical questions about real movement data. The engine responds exclusively using verified telemetry records.
+                </p>
+              </div>
             </div>
 
-            {/* Quick Action Prompt Chips */}
-            <div className="flex gap-2 overflow-x-auto py-2.5 border-b border-slate-100 dark:border-slate-800 shrink-0">
+            <button
+              onClick={() => setChatMessages([chatMessages[0]])}
+              className="text-xs text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 font-semibold cursor-pointer"
+            >
+              Reset Chat
+            </button>
+          </div>
+
+          {/* Suggestion Chips */}
+          <div className="space-y-2">
+            <span className="text-[11px] uppercase font-bold text-slate-400 tracking-wider">Suggested Operational Queries:</span>
+            <div className="flex items-center gap-2 flex-wrap">
               {[
-                "Check Crane Exclusion Zone Breaches",
-                "Audit Scaffolding Overcrowding on Tier 3",
-                "Inspect Excavation Pit Lone Worker Dwell",
-                "Summarize Shift Compliance & Tool-Time"
-              ].map((qp, idx) => (
+                `Which ${zoneLabel.toLowerCase()} had the most activity?`,
+                `Who visited most frequently?`,
+                `Which ${zoneLabel.toLowerCase()} has the longest average dwell time?`,
+                `What unusual patterns were detected today?`,
+                `Compare today's activity with yesterday`,
+                `Show data quality audit`
+              ].map((chip, idx) => (
                 <button
                   key={idx}
-                  onClick={() => handleAskCopilot(qp)}
-                  className="px-3 py-1 bg-slate-50 dark:bg-slate-800 hover:bg-indigo-50 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 rounded-xl text-[11px] font-bold text-slate-700 dark:text-slate-300 hover:text-indigo-600 transition whitespace-nowrap cursor-pointer shrink-0"
+                  onClick={() => handleAskQuestion(chip)}
+                  disabled={isThinking}
+                  className="px-3 py-1.5 bg-slate-50 dark:bg-slate-800/80 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 border border-slate-200 dark:border-slate-700/80 text-slate-700 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-xl text-xs font-semibold transition cursor-pointer disabled:opacity-50"
                 >
-                  ⚡ {qp}
+                  {chip}
                 </button>
               ))}
             </div>
+          </div>
 
-            {/* Messages Stream */}
-            <div className="flex-1 overflow-y-auto py-4 space-y-4 pr-2">
-              {chatHistory.map(msg => (
-                <div key={msg.id} className={`flex gap-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  {msg.sender === 'assistant' && (
-                    <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
-                      <Bot size={18} />
+          {/* Conversation Stream */}
+          <div className="space-y-4 max-h-[500px] overflow-y-auto p-4 bg-slate-50/60 dark:bg-slate-950/40 rounded-2xl border border-slate-200/80 dark:border-slate-800">
+            {chatMessages.map(msg => (
+              <div
+                key={msg.id}
+                className={`flex gap-3 ${msg.sender === 'user' ? 'justify-end' : 'justify-start'}`}
+              >
+                {msg.sender === 'assistant' && (
+                  <div className="w-8 h-8 rounded-full bg-indigo-600 text-white flex items-center justify-center shrink-0 shadow-2xs">
+                    <Bot size={16} />
+                  </div>
+                )}
+
+                <div className={`space-y-2 max-w-[85%] sm:max-w-[75%] ${
+                  msg.sender === 'user'
+                    ? 'bg-indigo-600 text-white p-3.5 rounded-2xl rounded-tr-xs text-xs font-medium'
+                    : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl rounded-tl-xs text-xs space-y-3 shadow-2xs'
+                }`}>
+                  <div className="whitespace-pre-wrap leading-relaxed font-sans">
+                    {msg.text}
+                  </div>
+
+                  {/* Supporting Metrics Card (if present) */}
+                  {msg.supportingMetrics && Object.keys(msg.supportingMetrics).length > 0 && (
+                    <div className="bg-slate-50 dark:bg-slate-800/70 border border-slate-200 dark:border-slate-700/60 rounded-xl p-3 grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                      {Object.entries(msg.supportingMetrics).map(([key, val]) => (
+                        <div key={key}>
+                          <span className="block text-[10px] uppercase font-bold text-slate-400 truncate">{key}</span>
+                          <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-xs truncate block">{val}</span>
+                        </div>
+                      ))}
                     </div>
                   )}
 
-                  <div className={`p-4 rounded-2xl text-xs max-w-[85%] leading-relaxed ${
-                    msg.sender === 'user'
-                      ? 'bg-indigo-600 text-white rounded-tr-none shadow-sm'
-                      : 'bg-slate-50 dark:bg-slate-800/80 text-slate-800 dark:text-slate-200 border border-slate-200/80 dark:border-slate-700 rounded-tl-none'
+                  {/* Follow up chips */}
+                  {msg.suggestedFollowUps && msg.suggestedFollowUps.length > 0 && (
+                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-1.5 flex-wrap">
+                      <span className="text-[10px] uppercase font-bold text-slate-400">Follow-up:</span>
+                      {msg.suggestedFollowUps.map((fUp, fIdx) => (
+                        <button
+                          key={fIdx}
+                          onClick={() => handleAskQuestion(fUp)}
+                          className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+                        >
+                          "{fUp}"{fIdx < msg.suggestedFollowUps!.length - 1 ? ' ·' : ''}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Message timestamp & Grounding badge */}
+                  <div className={`flex items-center justify-between gap-2 pt-1 text-[10px] ${
+                    msg.sender === 'user' ? 'text-indigo-100' : 'text-slate-400'
                   }`}>
-                    <FormattedMessageText text={msg.text} />
-
-                    {msg.suggestedActions && msg.suggestedActions.length > 0 && (
-                      <div className="mt-3 pt-2 border-t border-slate-200 dark:border-slate-700 flex flex-wrap gap-1.5">
-                        {msg.suggestedActions.map((act, i) => (
-                          <button
-                            key={i}
-                            onClick={() => handleAskCopilot(act)}
-                            className="px-2.5 py-1 bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-300 hover:underline text-[10px] font-bold rounded-lg border border-slate-200 dark:border-slate-600 cursor-pointer"
-                          >
-                            → {act}
-                          </button>
-                        ))}
-                      </div>
+                    <span>{msg.timestamp}</span>
+                    {msg.sender === 'assistant' && msg.isGrounded && (
+                      <span className="flex items-center gap-1 font-semibold text-emerald-600 dark:text-emerald-400">
+                        <Check size={11} />
+                        Verified Telemetry Grounded
+                      </span>
                     )}
-
-                    <span className="text-[9px] opacity-60 block text-right mt-1.5 font-mono">{msg.timestamp}</span>
                   </div>
                 </div>
-              ))}
 
-              {isCopilotThinking && (
-                <div className="flex gap-3 max-w-[80%]">
-                  <div className="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shrink-0">
-                    <Bot size={18} />
+                {msg.sender === 'user' && (
+                  <div className="w-8 h-8 rounded-full bg-slate-200 dark:bg-slate-700 text-slate-700 dark:text-slate-200 flex items-center justify-center shrink-0">
+                    <User size={16} />
                   </div>
-                  <div className="p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl text-xs font-bold text-indigo-600 flex items-center gap-2 shadow-sm">
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Analyzing Construction Telemetry Feed...
-                  </div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
+                )}
+              </div>
+            ))}
 
-            {/* Question Input Box */}
-            <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 flex gap-2">
-              <input
-                type="text"
-                value={copilotQuestion}
-                onChange={(e) => setCopilotQuestion(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleAskCopilot()}
-                placeholder="Ask EHS Copilot: 'Are any lone workers stationary in excavation pit?'..."
-                className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl px-4 py-3 text-xs font-medium text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-              />
-              <button
-                onClick={() => handleAskCopilot()}
-                disabled={isCopilotThinking || !copilotQuestion.trim()}
-                className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-2xl font-bold text-xs flex items-center gap-2 shadow-md transition cursor-pointer"
-              >
-                <Send size={15} /> Send
-              </button>
-            </div>
+            {isThinking && (
+              <div className="flex gap-3 justify-start items-center text-xs text-slate-500 font-medium p-2">
+                <Bot size={16} className="text-indigo-600 animate-spin" />
+                <span>Aperture is analyzing real telemetry records...</span>
+              </div>
+            )}
+            <div ref={chatEndRef} />
           </div>
 
-          {/* Saved Sessions in MongoDB */}
-          <div className="lg:col-span-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
-            <h4 className="font-bold text-slate-900 dark:text-white text-sm flex items-center gap-2">
-              <History size={16} className="text-indigo-500" />
-              <span>Saved EHS Sessions in MongoDB</span>
-            </h4>
-            <p className="text-xs text-slate-500">Archived consultations from <code className="text-indigo-500 font-mono">ai_copilot_chats</code>.</p>
+          {/* Input Box */}
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleAskQuestion();
+            }}
+            className="flex items-center gap-2"
+          >
+            <input
+              type="text"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              placeholder={`Ask a question (e.g., "Which ${zoneLabel.toLowerCase()} had the most activity?", "Who visited most frequently?")...`}
+              disabled={isThinking}
+              className="flex-1 px-4 py-3 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-2xl text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-indigo-500 font-medium"
+            />
+            <button
+              type="submit"
+              disabled={!chatInput.trim() || isThinking}
+              className="px-5 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white rounded-2xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm cursor-pointer"
+            >
+              <Send size={14} />
+              <span>Ask</span>
+            </button>
+          </form>
+        </div>
+      )}
 
-            <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-              {savedCopilotSessions.map(session => (
-                <div key={session.id} className="p-3.5 bg-slate-50 dark:bg-slate-800/60 border border-slate-150 dark:border-slate-700 rounded-2xl space-y-1 hover:border-indigo-300 transition">
-                  <div className="font-bold text-xs text-slate-800 dark:text-white truncate">{session.sessionTitle}</div>
-                  <div className="text-[10px] text-slate-400 flex justify-between items-center font-mono pt-1">
-                    <span>{session.messages?.length || 0} messages</span>
-                    <button
-                      onClick={() => setChatHistory(session.messages)}
-                      className="text-indigo-600 dark:text-indigo-400 hover:underline font-bold cursor-pointer"
-                    >
-                      Load Session →
-                    </button>
-                  </div>
+      {/* VIEW C: DATA QUALITY AUDIT */}
+      {activeTab === 'data_quality' && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-6">
+          
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
+            <div>
+              <h2 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                Telemetry Data Quality &amp; Integrity Audit
+                <Badge variant="outline" className={`font-mono font-bold ${
+                  insightsSummary.dataQualityScore >= 90 
+                    ? 'text-emerald-600 bg-emerald-500/10 border-emerald-500/20' 
+                    : 'text-amber-600 bg-amber-500/10 border-amber-500/20'
+                }`}>
+                  {insightsSummary.dataQualityScore}% Score
+                </Badge>
+              </h2>
+              <p className="text-xs text-slate-500">
+                Audited {insightsSummary.dataQualityAudit.totalRecordsChecked} raw people-tracking records for field completeness, timestamp order, and duplicates.
+              </p>
+            </div>
+            
+            <button
+              onClick={() => loadTelemetry(batchSize)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 cursor-pointer"
+            >
+              <RefreshCw size={12} />
+              Re-Audit Telemetry
+            </button>
+          </div>
+
+          {/* Metric Breakdown Grid */}
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 text-center">
+            
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-4 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Total Checked</span>
+              <div className="text-xl font-black text-slate-800 dark:text-white font-mono">
+                {insightsSummary.dataQualityAudit.totalRecordsChecked}
+              </div>
+              <span className="text-[11px] font-medium text-slate-500">API Events</span>
+            </div>
+
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-4 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Missing Names</span>
+              <div className={`text-xl font-black font-mono ${
+                insightsSummary.dataQualityAudit.issuesFound.missingNames > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600'
+              }`}>
+                {insightsSummary.dataQualityAudit.issuesFound.missingNames}
+              </div>
+              <span className="text-[11px] font-medium text-slate-500">Blank First/Last</span>
+            </div>
+
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-4 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Bad Timestamps</span>
+              <div className={`text-xl font-black font-mono ${
+                insightsSummary.dataQualityAudit.issuesFound.malformedTimestamps > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600'
+              }`}>
+                {insightsSummary.dataQualityAudit.issuesFound.malformedTimestamps}
+              </div>
+              <span className="text-[11px] font-medium text-slate-500">Inverted or invalid</span>
+            </div>
+
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-4 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Missing Zones</span>
+              <div className={`text-xl font-black font-mono ${
+                insightsSummary.dataQualityAudit.issuesFound.missingZones > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600'
+              }`}>
+                {insightsSummary.dataQualityAudit.issuesFound.missingZones}
+              </div>
+              <span className="text-[11px] font-medium text-slate-500">Undefined location</span>
+            </div>
+
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-4 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Invalid Durations</span>
+              <div className={`text-xl font-black font-mono ${
+                insightsSummary.dataQualityAudit.issuesFound.invalidDurations > 0 ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600'
+              }`}>
+                {insightsSummary.dataQualityAudit.issuesFound.invalidDurations}
+              </div>
+              <span className="text-[11px] font-medium text-slate-500">Negative or NaN</span>
+            </div>
+
+            <div className="bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/60 rounded-2xl p-4 space-y-1">
+              <span className="text-[10px] uppercase font-bold text-slate-400">Duplicates</span>
+              <div className={`text-xl font-black font-mono ${
+                insightsSummary.dataQualityAudit.issuesFound.duplicateRecords > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-emerald-600'
+              }`}>
+                {insightsSummary.dataQualityAudit.issuesFound.duplicateRecords}
+              </div>
+              <span className="text-[11px] font-medium text-slate-500">Exact duplicate scans</span>
+            </div>
+
+          </div>
+
+          {/* Audit Details */}
+          <div className="space-y-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-400">Audit Verification Trail:</span>
+            <div className="space-y-1.5">
+              {insightsSummary.dataQualityAudit.details.map((detail, idx) => (
+                <div key={idx} className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-200/60 dark:border-slate-700/40">
+                  <CheckCircle2 size={15} className="text-indigo-500 shrink-0 mt-0.5" />
+                  <span>{detail}</span>
                 </div>
               ))}
-
-              {savedCopilotSessions.length === 0 && (
-                <div className="text-center py-10 text-xs text-slate-400 font-semibold border border-dashed border-slate-200 dark:border-slate-700 rounded-2xl">
-                  No saved Copilot chat sessions in MongoDB.
-                </div>
-              )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* VIEW D: EVIDENCE & TELEMETRY STREAM */}
+      {activeTab === 'evidence' && (
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 shadow-sm space-y-4">
+          
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-200 dark:border-slate-800">
+            <div>
+              <h2 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                Real Telemetry Evidence Stream
+                <Badge variant="outline" className="font-mono text-xs">
+                  {normalizedEvents.length} Events Analyzed
+                </Badge>
+              </h2>
+              <p className="text-xs text-slate-500">
+                Ground-truth API telemetry feeding the statistical AI baseline models.
+              </p>
+            </div>
+
+            <button
+              onClick={() => navigate('/analytics')}
+              className="flex items-center gap-1 text-xs font-bold text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
+            >
+              Open Aggregated Analytics
+              <ExternalLink size={13} />
+            </button>
+          </div>
+
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+            <Table>
+              <TableHeader className="bg-slate-50 dark:bg-slate-800/60">
+                <TableRow>
+                  <TableHead className="text-xs font-bold">Tag ID</TableHead>
+                  <TableHead className="text-xs font-bold">{personnelSingular} Name</TableHead>
+                  <TableHead className="text-xs font-bold">{zoneLabel} Location</TableHead>
+                  <TableHead className="text-xs font-bold">Enter Time</TableHead>
+                  <TableHead className="text-xs font-bold">Leave Time</TableHead>
+                  <TableHead className="text-xs font-bold">Duration</TableHead>
+                  <TableHead className="text-xs font-bold">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody className="text-xs font-medium divide-y divide-slate-100 dark:divide-slate-800">
+                {normalizedEvents.slice(0, 50).map((evt, idx) => (
+                  <TableRow key={evt.id || idx} className="hover:bg-slate-50/80 dark:hover:bg-slate-800/40">
+                    <TableCell className="font-mono font-bold text-slate-700 dark:text-slate-300">
+                      {evt.tagId}
+                    </TableCell>
+                    <TableCell className="font-semibold text-slate-900 dark:text-white">
+                      {evt.personName}
+                    </TableCell>
+                    <TableCell>
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 font-semibold text-[11px]">
+                        {evt.locationName}
+                      </span>
+                    </TableCell>
+                    <TableCell className="font-mono text-slate-600 dark:text-slate-400">
+                      {evt.enterTime}
+                    </TableCell>
+                    <TableCell className="font-mono text-slate-600 dark:text-slate-400">
+                      {evt.leaveTime}
+                    </TableCell>
+                    <TableCell className="font-mono font-bold text-slate-800 dark:text-slate-200">
+                      {evt.durationFormatted}
+                    </TableCell>
+                    <TableCell>
+                      {evt.isOngoing ? (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                          Active In Zone
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-500">
+                          Completed
+                        </span>
+                      )}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {normalizedEvents.length > 50 && (
+            <p className="text-[11px] text-slate-400 text-center font-medium">
+              Showing recent 50 of {normalizedEvents.length.toLocaleString()} telemetry events. Use Analytics for complete tabular filtering.
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* ----------------------------------------------------------------------- */}
+      {/* 7. INSIGHT DETAIL PANEL / MODAL (WHEN AN INSIGHT IS CLICKED) */}
+      {/* ----------------------------------------------------------------------- */}
+      {selectedInsight && (
+        <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 sm:p-7 space-y-6 shadow-2xl relative animate-in fade-in zoom-in-95 duration-150">
+            
+            {/* Close Button */}
+            <button
+              onClick={() => setSelectedInsight(null)}
+              aria-label="Close Insight Details"
+              className="absolute top-5 right-5 p-2 rounded-full hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition cursor-pointer"
+            >
+              <X size={18} />
+            </button>
+
+            {/* Modal Header */}
+            <div className="space-y-2 pr-8">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                  {selectedInsight.category}
+                </span>
+                {getSeverityBadge(selectedInsight.severity)}
+                {getDataDistinctionBadge(selectedInsight.dataDistinction)}
+              </div>
+              <h2 className="text-xl font-black text-slate-900 dark:text-white leading-tight">
+                {selectedInsight.title}
+              </h2>
+              <p className="text-xs text-slate-500 font-medium">
+                Detected at: {selectedInsight.detectedAt} · Confidence: <strong>{selectedInsight.confidence} ({selectedInsight.confidenceScore}%)</strong>
+              </p>
+            </div>
+
+            {/* Metric Comparison Card */}
+            <div className="bg-slate-50 dark:bg-slate-850 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 grid grid-cols-3 gap-2 text-center text-xs">
+              <div>
+                <span className="block text-[10px] uppercase font-bold text-slate-400">Current Value</span>
+                <span className="font-mono font-black text-slate-900 dark:text-white text-sm block mt-0.5">
+                  {selectedInsight.currentValue}
+                </span>
+              </div>
+              <div>
+                <span className="block text-[10px] uppercase font-bold text-slate-400">Historical Baseline</span>
+                <span className="font-mono font-bold text-slate-600 dark:text-slate-400 text-sm block mt-0.5">
+                  {selectedInsight.baselineValue}
+                </span>
+              </div>
+              <div>
+                <span className="block text-[10px] uppercase font-bold text-slate-400">Deviation</span>
+                <span className={`font-mono font-black text-sm block mt-0.5 ${
+                  selectedInsight.difference.startsWith('+') ? 'text-amber-600 dark:text-amber-400' : 'text-slate-800 dark:text-slate-200'
+                }`}>
+                  {selectedInsight.difference}
+                </span>
+              </div>
+            </div>
+
+            {/* 5-Section Explainability Breakdown */}
+            <div className="space-y-4 text-xs">
+              
+              {/* 1. What Happened */}
+              <div className="space-y-1">
+                <span className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                  <Info size={14} className="text-indigo-500" />
+                  What happened?
+                </span>
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-medium bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                  {selectedInsight.whatHappened}
+                </p>
+              </div>
+
+              {/* 2. Evidence */}
+              <div className="space-y-1">
+                <span className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                  <FileText size={14} className="text-blue-500" />
+                  Evidence (Telemetry Data)
+                </span>
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-medium bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800 font-mono text-[11px]">
+                  {selectedInsight.evidence}
+                </p>
+              </div>
+
+              {/* 3. Comparison */}
+              <div className="space-y-1">
+                <span className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                  <Activity size={14} className="text-teal-500" />
+                  Baseline Comparison
+                </span>
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-medium bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                  {selectedInsight.comparison}
+                </p>
+              </div>
+
+              {/* 4. Why it matters */}
+              <div className="space-y-1">
+                <span className="font-bold text-slate-900 dark:text-white uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                  <HelpCircle size={14} className="text-amber-500" />
+                  Why it matters
+                </span>
+                <p className="text-slate-600 dark:text-slate-300 leading-relaxed font-medium bg-slate-50 dark:bg-slate-800/40 p-3 rounded-xl border border-slate-100 dark:border-slate-800">
+                  {selectedInsight.whyItMatters}
+                </p>
+              </div>
+
+              {/* 5. Recommended action */}
+              <div className="space-y-1">
+                <span className="font-bold text-amber-900 dark:text-amber-300 uppercase tracking-wider text-[11px] flex items-center gap-1.5">
+                  <Lightbulb size={14} className="text-amber-500" />
+                  Recommended Action (Conservative &amp; Grounded)
+                </span>
+                <p className="text-amber-900 dark:text-amber-200 leading-relaxed font-semibold bg-amber-50 dark:bg-amber-950/30 p-3.5 rounded-xl border border-amber-200/60 dark:border-amber-900/40">
+                  {selectedInsight.recommendedAction}
+                </p>
+              </div>
+
+            </div>
+
+            {/* MongoDB Directives & Logging Actions */}
+            <div className="p-3.5 rounded-2xl bg-indigo-50/70 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800 flex items-center justify-between gap-3 flex-wrap text-xs">
+              <div className="flex items-center gap-2 text-indigo-900 dark:text-indigo-300 font-semibold">
+                <Database size={15} className="text-indigo-600 dark:text-indigo-400" />
+                <span>MongoDB Atlas:</span>
+                <span className="font-mono bg-white dark:bg-slate-800 px-2 py-0.5 rounded text-[11px] font-bold border border-indigo-100 dark:border-indigo-800">
+                  {isMongoSynced ? 'Persisted' : 'Syncing'}
+                </span>
+              </div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={async () => {
+                    await addDoc(collection(db, 'ai_recommendations'), {
+                      title: selectedInsight.title,
+                      category: selectedInsight.category,
+                      impact: selectedInsight.severity,
+                      description: selectedInsight.summary,
+                      actionableSteps: selectedInsight.recommendedAction,
+                      source: 'REAL_TIME_API_HISTORY',
+                      createdAt: serverTimestamp()
+                    });
+                    setActionToast(`Saved directive "${selectedInsight.title}" to MongoDB Atlas.`);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-[11px] transition shadow-2xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check size={12} />
+                  Save Directive to MongoDB
+                </button>
+                <button
+                  onClick={async () => {
+                    await addDoc(collection(db, 'incidents'), {
+                      title: selectedInsight.title,
+                      severity: selectedInsight.severity,
+                      zone: selectedInsight.affectedZone || siteLabel || 'General Area',
+                      description: selectedInsight.whatHappened,
+                      tagId: selectedInsight.affectedTagId || 'N/A',
+                      personName: selectedInsight.affectedPerson || 'N/A',
+                      timestamp: selectedInsight.detectedAt || serverTimestamp(),
+                      status: 'OPEN',
+                      source: 'REAL_TIME_API_HISTORY'
+                    });
+                    setActionToast(`Logged incident "${selectedInsight.title}" to MongoDB Atlas.`);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-700 font-bold text-[11px] transition shadow-2xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <ShieldAlert size={12} className="text-amber-500" />
+                  Log to Incidents Collection
+                </button>
+              </div>
+            </div>
+
+            {/* Supporting Events Mini-Table */}
+            {selectedInsight.relatedEvents && selectedInsight.relatedEvents.length > 0 && (
+              <div className="space-y-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                <span className="text-[11px] uppercase font-bold text-slate-400">Supporting Telemetry Records:</span>
+                <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+                  <Table className="text-[11px]">
+                    <TableHeader className="bg-slate-50 dark:bg-slate-800/60">
+                      <TableRow>
+                        <TableHead className="p-2">Tag ID</TableHead>
+                        <TableHead className="p-2">Name</TableHead>
+                        <TableHead className="p-2">Zone</TableHead>
+                        <TableHead className="p-2">Enter Time</TableHead>
+                        <TableHead className="p-2">Duration</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {selectedInsight.relatedEvents.slice(0, 5).map((e, idx) => (
+                        <TableRow key={idx}>
+                          <TableCell className="p-2 font-mono">{e.tagId}</TableCell>
+                          <TableCell className="p-2 font-semibold">{e.personName}</TableCell>
+                          <TableCell className="p-2">{e.locationName}</TableCell>
+                          <TableCell className="p-2 font-mono text-slate-500">{e.enterTime}</TableCell>
+                          <TableCell className="p-2 font-mono font-bold">{e.durationFormatted}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
+
+            {/* Cross-Page Navigation Links */}
+            <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-2 flex-wrap">
+              <span className="text-xs font-bold text-slate-400">Cross-Page Drill-Down:</span>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => {
+                    setSelectedInsight(null);
+                    navigate('/analytics');
+                  }}
+                  className="px-3 py-1.5 bg-indigo-50 dark:bg-indigo-950/60 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-100 dark:hover:bg-indigo-900/60 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                >
+                  <BarChart3 size={12} />
+                  View in Analytics
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedInsight(null);
+                    navigate('/incidents');
+                  }}
+                  className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                >
+                  <ShieldAlert size={12} />
+                  View Incident Intelligence
+                </button>
+                <button
+                  onClick={() => {
+                    setSelectedInsight(null);
+                    navigate('/people');
+                  }}
+                  className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                >
+                  <Users size={12} />
+                  View Personnel Roster
+                </button>
+              </div>
+            </div>
+
           </div>
         </div>
       )}
@@ -1505,5 +1680,3 @@ export function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     </div>
   );
 }
-
-export default AIInsightsTab;

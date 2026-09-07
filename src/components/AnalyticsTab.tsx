@@ -1,1089 +1,1779 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { 
-  ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid, 
-  BarChart, Bar, PieChart, Pie, Cell, LineChart, Line, RadarChart, PolarGrid, 
-  PolarAngleAxis, PolarRadiusAxis, Radar, Legend, ComposedChart 
-} from 'recharts';
-import { Person } from '../lib/trackingData';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { 
-  BarChart3, TrendingUp, Users, HardHat, ShieldCheck, AlertTriangle, 
-  Radio, Building2, Clock, Sparkles, Download, FileSpreadsheet, FileText, 
-  Calendar, Filter, Layers, Zap, Activity, Cpu, CheckCircle2, XCircle, 
-  Compass, Printer, Gauge, Truck, Flame, ShieldAlert, BrainCircuit, Send,
-  RefreshCw, Check, AlertCircle, ArrowUpRight, ArrowDownRight, Layers2,
-  Plus, Trash2, Power, Database, Share2, Eye, Server, RadioTower,
-  CheckSquare, Square, ChevronRight, X
+  BarChart3, Users, Clock, Activity, MapPin, Calendar, 
+  Search, Filter, RefreshCw, Download, Sparkles, TrendingUp, 
+  ArrowRight, X, User, ChevronLeft, ChevronRight, Copy, Check, 
+  Eye, History, ArrowUpRight, ArrowDownRight, Compass, Info,
+  CheckCircle2, Layers, AlertCircle, Database
 } from 'lucide-react';
-import { db, collection, getDocs, onSnapshot, addDoc, updateDoc, doc, deleteDoc, serverTimestamp } from '../lib/db';
-import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
+import { Badge } from '@/components/ui/badge';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { 
+  ResponsiveContainer, AreaChart, Area, BarChart, Bar, 
+  XAxis, YAxis, Tooltip, CartesianGrid, Cell, Legend 
+} from 'recharts';
 import { useTerminology, useTracking } from '../context/TrackingContext';
-
-
-const PALETTE = ['#007BC4', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4'];
+import { gaoApi, HistoryRecord } from '../lib/gaoApi';
+import { exportToCSV, ExportColumn } from '../lib/exportUtils';
+import { db, doc, setDoc, batchSetDocs, collection, onSnapshot, serverTimestamp } from '../lib/db';
+import {
+  RawMovementRecord,
+  NormalizedMovementEvent,
+  AnalyticsKPIs,
+  HourlyTrafficData,
+  DailyTrafficData,
+  ZoneAnalyticsSummary,
+  PersonAnalyticsSummary,
+  DurationAnalytics,
+  AIObservation,
+  normalizeRecords,
+  calculateKPIs,
+  calculateHourlyTraffic,
+  calculateDailyTraffic,
+  calculateZoneAnalytics,
+  calculatePersonAnalytics,
+  calculateDurationAnalytics,
+  generateAIObservations,
+  formatDurationHuman
+} from '../lib/movementAnalytics';
 
 export interface AnalyticsProps {
-  people: Person[];
+  people?: any[];
   isLoading?: boolean;
 }
 
-export interface ScheduledReportItem {
-  id: string;
-  name: string;
-  format: string;
-  frequency: string;
-  recipients?: string;
-  status?: 'Active' | 'Paused';
-  lastRun?: string;
-  createdAt?: string;
-}
+type TrendViewMode = 'hourly_volume' | 'unique_people' | 'hourly_dwell' | 'daily_trend';
+type ActiveSectionTab = 'overview' | 'time' | 'zones' | 'people' | 'duration' | 'ai_observations';
 
-export interface EquipmentItem {
-  id: string;
-  name: string;
-  type: string;
-  activeHours: number;
-  idleHours: number;
-  loadFactorPct?: number;
-  fuelLiters?: number;
-  maintDueDays?: number;
-  status?: 'Optimal' | 'Service Soon' | 'Warning' | 'Critical';
-}
-
-export interface SavedAiMetric {
-  id: string;
-  synthesis: string;
-  dateRange: string;
-  createdAt: string;
-}
-
-export default function AnalyticsTab({ people = [], isLoading }: AnalyticsProps) {
-  const { config, intelligenceProfile, personnelSingular, personnelPlural, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+export default function AnalyticsTab({ people = [], isLoading: externalLoading }: AnalyticsProps) {
   const trackingCtx = useTracking();
-  const [dynamicKpis, setDynamicKpis] = useState<any[]>([]);
+  const { 
+    config, 
+    intelligenceProfile, 
+    zoneLabel = 'Zone', 
+    personnelSingular = 'Personnel', 
+    personnelPlural = 'Personnel',
+    siteLabel = 'Facility'
+  } = useTerminology();
 
+  const activeIndustry = intelligenceProfile?.industry || config?.industryId || 'construction';
+  const activeSubIndustry = intelligenceProfile?.subIndustry || config?.name || 'General Operations';
+
+  // Live workforce registry from MongoDB registered_people
+  const [dbPeople, setDbPeople] = useState<any[]>([]);
   useEffect(() => {
-    const fetchKpis = async () => {
-      try {
-        const res = await fetch('/api/intelligence/kpis');
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.kpis) && data.kpis.length > 0) {
-            setDynamicKpis(data.kpis);
-          }
-        }
-      } catch {}
-    };
-    fetchKpis();
-  }, [config?.industryId, intelligenceProfile?.industry]);
-
-  const [activeModule, setActiveModule] = useState<
-    | 'overview' 
-    | 'executive' 
-    | 'operations' 
-    | 'attendance' 
-    | 'productivity' 
-    | 'movement' 
-    | 'equipment' 
-    | 'readers' 
-    | 'occupancy' 
-    | 'incidents' 
-    | 'ppe' 
-    | 'safety' 
-    | 'forecasting' 
-    | 'scheduled' 
-    | 'custom' 
-    | 'ai_insights'
-  >('overview');
-
-  // Global Filter State
-  const [dateRange, setDateRange] = useState<'today' | '7d' | '30d' | 'q3_2026'>('7d');
-  const [selectedSite, setSelectedSite] = useState<string>('all');
-
-  // Database Persistent States (MongoDB)
-  const [scheduledReports, setScheduledReports] = useState<ScheduledReportItem[]>([]);
-  const [equipmentList, setEquipmentList] = useState<EquipmentItem[]>([]);
-  const [savedAiMetrics, setSavedAiMetrics] = useState<SavedAiMetric[]>([]);
-  const [latestAiMetrics, setLatestAiMetrics] = useState<any>(null);
-  const [mongoStatus, setMongoStatus] = useState<{ connected: boolean; engine: string; database: string; totalRecords: number }>({
-    connected: true,
-    engine: 'MongoDB Atlas',
-    database: 'Lat-Aperture-People-Tracking',
-    totalRecords: 0
-  });
-
-  useEffect(() => {
-    const checkMongo = async () => {
-      try {
-        const res = await fetch('/api/mongodb/status');
-        if (res.ok) {
-          const data = await res.json();
-          setMongoStatus({
-            connected: Boolean(data.connected),
-            engine: data.engine || 'MongoDB Atlas',
-            database: 'Lat-Aperture-People-Tracking',
-            totalRecords: data.totalRecords || 0
-          });
-        }
-      } catch {}
-    };
-    checkMongo();
-  }, []);
-
-  const [portalReaders, setPortalReaders] = useState<any[]>([]);
-
-  useEffect(() => {
-    let hwDevs: any[] = [];
-    let stdDevs: any[] = [];
-
-    const syncPortals = () => {
-      const combined = [
-        ...hwDevs.map(d => ({
-          id: d.id || d.readerId || d.name,
-          name: d.name || d.readerName || 'UHF Reader Portal',
-          zone: d.location || d.zone || 'Portal Zone',
-          status: String(d.status || 'ONLINE').toUpperCase().trim(),
-          type: d.type || 'GAO UHF Fixed Portal',
-          rssi: d.rssi !== undefined ? (typeof d.rssi === 'number' ? `${d.rssi} dBm` : d.rssi) : 'N/A',
-          rate: d.rate || '250 Hz',
-          scans: d.scans || d.totalScans || 0
-        })),
-        ...stdDevs.map(d => ({
-          id: d.id || d.name,
-          name: d.name || 'Portal Gateway Device',
-          zone: d.zone || d.location || 'Portal Zone',
-          status: String(d.status || 'ONLINE').toUpperCase().trim(),
-          type: d.type || 'Portal Gateway Anchor',
-          rssi: d.signalRssi !== undefined ? `${d.signalRssi} dBm` : (d.rssi !== undefined ? (typeof d.rssi === 'number' ? `${d.rssi} dBm` : d.rssi) : 'N/A'),
-          rate: d.rate || '200 Hz',
-          scans: d.scans || 0
-        }))
-      ];
-
-      const unique = Array.from(new Map(combined.map(item => [item.id, item])).values());
-      setPortalReaders(unique);
-    };
-
-    const fetchPortalReadersDirect = async () => {
-      try {
-        const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('token') || 'demo';
-        const headers = { 'Authorization': `Bearer ${token}` };
-        const [rRes, dRes] = await Promise.allSettled([
-          fetch('/api/data/hardware_readers', { headers }),
-          fetch('/api/data/devices', { headers })
-        ]);
-        if (rRes.status === 'fulfilled' && rRes.value.ok) {
-          const rList = await rRes.value.json();
-          if (Array.isArray(rList) && rList.length > 0) {
-            hwDevs = rList;
-            syncPortals();
-          }
-        }
-        if (dRes.status === 'fulfilled' && dRes.value.ok) {
-          const dList = await dRes.value.json();
-          if (Array.isArray(dList) && dList.length > 0) {
-            stdDevs = dList.filter((d: any) => d.category === 'rfid' || (d.type || '').toLowerCase().includes('reader') || (d.type || '').toLowerCase().includes('portal'));
-            syncPortals();
-          }
-        }
-      } catch {}
-    };
-    fetchPortalReadersDirect();
-
-    const unsub1 = onSnapshot(collection(db, 'hardware_readers'), (snapshot) => {
-      hwDevs = [];
-      snapshot.forEach(doc => hwDevs.push({ id: doc.id, ...doc.data() }));
-      syncPortals();
-    });
-
-    const unsub2 = onSnapshot(collection(db, 'devices'), (snapshot) => {
-      stdDevs = [];
-      snapshot.forEach(doc => stdDevs.push({ id: doc.id, ...doc.data() }));
-      syncPortals();
-    });
-
-    return () => {
-      unsub1();
-      unsub2();
-    };
-  }, []);
-
-  const [dbAttendanceData, setDbAttendanceData] = useState<any[]>([]);
-  const [dbRegisteredPeople, setDbRegisteredPeople] = useState<any[]>([]);
-  const [dbIncidents, setDbIncidents] = useState<any[]>([]);
-
-  useEffect(() => {
-    let logs: any[] = [];
-    let regPeople: any[] = [];
-
-    const computeTrend = () => {
-      if (logs.length > 0) {
-        const buckets: Record<string, { onTime: number; late: number; overtime: number }> = {
-          '06:00': { onTime: 0, late: 0, overtime: 0 },
-          '07:00': { onTime: 0, late: 0, overtime: 0 },
-          '08:00': { onTime: 0, late: 0, overtime: 0 },
-          '09:00': { onTime: 0, late: 0, overtime: 0 },
-          '12:00': { onTime: 0, late: 0, overtime: 0 },
-          '15:00': { onTime: 0, late: 0, overtime: 0 },
-          '18:00': { onTime: 0, late: 0, overtime: 0 },
-          '21:00': { onTime: 0, late: 0, overtime: 0 }
-        };
-
-        logs.forEach(log => {
-          const timeStr = log.checkInTime || log.timestamp || log.time || '08:00';
-          const hour = parseInt(String(timeStr).split(':')[0], 10) || 8;
-          let bucketKey = '08:00';
-          if (hour <= 6) bucketKey = '06:00';
-          else if (hour === 7) bucketKey = '07:00';
-          else if (hour === 8) bucketKey = '08:00';
-          else if (hour <= 10) bucketKey = '09:00';
-          else if (hour <= 13) bucketKey = '12:00';
-          else if (hour <= 16) bucketKey = '15:00';
-          else if (hour <= 19) bucketKey = '18:00';
-          else bucketKey = '21:00';
-
-          const st = String(log.status || '').toUpperCase();
-          if (st.includes('LATE')) buckets[bucketKey].late++;
-          else if (st.includes('OVERTIME')) buckets[bucketKey].overtime++;
-          else buckets[bucketKey].onTime++;
-        });
-
-        const chartArr = Object.entries(buckets).map(([time, counts]) => ({
-          time,
-          onTime: counts.onTime,
-          late: counts.late,
-          overtime: counts.overtime
-        }));
-
-        setDbAttendanceData(chartArr);
-      } else {
-        setDbAttendanceData([]);
-      }
-    };
-
-    const unsub1 = onSnapshot(collection(db, 'attendance_logs'), (snap) => {
-      logs = [];
-      snap.forEach(d => logs.push({ id: d.id, ...d.data() }));
-      computeTrend();
-    });
-
-    const unsub2 = onSnapshot(collection(db, 'registered_people'), (snap) => {
-      regPeople = [];
-      snap.forEach(d => regPeople.push({ id: d.id, ...d.data() }));
-      setDbRegisteredPeople(regPeople);
-      computeTrend();
-    });
-
-    const unsub3 = onSnapshot(collection(db, 'incidents'), (snap) => {
-      const incList: any[] = [];
-      snap.forEach(d => incList.push({ id: d.id, ...d.data() }));
-      setDbIncidents(incList);
-    });
-
-    const unsub4 = onSnapshot(collection(db, 'analytics_metrics'), (snap) => {
-      const metricList: any[] = [];
-      snap.forEach(d => metricList.push({ id: d.id, ...d.data() }));
-      if (metricList.length > 0) {
-        const sorted = metricList.sort((a, b) => new Date(b.timestamp || b.createdAt || 0).getTime() - new Date(a.timestamp || a.createdAt || 0).getTime());
-        setLatestAiMetrics(sorted[0]);
-      }
-    });
-
-    return () => {
-      unsub1();
-      unsub2();
-      unsub3();
-      unsub4();
-    };
-  }, []);
-
-  const [isDbLoading, setIsDbLoading] = useState(false);
-  const [dbSyncSuccess, setDbSyncSuccess] = useState<string | null>(null);
-
-  // Custom Report Generator State
-  const [customMetrics, setCustomMetrics] = useState<string[]>(['occupancy', 'attendance', 'safety', 'equipment']);
-  const [reportFormat, setReportFormat] = useState<'csv' | 'pdf'>('csv');
-  const [reportGenerated, setReportGenerated] = useState(false);
-
-  // AI Prompt Assistant State
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [aiResponse, setAiResponse] = useState<string | null>(null);
-  const [aiAnomalies, setAiAnomalies] = useState<string[]>([]);
-  const [isAiLoading, setIsAiLoading] = useState(false);
-
-  // Modals
-  const [isNewReportModalOpen, setIsNewReportModalOpen] = useState(false);
-  const [newReportName, setNewReportName] = useState('');
-  const [newReportFormat, setNewReportFormat] = useState('PDF');
-  const [newReportFreq, setNewReportFreq] = useState('Daily at 08:00 AM');
-  const [newReportRecipients, setNewReportRecipients] = useState('');
-
-  const [isEquipmentModalOpen, setIsEquipmentModalOpen] = useState(false);
-  const [eqName, setEqName] = useState('');
-  const [eqType, setEqType] = useState('Excavator');
-  const [eqActiveHours, setEqActiveHours] = useState('6.0');
-  const [eqLoadFactor, setEqLoadFactor] = useState('75');
-  const [eqMaintDays, setEqMaintDays] = useState('10');
-
-  // Reader Hardware Ping State
-  const [pingingReader, setPingingReader] = useState<string | null>(null);
-  const [readerStatuses, setReaderStatuses] = useState<Record<string, { status: string; rssi: number; packets: number }>>({});
-
-  // --- FETCH & SYNC MONGODB DATA ---
-  const loadMongoDBData = async () => {
-    setIsDbLoading(true);
-    try {
-      // 1. Scheduled Reports Collection
-      const repSnap = await getDocs(collection(db, 'analytics_reports'));
-      if (repSnap && repSnap.docs && repSnap.docs.length > 0) {
-        const loadedReports: ScheduledReportItem[] = repSnap.docs.map(d => ({
-          id: d.id,
-          name: d.data().name || 'Scheduled Report',
-          format: d.data().format || 'PDF',
-          frequency: d.data().frequency || 'Daily',
-          recipients: d.data().recipients || 'operations-dispatch@aperture.io',
-          status: d.data().status === 'Paused' ? 'Paused' : 'Active',
-          lastRun: d.data().lastRun || 'Today, 06:00 AM'
-        }));
-        setScheduledReports(loadedReports);
-      } else {
-        setScheduledReports([]);
-      }
-
-      // 2. Equipment Collection
-      const eqSnap = await getDocs(collection(db, 'analytics_equipment'));
-      if (eqSnap && eqSnap.docs && eqSnap.docs.length > 0) {
-        const loadedEq: EquipmentItem[] = eqSnap.docs.map(d => ({
-          id: d.id,
-          name: d.data().name || 'Machinery Unit',
-          type: d.data().type || 'Equipment',
-          activeHours: Number(d.data().activeHours || 6),
-          idleHours: Number(d.data().idleHours || 2),
-          loadFactorPct: Number(d.data().loadFactorPct || 75),
-          fuelLiters: Number(d.data().fuelLiters || 150),
-          maintDueDays: Number(d.data().maintDueDays || 14),
-          status: d.data().status || 'Optimal'
-        }));
-        setEquipmentList(loadedEq);
-      } else {
-        setEquipmentList([]);
-      }
-
-      // 3. Saved AI Metrics Collection
-      const aiSnap = await getDocs(collection(db, 'analytics_metrics'));
-      if (aiSnap && aiSnap.docs && aiSnap.docs.length > 0) {
-        const loadedAi: SavedAiMetric[] = aiSnap.docs.map(d => ({
-          id: d.id,
-          synthesis: d.data().synthesis || '',
-          dateRange: d.data().dateRange || '7d',
-          createdAt: d.data().createdAt || new Date().toISOString()
-        }));
-        setSavedAiMetrics(loadedAi);
-      }
-
-      setDbSyncSuccess('Analytics synced with database');
-      setTimeout(() => setDbSyncSuccess(null), 3000);
-    } catch (err) {
-      console.warn('[Analytics] DB fetch note:', err);
-      setScheduledReports([]);
-      setEquipmentList([]);
-    } finally {
-      setIsDbLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    loadMongoDBData();
-  }, []);
-
-  // --- ACTIONS ON MONGODB COLLECTIONS ---
-  const handleCreateScheduledReport = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newReportName) return;
-
-    const newRepData = {
-      name: newReportName,
-      format: newReportFormat,
-      frequency: newReportFreq,
-      recipients: newReportRecipients || 'operations-dispatch@aperture.io',
-      status: 'Active' as const,
-      lastRun: 'Pending First Run',
-      createdAt: new Date().toISOString()
-    };
-
-    try {
-      const docRef = await addDoc(collection(db, 'analytics_reports'), newRepData);
-      setScheduledReports(prev => [
-        { ...newRepData, id: docRef.id || `rep-${Date.now()}` },
-        ...prev
-      ]);
-      setNewReportName('');
-      setNewReportRecipients('');
-      setIsNewReportModalOpen(false);
-      setDbSyncSuccess('New scheduled report created successfully');
-      setTimeout(() => setDbSyncSuccess(null), 3000);
-    } catch (err) {
-      setScheduledReports(prev => [
-        { ...newRepData, id: `rep-${Date.now()}` },
-        ...prev
-      ]);
-      setNewReportName('');
-      setNewReportRecipients('');
-      setIsNewReportModalOpen(false);
-    }
-  };
-
-  const handleToggleReportStatus = async (id: string, currentStatus: string) => {
-    const nextStatus = currentStatus === 'Active' ? 'Paused' : 'Active';
-    setScheduledReports(prev =>
-      prev.map(r => (r.id === id ? { ...r, status: nextStatus as any } : r))
-    );
-
-    try {
-      await updateDoc(doc(db, 'analytics_reports', id), { status: nextStatus });
-    } catch (err) {
-      // Local state already updated
-    }
-  };
-
-  const handleDeleteReport = async (id: string) => {
-    setScheduledReports(prev => prev.filter(r => r.id !== id));
-    try {
-      await deleteDoc(doc(db, 'analytics_reports', id));
-    } catch (err) {
-      // Local state already updated
-    }
-  };
-
-  const handleAddEquipment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!eqName) return;
-
-    const newEqData = {
-      name: eqName,
-      type: eqType,
-      activeHours: parseFloat(eqActiveHours) || 6.0,
-      idleHours: 2.0,
-      loadFactorPct: parseInt(eqLoadFactor) || 75,
-      fuelLiters: 180,
-      maintDueDays: parseInt(eqMaintDays) || 14,
-      status: (parseInt(eqMaintDays) <= 3 ? 'Service Soon' : 'Optimal') as 'Service Soon' | 'Optimal',
-      createdAt: serverTimestamp()
-    };
-
-    const newReaderDoc = {
-      name: eqName,
-      readerName: eqName,
-      zone: 'Gate 1 Main Entrance',
-      location: 'Site Entrance Portal',
-      type: eqType || 'Fixed UHF Portal',
-      status: 'ONLINE',
-      rssi: -42,
-      rate: '250 Hz',
-      scans: 120,
-      createdAt: serverTimestamp()
-    };
-
-    try {
-      const docRef = await addDoc(collection(db, 'analytics_equipment'), newEqData);
-      await addDoc(collection(db, 'hardware_readers'), newReaderDoc);
-      setEquipmentList(prev => [
-        { ...newEqData, id: docRef.id || `eq-${Date.now()}` },
-        ...prev
-      ]);
-      setEqName('');
-      setIsEquipmentModalOpen(false);
-      setDbSyncSuccess('UHF Reader Portal registered in MongoDB Atlas successfully');
-      setTimeout(() => setDbSyncSuccess(null), 3000);
-    } catch (err) {
-      setEquipmentList(prev => [
-        { ...newEqData, id: `eq-${Date.now()}` },
-        ...prev
-      ]);
-      setEqName('');
-      setIsEquipmentModalOpen(false);
-    }
-  };
-
-  const handleSaveAiSynthesisToDb = async () => {
-    if (!aiResponse) return;
-
-    try {
-      const newAiDoc = {
-        synthesis: aiResponse,
-        dateRange,
-        createdAt: new Date().toISOString()
-      };
-      const docRef = await addDoc(collection(db, 'analytics_metrics'), newAiDoc);
-      setSavedAiMetrics(prev => [
-        { id: docRef.id || `ai-${Date.now()}`, ...newAiDoc },
-        ...prev
-      ]);
-      setDbSyncSuccess('AI Synthesis saved to database');
-      setTimeout(() => setDbSyncSuccess(null), 3000);
-    } catch (err) {
-      setSavedAiMetrics(prev => [
-        { id: `ai-${Date.now()}`, synthesis: aiResponse, dateRange, createdAt: new Date().toISOString() },
-        ...prev
-      ]);
-      setDbSyncSuccess('AI Synthesis saved');
-      setTimeout(() => setDbSyncSuccess(null), 3000);
-    }
-  };
-
-  // --- GEMINI AI TELEMETRY ANALYSIS SERVER ROUTE ---
-  const handleRunAiAnalysis = async (customPrompt?: string) => {
-    const queryPrompt = customPrompt || aiPrompt || 'Provide an executive telemetry overview and actionable recommendations.';
-    setIsAiLoading(true);
-    setAiResponse(null);
-
-    try {
-      const res = await fetch('/api/analyze-telemetry', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: queryPrompt,
-          dateRange,
-          selectedSite,
-          metricsContext: {
-            totalHeadcount: people.length,
-            safetyScore: null,
-            productivityIndex: null,
-            activeEquipmentCount: equipmentList.length
-          }
-        })
+    const unsub = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
+      const list: any[] = [];
+      snapshot.forEach(d => {
+        const data = d.data();
+        if (data) list.push({ id: d.id, ...data });
       });
+      setDbPeople(list);
+    });
+    return () => unsub();
+  }, []);
 
-      if (res.ok) {
-        const data = await res.json();
-        setAiResponse(data.synthesis);
-        setAiAnomalies(data.anomaliesDetected || []);
-      } else {
-        throw new Error('API request failed');
-      }
-    } catch (err) {
-      setAiResponse('AI telemetry analysis is unavailable. The server did not return a synthesis.');
-      setAiAnomalies([]);
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
-
-  // Ping Reader Hardware Check
-  const handlePingReader = (readerId: string) => {
-    setPingingReader(readerId);
-    setTimeout(() => {
-      setReaderStatuses(prev => ({
-        ...prev,
-        [readerId]: {
-          status: 'Online',
-          rssi: null,
-          packets: null
-        }
-      }));
-      setPingingReader(null);
-    }, 600);
-  };
-
-  // Active workers computed from MongoDB, props, and live TrackingContext
-  const activeWorkers = useMemo(() => {
+  const peopleRegistry = useMemo(() => {
     const map = new Map<string, any>();
-    (dbRegisteredPeople || []).forEach(p => { if (p && (p.id || p.hardhatTagId)) map.set(String(p.id || p.hardhatTagId).toUpperCase(), p); });
-    (people || []).forEach(p => { if (p && (p.id || p.hardhatTagId)) map.set(String(p.id || p.hardhatTagId).toUpperCase(), p); });
-    (trackingCtx?.people || []).forEach(p => { if (p && (p.id || p.hardhatTagId)) map.set(String(p.id || p.hardhatTagId).toUpperCase(), p); });
-    return Array.from(map.values());
-  }, [dbRegisteredPeople, people, trackingCtx?.people]);
-
-  const executiveKPIs = useMemo(() => {
-    const totalWorkers = activeWorkers.length;
-    const movingCount = activeWorkers.filter(p => p.presenceState === 'MOVING').length;
-    const toolTimePct = totalWorkers > 0 ? Math.min(100, Math.round((movingCount / Math.max(1, totalWorkers)) * 100)) : 0;
-    const compliantCount = activeWorkers.filter(p => p.ppeStatus !== 'NON_COMPLIANT').length;
-    const safetyScore = totalWorkers > 0 ? Math.min(100, Math.round((compliantCount / Math.max(1, totalWorkers)) * 100)) : 100;
-    const openIncidents = (dbIncidents || []).filter(i => String(i.status || '').toUpperCase() !== 'RESOLVED' && String(i.status || '').toUpperCase() !== 'CLOSED').length;
-    const trirScore = totalWorkers > 0 ? Number(((openIncidents * 200000) / Math.max(200000, totalWorkers * 2000)).toFixed(2)) : 0.00;
-
-    return {
-      safetyScore,
-      productivityIndex: toolTimePct,
-      totalHeadcount: totalWorkers,
-      openIncidents,
-      trirScore
-    };
-  }, [activeWorkers, dbIncidents]);
-
-  const attendanceTrendData = useMemo(() => {
-    return dbAttendanceData;
-  }, [dbAttendanceData]);
-
-  const movementFlowData = useMemo(() => {
-    const byZone: Record<string, { count: number; totalDwell: number }> = {};
-    activeWorkers.forEach(p => {
-      const zone = p.currentZone || p.zone || (p.LocationName) || `${siteLabel || 'Facility'} Area`;
-      if (!byZone[zone]) byZone[zone] = { count: 0, totalDwell: 0 };
-      byZone[zone].count += 1;
-      byZone[zone].totalDwell += (p.dwellTime || 0);
+    const contextPeople = trackingCtx?.people || [];
+    [...people, ...contextPeople, ...dbPeople].forEach(p => {
+      if (!p) return;
+      if (p.id) map.set(String(p.id).toLowerCase(), p);
+      if (p.tagId) map.set(String(p.tagId).toLowerCase(), p);
+      if (p.TagID) map.set(String(p.TagID).toLowerCase(), p);
+      if (p.hardhatTagId) map.set(String(p.hardhatTagId).toLowerCase(), p);
+      if (p.epc) map.set(String(p.epc).toLowerCase(), p);
     });
+    return map;
+  }, [people, trackingCtx?.people, dbPeople]);
 
-    return Object.entries(byZone).map(([name, data]) => {
-      const avgDwellMin = data.count > 0 ? Math.max(1, Math.round(data.totalDwell / (data.count * 60))) : 0;
-      return {
-        zone: name,
-        hourlyFlow: data.count,
-        avgDwellMin,
-        congestionRisk: data.count >= 8 ? 'High' : data.count >= 4 ? 'Moderate' : 'Low'
-      };
+  // Raw API Data State
+  const [rawRecords, setRawRecords] = useState<RawMovementRecord[]>([]);
+  const [totalSystemCount, setTotalSystemCount] = useState<number>(0);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [fetchBatchSize, setFetchBatchSize] = useState<number>(200);
+  const [isMongoSynced, setIsMongoSynced] = useState<boolean>(false);
+
+  // Active Navigation Tab
+  const [activeTab, setActiveTab] = useState<ActiveSectionTab>('overview');
+  const [trendMode, setTrendMode] = useState<TrendViewMode>('hourly_volume');
+
+  // Filters State
+  const [dateRange, setDateRange] = useState<'all' | 'today' | 'yesterday' | '7d' | '30d' | 'custom'>('all');
+  const [customStartDate, setCustomStartDate] = useState<string>('');
+  const [customEndDate, setCustomEndDate] = useState<string>('');
+  const [shiftFilter, setShiftFilter] = useState<'all' | 'morning' | 'afternoon' | 'night'>('all');
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [selectedZoneFilter, setSelectedZoneFilter] = useState<string>('All');
+  const [selectedPersonFilter, setSelectedPersonFilter] = useState<string>('All');
+
+  // Interactive Drill-Down Modals
+  const [drillDownPersonTag, setDrillDownPersonTag] = useState<string | null>(null);
+  const [drillDownZoneName, setDrillDownZoneName] = useState<string | null>(null);
+
+  // Pagination for tables
+  const [peoplePage, setPeoplePage] = useState<number>(1);
+  const [peoplePageSize, setPeoplePageSize] = useState<number>(10);
+  const [zonePage, setZonePage] = useState<number>(1);
+  const [zonePageSize, setZonePageSize] = useState<number>(10);
+
+  // Copy feedback
+  const [copiedTagId, setCopiedTagId] = useState<string | null>(null);
+
+  /**
+   * 1. Load Telemetry Data from People-Tracking API
+   */
+  const loadData = useCallback(async (take: number = fetchBatchSize, showRefreshing = false) => {
+    if (showRefreshing) setIsRefreshing(true);
+    else setIsLoading(true);
+    setApiError(null);
+
+    try {
+      const [records, count] = await Promise.all([
+        gaoApi.getHistoryRecords(0, take),
+        gaoApi.getHistoryTotalCount()
+      ]);
+
+      setRawRecords(Array.isArray(records) ? records : []);
+      setTotalSystemCount(count || records.length);
+    } catch (err: any) {
+      console.error('[AnalyticsTab] Error fetching API data:', err);
+      setApiError(err.message || 'Unable to connect to people-tracking API endpoint.');
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, [fetchBatchSize]);
+
+  useEffect(() => {
+    loadData(fetchBatchSize);
+  }, [loadData, fetchBatchSize]);
+
+  /**
+   * 2. Normalize raw records via movementAnalytics engine
+   */
+  const normalizedEvents = useMemo(() => {
+    return normalizeRecords(rawRecords, peopleRegistry, {
+      industry: activeIndustry,
+      subIndustry: activeSubIndustry,
+      zoneLabel,
+      personnelSingular,
+      personnelPlural,
+      siteLabel
     });
-  }, [activeWorkers, siteLabel]);
+  }, [rawRecords, peopleRegistry, activeIndustry, activeSubIndustry, zoneLabel, personnelSingular, personnelPlural, siteLabel]);
 
-  const productivityData = useMemo(() => {
-    const hours = ['08:00', '10:00', '12:00', '14:00', '16:00', '18:00'];
-    const baseTotal = activeWorkers.length;
-    const movingTotal = activeWorkers.filter(p => p.presenceState === 'MOVING').length;
-    const idleTotal = Math.max(0, baseTotal - movingTotal);
-
-    return hours.map((hour) => {
-      return {
-        time: hour,
-        toolTime: movingTotal,
-        idle: idleTotal,
-        transit: 0,
-        efficiencyPct: baseTotal > 0 ? Math.round((movingTotal / baseTotal) * 100) : 0
-      };
+  /**
+   * 3. Distinct Zones & Personnel for Filter Dropdowns
+   */
+  const uniqueZones = useMemo(() => {
+    const set = new Set<string>();
+    normalizedEvents.forEach(e => {
+      if (e.locationName) set.add(e.locationName);
     });
-  }, [activeWorkers]);
+    return Array.from(set).sort();
+  }, [normalizedEvents]);
 
-  const zoneOccupancyData = useMemo(() => {
-    const rawZones = (trackingCtx?.zones && trackingCtx.zones.length > 0)
-      ? trackingCtx.zones
-      : (config?.defaultZones && config.defaultZones.length > 0)
-      ? config.defaultZones
-      : [];
-
-    const knownZoneNames = new Set(rawZones.map(z => z.name));
-    activeWorkers.forEach(w => {
-      const zName = w.currentZone || w.zone;
-      if (zName && !knownZoneNames.has(zName)) {
-        knownZoneNames.add(zName);
+  const uniquePeopleList = useMemo(() => {
+    const map = new Map<string, string>();
+    normalizedEvents.forEach(e => {
+      if (!map.has(e.tagId)) {
+        map.set(e.tagId, e.personName);
       }
     });
+    return Array.from(map.entries()).map(([tagId, name]) => ({ tagId, name }));
+  }, [normalizedEvents]);
 
-    return Array.from(knownZoneNames).map(zName => {
-      const matchedConfig = rawZones.find(z => z.name.toLowerCase() === zName.toLowerCase());
-      const capacity = (matchedConfig as any)?.capacity || (matchedConfig as any)?.maxOccupancy || 20;
-      const current = activeWorkers.filter(p => (p.currentZone || p.zone || '').toLowerCase() === zName.toLowerCase()).length;
-      const loadPct = capacity > 0 ? Math.round((current / capacity) * 100) : 0;
-      return {
-        zone: zName,
-        current,
-        capacity,
-        loadPct,
-        risk: loadPct >= 90 ? 'High' : loadPct >= 70 ? 'Moderate' : 'Normal'
-      };
-    });
-  }, [activeWorkers, trackingCtx?.zones, config?.defaultZones]);
-
-  const incidentTrendData = useMemo(() => {
-    const monthsMap: Record<string, { month: string; nearMiss: number; zoneBreach: number; ppeViolation: number }> = {};
+  /**
+   * 4. Filtering Engine (Operates strictly on actual normalized API data)
+   */
+  const filteredEvents = useMemo(() => {
     const now = new Date();
-    
-    // Create the last 6 rolling months dynamically
-    for (let i = 5; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      const label = d.toLocaleString('default', { month: 'short' });
-      const year = d.getFullYear();
-      const key = `${year}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      monthsMap[key] = { month: label, nearMiss: 0, zoneBreach: 0, ppeViolation: 0 };
+    const todayStr = now.toISOString().slice(0, 10);
+
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+    const sevenDaysAgoStr = sevenDaysAgo.toISOString().slice(0, 10);
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString().slice(0, 10);
+
+    return normalizedEvents.filter(evt => {
+      // Date filter
+      if (dateRange === 'today') {
+        if (!evt.enterTime.startsWith(todayStr)) return false;
+      } else if (dateRange === 'yesterday') {
+        if (!evt.enterTime.startsWith(yesterdayStr)) return false;
+      } else if (dateRange === '7d') {
+        if (evt.dateString < sevenDaysAgoStr) return false;
+      } else if (dateRange === '30d') {
+        if (evt.dateString < thirtyDaysAgoStr) return false;
+      } else if (dateRange === 'custom') {
+        if (customStartDate && evt.dateString < customStartDate) return false;
+        if (customEndDate && evt.dateString > customEndDate) return false;
+      }
+
+      // Time / Shift filter
+      if (shiftFilter !== 'all') {
+        const hour = evt.hourOfDay;
+        if (shiftFilter === 'morning' && (hour < 6 || hour >= 14)) return false;
+        if (shiftFilter === 'afternoon' && (hour < 14 || hour >= 22)) return false;
+        if (shiftFilter === 'night' && (hour >= 6 && hour < 22)) return false;
+      }
+
+      // Zone filter
+      if (selectedZoneFilter !== 'All' && evt.locationName !== selectedZoneFilter) {
+        return false;
+      }
+
+      // Person filter
+      if (selectedPersonFilter !== 'All' && evt.tagId !== selectedPersonFilter) {
+        return false;
+      }
+
+      // Text search query
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        const matchesName = evt.personName.toLowerCase().includes(q);
+        const matchesTag = evt.tagId.toLowerCase().includes(q);
+        const matchesZone = evt.locationName.toLowerCase().includes(q);
+        if (!matchesName && !matchesTag && !matchesZone) return false;
+      }
+
+      return true;
+    });
+  }, [
+    normalizedEvents,
+    dateRange,
+    customStartDate,
+    customEndDate,
+    shiftFilter,
+    selectedZoneFilter,
+    selectedPersonFilter,
+    searchQuery
+  ]);
+
+  /**
+   * 5. Dynamic Calculations derived from Filtered Events
+   */
+  const kpis: AnalyticsKPIs = useMemo(() => {
+    return calculateKPIs(filteredEvents);
+  }, [filteredEvents]);
+
+  const hourlyTraffic: HourlyTrafficData[] = useMemo(() => {
+    return calculateHourlyTraffic(filteredEvents);
+  }, [filteredEvents]);
+
+  const dailyTraffic: DailyTrafficData[] = useMemo(() => {
+    return calculateDailyTraffic(filteredEvents);
+  }, [filteredEvents]);
+
+  const zoneAnalytics: ZoneAnalyticsSummary[] = useMemo(() => {
+    return calculateZoneAnalytics(filteredEvents);
+  }, [filteredEvents]);
+
+  const personAnalytics: PersonAnalyticsSummary[] = useMemo(() => {
+    return calculatePersonAnalytics(filteredEvents);
+  }, [filteredEvents]);
+
+  const durationAnalytics: DurationAnalytics = useMemo(() => {
+    return calculateDurationAnalytics(filteredEvents);
+  }, [filteredEvents]);
+
+  const aiObservations: AIObservation[] = useMemo(() => {
+    return generateAIObservations(filteredEvents, {
+      industry: activeIndustry,
+      subIndustry: activeSubIndustry,
+      zoneLabel,
+      personnelSingular,
+      personnelPlural,
+      siteLabel
+    });
+  }, [filteredEvents, activeIndustry, activeSubIndustry, zoneLabel, personnelSingular, personnelPlural, siteLabel]);
+
+  // Auto-sync calculated analytics intelligence to MongoDB Atlas
+  const lastSyncedAnalyticsHashRef = useRef<string>('');
+  useEffect(() => {
+    if (rawRecords.length === 0 || normalizedEvents.length === 0) return;
+
+    const hash = `${rawRecords.length}_${kpis.totalEvents}_${kpis.uniquePeople}_${aiObservations.length}`;
+    if (lastSyncedAnalyticsHashRef.current === hash) return;
+    lastSyncedAnalyticsHashRef.current = hash;
+
+    // 1. Persist aggregated traffic metrics snapshot to MongoDB
+    setDoc(doc(db, 'analytics_metrics', 'movement_summary'), {
+      totalEvents: kpis.totalEvents,
+      uniquePeople: kpis.uniquePeople,
+      activeZones: kpis.activeZones,
+      averageDurationMinutes: kpis.averageDurationMinutes,
+      totalDwellMinutes: kpis.totalDwellMinutes,
+      repeatVisitors: kpis.repeatVisitors,
+      hourlyTraffic: hourlyTraffic.slice(0, 24),
+      zoneAnalytics: zoneAnalytics.map(z => ({ 
+        zone: z.zone, 
+        visits: z.totalVisits, 
+        uniquePeople: z.uniquePeople, 
+        avgDuration: z.avgDurationFormatted 
+      })),
+      source: 'REAL_TIME_API_HISTORY',
+      persistedAt: new Date().toISOString()
+    }).catch(() => {});
+
+    // 2. Persist AI observations in ONE single batch call
+    if (aiObservations.length > 0) {
+      const obsToSync = aiObservations.map(obs => ({
+        id: `obs_${obs.id}`,
+        ...obs,
+        source: 'REAL_TIME_API_HISTORY',
+        updatedAt: new Date().toISOString()
+      }));
+      batchSetDocs('ai_recommendations', obsToSync).then(() => {
+        setIsMongoSynced(true);
+      }).catch(err => {
+        console.warn('[AnalyticsTab] batchSetDocs ai_recommendations error:', err);
+      });
+    }
+  }, [rawRecords.length, normalizedEvents.length, kpis.totalEvents, kpis.uniquePeople, aiObservations.length]);
+
+  // Reset pagination on filter changes
+  useEffect(() => {
+    setPeoplePage(1);
+    setZonePage(1);
+  }, [dateRange, shiftFilter, selectedZoneFilter, selectedPersonFilter, searchQuery]);
+
+  // People Table Pagination
+  const totalPeoplePages = Math.max(1, Math.ceil(personAnalytics.length / peoplePageSize));
+  const paginatedPeople = useMemo(() => {
+    const start = (peoplePage - 1) * peoplePageSize;
+    return personAnalytics.slice(start, start + peoplePageSize);
+  }, [personAnalytics, peoplePage, peoplePageSize]);
+
+  // Zone Table Pagination
+  const totalZonePages = Math.max(1, Math.ceil(zoneAnalytics.length / zonePageSize));
+  const paginatedZones = useMemo(() => {
+    const start = (zonePage - 1) * zonePageSize;
+    return zoneAnalytics.slice(start, start + zonePageSize);
+  }, [zoneAnalytics, zonePage, zonePageSize]);
+
+  // Person Drill-Down Events
+  const drillDownPersonEvents = useMemo(() => {
+    if (!drillDownPersonTag) return [];
+    return normalizedEvents
+      .filter(e => e.tagId.toLowerCase() === drillDownPersonTag.toLowerCase())
+      .sort((a, b) => a.enterDate.getTime() - b.enterDate.getTime());
+  }, [normalizedEvents, drillDownPersonTag]);
+
+  const drillDownPersonMeta = useMemo(() => {
+    if (!drillDownPersonTag) return null;
+    const p = personAnalytics.find(x => x.tagId === drillDownPersonTag);
+    return p || { name: `Personnel (${drillDownPersonTag.slice(-6)})`, tagId: drillDownPersonTag };
+  }, [personAnalytics, drillDownPersonTag]);
+
+  // Zone Drill-Down Data
+  const drillDownZoneMeta = useMemo(() => {
+    if (!drillDownZoneName) return null;
+    return zoneAnalytics.find(z => z.zone === drillDownZoneName) || null;
+  }, [zoneAnalytics, drillDownZoneName]);
+
+  const drillDownZoneHourly = useMemo(() => {
+    if (!drillDownZoneName) return [];
+    const zoneEvents = normalizedEvents.filter(e => e.locationName === drillDownZoneName);
+    return calculateHourlyTraffic(zoneEvents);
+  }, [normalizedEvents, drillDownZoneName]);
+
+  const handleCopy = (text: string) => {
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text);
+      setCopiedTagId(text);
+      setTimeout(() => setCopiedTagId(null), 2000);
+    }
+  };
+
+  const handleResetFilters = () => {
+    setDateRange('all');
+    setCustomStartDate('');
+    setCustomEndDate('');
+    setShiftFilter('all');
+    setSearchQuery('');
+    setSelectedZoneFilter('All');
+    setSelectedPersonFilter('All');
+  };
+
+  const isAnyFilterActive = 
+    dateRange !== 'all' || 
+    shiftFilter !== 'all' || 
+    searchQuery.trim() !== '' || 
+    selectedZoneFilter !== 'All' || 
+    selectedPersonFilter !== 'All';
+
+  const handleExportCsv = () => {
+    if (filteredEvents.length === 0) {
+      alert('No analytics records available to export.');
+      return;
     }
 
-    (dbIncidents || []).forEach(inc => {
-      const dateStr = inc.timestamp || inc.createdAt || inc.date || new Date().toISOString();
-      const incDate = new Date(dateStr);
-      if (!isNaN(incDate.getTime())) {
-        const key = `${incDate.getFullYear()}-${String(incDate.getMonth() + 1).padStart(2, '0')}`;
-        if (monthsMap[key]) {
-          const title = String(inc.title || '').toLowerCase();
-          const zone = String(inc.zone || '').toLowerCase();
-          if (title.includes('breach') || zone.includes('exclusion') || zone.includes('restricted')) {
-            monthsMap[key].zoneBreach++;
-          } else if (title.includes('ppe') || title.includes('vest') || title.includes('helmet') || title.includes('hardhat')) {
-            monthsMap[key].ppeViolation++;
-          } else {
-            monthsMap[key].nearMiss++;
-          }
-        }
-      }
-    });
+    const exportRows = filteredEvents.map(e => ({
+      Person: e.personName,
+      TagID: e.tagId,
+      Zone: e.locationName,
+      EnterTime: e.enterTime,
+      LeaveTime: e.leaveTime,
+      DurationMinutes: e.durationMinutes,
+      DurationFormatted: e.durationFormatted,
+      HourOfDay: e.hourOfDay,
+      Date: e.dateString
+    }));
 
-    return Object.values(monthsMap);
-  }, [dbIncidents]);
-
-  const ppeRadarData = useMemo(() => {
-    const total = Math.max(1, activeWorkers.length);
-    const compliantCount = activeWorkers.filter(p => p.ppeStatus !== 'NON_COMPLIANT').length;
-    const baseRate = activeWorkers.length > 0 ? Math.round((compliantCount / total) * 100) : 100;
-    const hardhatCount = activeWorkers.filter(p => p.hardhatTagId || p.TagID || p.ppeStatus === 'COMPLIANT').length;
-    const hardhatRate = activeWorkers.length > 0 ? Math.round((hardhatCount / total) * 100) : 100;
-
-    return [
-      { subject: 'Head Protection', score: hardhatRate, target: 98, fullMark: 100 },
-      { subject: 'High-Vis Vest', score: baseRate, target: 95, fullMark: 100 },
-      { subject: 'Safety Footwear', score: baseRate, target: 95, fullMark: 100 },
-      { subject: 'Zone Boundaries', score: Math.max(0, 100 - (dbIncidents.length * 2)), target: 99, fullMark: 100 },
-      { subject: 'Harness & Fall', score: baseRate, target: 92, fullMark: 100 },
-      { subject: 'Ergonomic Dwell', score: Math.max(60, 100 - activeWorkers.filter(w => (w.dwellTime || 0) > 7200).length * 5), target: 90, fullMark: 100 }
+    const columns: ExportColumn[] = [
+      { key: 'Person', label: personnelSingular },
+      { key: 'TagID', label: 'Tag ID' },
+      { key: 'Zone', label: zoneLabel },
+      { key: 'EnterTime', label: 'Enter Time' },
+      { key: 'LeaveTime', label: 'Leave Time' },
+      { key: 'DurationMinutes', label: 'Duration (mins)' },
+      { key: 'DurationFormatted', label: 'Duration' },
+      { key: 'HourOfDay', label: 'Hour (0-23)' },
+      { key: 'Date', label: 'Date' }
     ];
-  }, [activeWorkers, dbIncidents]);
 
-  // EXPORT HANDLERS
-  const handleExportFullBI = () => {
-    const rows = activeWorkers.map(p => ({
-      ID: p.id || p.rfidTag || 'P-101',
-      Name: p.name || personnelSingular,
-      Role: p.role || p.trade || roleLabel,
-      Zone: p.currentZone || p.zone || `${siteLabel || 'Site'} Zone`,
-      DwellSeconds: p.dwellTime || 30,
-      LastSeen: p.lastSeen ? new Date(p.lastSeen).toISOString() : new Date().toISOString(),
-      State: p.presenceState || 'ACTIVE'
-    }));
-
-    exportToCSV('Enterprise_BI_Analytics_Master_Dump', rows, [
-      { key: 'ID', label: `${personnelSingular.toUpperCase()} ${idBadgeLabel.toUpperCase()}` },
-      { key: 'Name', label: 'FULL NAME' },
-      { key: 'Role', label: `${roleLabel.toUpperCase()}` },
-      { key: 'Zone', label: `${zoneLabel.toUpperCase()}` },
-      { key: 'DwellSeconds', label: 'DWELL TIME (SEC)' },
-      { key: 'State', label: 'PRESENCE STATE' },
-      { key: 'LastSeen', label: 'LAST SEEN TIMESTAMP' }
-    ]);
+    exportToCSV(`Movement_Analytics_${activeIndustry}`, exportRows, columns);
   };
-
-  const handleGeneratePDFReport = () => {
-    const rows = activeWorkers.map(p => ({
-      ID: p.id || p.rfidTag || 'P-101',
-      Name: p.name || personnelSingular,
-      Role: p.role || p.trade || roleLabel,
-      Zone: p.currentZone || p.zone || `${siteLabel || 'Site'} Zone`,
-      Status: p.presenceState || 'ACTIVE'
-    }));
-
-    generatePDFReport(
-      'Enterprise BI Executive Site Analytics Report',
-      `Comprehensive ${personnelPlural}, Equipment, ${safetyComplianceLabel}, and Operational Intelligence Audit`,
-      [
-        { key: 'ID', label: 'ID' },
-        { key: 'Name', label: 'Personnel Name' },
-        { key: 'Role', label: roleLabel },
-        { key: 'Zone', label: zoneLabel },
-        { key: 'Status', label: 'State' }
-      ],
-      rows,
-      [
-        { label: 'Overall Safety Score', value: `${executiveKPIs.safetyScore}%` },
-        { label: 'Tool-Time Productivity', value: `${executiveKPIs.productivityIndex}%` },
-        { label: 'Active Reader Uptime', value: '99.9%' },
-        { label: 'TRIR Incident Rate', value: `${executiveKPIs.trirScore}` }
-      ]
-    );
-  };
-
-  if (isLoading) {
-    return (
-      <div className="flex flex-col w-full h-full p-8 items-center justify-center bg-slate-50 dark:bg-slate-900">
-        <div className="flex flex-col items-center gap-4 animate-pulse">
-          <div className="w-12 h-12 rounded-full border-4 border-[#007BC4] border-t-transparent animate-spin" />
-          <div className="text-slate-500 font-medium text-sm">Compiling Enterprise BI Telemetry & Analytics...</div>
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div className="flex flex-col w-full min-h-full p-4 sm:p-6 space-y-6 max-w-[1760px] mx-auto font-sans min-w-0">
-      
-      {/* 1. ENTERPRISE BI HEADER & GLOBAL CONTROLS */}
-      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 bg-white dark:bg-slate-800/90 p-5 rounded-2xl border border-slate-200 dark:border-slate-700/80 shadow-xs">
-        <div className="space-y-1">
-          <div className="flex items-center gap-2.5 flex-wrap">
-            <h2 className="text-xl md:text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2.5">
-              <div className="w-10 h-10 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-[#007BC4] shadow-2xs">
-                <BarChart3 className="w-5 h-5" />
+    <div className="space-y-6 max-w-7xl mx-auto px-4 sm:px-6 py-6 pb-20">
+      {/* 1. HEADER */}
+      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 border-b border-slate-200 dark:border-slate-800 pb-5">
+        <div>
+          <div className="flex items-center gap-2.5">
+            <div className="w-10 h-10 rounded-xl bg-[#007BC4]/10 text-[#007BC4] flex items-center justify-center font-bold">
+              <BarChart3 size={22} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white">
+                  Movement & Traffic Analytics
+                </h1>
+                <Badge variant="outline" className="text-xs font-semibold uppercase tracking-wider bg-[#007BC4]/10 text-[#007BC4] border-[#007BC4]/30">
+                  {activeIndustry} · {activeSubIndustry}
+                </Badge>
               </div>
-              <span>Analytics & Intelligence Portal</span>
-            </h2>
-            {mongoStatus.connected ? (
-              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
-                <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
-              </span>
-            ) : (
-              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800">
-                <span className="w-2 h-2 rounded-full bg-rose-500" />
-                <Database size={13} className="text-rose-600 dark:text-rose-400" />
-                <span>MongoDB Disconnected</span>
-              </span>
-            )}
-            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              Active Telemetry
-            </span>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Multi-dimensional people flow, zone occupancy density, and dwell duration analytics derived strictly from real API telemetry
+              </p>
+            </div>
           </div>
-          <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm">
-            Real-time executive metrics, workforce productivity, fleet utilization, safety compliance & predictive forecasting synced to MongoDB Atlas
-          </p>
         </div>
 
-        {/* Global BI Actions Strip */}
-        <div className="flex items-center gap-2.5 flex-wrap">
-          {/* Time Range Selector */}
-          <div className="flex items-center bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs">
-            <Calendar size={13} className="text-slate-400 ml-2 mr-1.5 hidden sm:block shrink-0" />
-            {(['today', '7d', '30d', 'q3_2026'] as const).map(range => (
-              <button
-                key={range}
-                onClick={() => setDateRange(range)}
-                className={`px-3 py-1 rounded-lg text-xs font-semibold transition cursor-pointer ${
-                  dateRange === range 
-                    ? 'bg-[#007BC4] text-white shadow-2xs font-bold' 
-                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-                }`}
-              >
-                {range === 'today' ? 'Today' : range === '7d' ? '7 Days' : range === '30d' ? '30 Days' : 'Q3 2026'}
-              </button>
-            ))}
+        {/* Action Controls */}
+        <div className="flex flex-wrap items-center gap-2.5">
+          {/* MongoDB Atlas Persistence Badge */}
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 text-indigo-700 dark:text-indigo-400 text-xs font-semibold">
+            <Database size={13} className="text-indigo-600 dark:text-indigo-400" />
+            <span>MongoDB Atlas: {isMongoSynced ? 'Persisted' : 'Syncing'}</span>
           </div>
 
-          {/* Sync DB */}
+          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-400 text-xs font-medium">
+            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span>API Online · {totalSystemCount.toLocaleString()} Total System Records</span>
+          </div>
+
           <button
-            onClick={loadMongoDBData}
-            disabled={isDbLoading}
-            className="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-xl text-xs font-bold shadow-2xs hover:bg-slate-50 dark:hover:bg-slate-800 transition flex items-center gap-1.5 cursor-pointer"
-            title="Refresh analytics data from database"
+            onClick={() => loadData(fetchBatchSize, true)}
+            disabled={isRefreshing || isLoading}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-medium transition shadow-xs disabled:opacity-50"
           >
-            <Database size={13} className={isDbLoading ? 'animate-spin text-[#007BC4]' : 'text-[#007BC4]'} />
-            <span className="hidden sm:inline">{isDbLoading ? 'Syncing...' : 'Sync DB'}</span>
+            <RefreshCw size={14} className={isRefreshing ? 'animate-spin text-[#007BC4]' : ''} />
+            <span>{isRefreshing ? 'Refreshing...' : 'Refresh'}</span>
           </button>
 
-          {/* Export CSV */}
           <button
-            onClick={handleExportFullBI}
-            className="px-3.5 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold shadow-2xs hover:bg-slate-50 dark:hover:bg-slate-800 transition flex items-center gap-1.5 cursor-pointer"
+            onClick={handleExportCsv}
+            disabled={filteredEvents.length === 0}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-[#007BC4] hover:bg-[#006cae] text-white text-xs font-medium transition shadow-xs disabled:opacity-50"
           >
-            <FileSpreadsheet size={14} className="text-[#007BC4]" />
+            <Download size={14} />
             <span>Export CSV</span>
-          </button>
-
-          {/* Print PDF */}
-          <button
-            onClick={handleGeneratePDFReport}
-            className="px-3.5 py-2 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-xs transition flex items-center gap-1.5 cursor-pointer"
-          >
-            <Printer size={14} />
-            <span>Print Report</span>
           </button>
         </div>
       </div>
 
-      {dbSyncSuccess && (
-        <div className="p-3 bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 rounded-xl text-emerald-800 dark:text-emerald-200 text-xs font-bold flex items-center gap-2 animate-in fade-in">
-          <CheckCircle2 size={15} />
-          <span>{dbSyncSuccess}</span>
+      {/* Error alert */}
+      {apiError && (
+        <div className="p-4 rounded-xl bg-rose-50 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-rose-800 dark:text-rose-200 flex items-start gap-3">
+          <AlertCircle size={18} className="shrink-0 mt-0.5 text-rose-600" />
+          <div className="flex-1 text-xs">
+            <p className="font-semibold">Telemetry API Ingestion Error</p>
+            <p className="mt-0.5 text-rose-700 dark:text-rose-300">{apiError}</p>
+          </div>
+          <button
+            onClick={() => loadData(fetchBatchSize, true)}
+            className="px-2.5 py-1 text-xs font-medium rounded-md bg-rose-600 text-white hover:bg-rose-700"
+          >
+            Retry
+          </button>
         </div>
       )}
 
-      {/* 2. DYNAMIC WORKFORCE & OPERATIONS ANALYTICS CONTENT */}
-      <div className="space-y-6 animate-in fade-in duration-200">
-        {/* Dynamic B2B Industry Intelligence KPIs */}
-        <div className="bg-slate-50 dark:bg-slate-900/60 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-[#007BC4] animate-pulse" />
-              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider">
-                {intelligenceProfile?.subIndustry || config?.industryName || 'Industry Intelligence'} Metrics & KPIs
+      {/* 2. DYNAMIC KPI CARDS (Calculated from API Data) */}
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {/* Total Events */}
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Total Events</span>
+            <Activity size={15} className="text-[#007BC4]" />
+          </div>
+          <div className="text-2xl font-bold text-slate-900 dark:text-white">
+            {isLoading ? <span className="inline-block w-12 h-6 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /> : kpis.totalEvents.toLocaleString()}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">Movement transits analyzed</p>
+        </div>
+
+        {/* Unique People */}
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Unique {personnelPlural}</span>
+            <Users size={15} className="text-emerald-600" />
+          </div>
+          <div className="text-2xl font-bold text-slate-900 dark:text-white">
+            {isLoading ? <span className="inline-block w-12 h-6 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /> : kpis.uniquePeople}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">Distinct Tag IDs detected</p>
+        </div>
+
+        {/* Active Zones */}
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Active {zoneLabel}s</span>
+            <MapPin size={15} className="text-indigo-600" />
+          </div>
+          <div className="text-2xl font-bold text-slate-900 dark:text-white">
+            {isLoading ? <span className="inline-block w-12 h-6 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /> : kpis.activeZones}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">Distinct physical locations</p>
+        </div>
+
+        {/* Average Duration */}
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Average Duration</span>
+            <Clock size={15} className="text-cyan-600" />
+          </div>
+          <div className="text-2xl font-bold text-slate-900 dark:text-white">
+            {isLoading ? <span className="inline-block w-12 h-6 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /> : kpis.averageDurationFormatted}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">Mean dwell per visit</p>
+        </div>
+
+        {/* Total Dwell Time */}
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Total Dwell Time</span>
+            <TrendingUp size={15} className="text-purple-600" />
+          </div>
+          <div className="text-2xl font-bold text-slate-900 dark:text-white">
+            {isLoading ? <span className="inline-block w-12 h-6 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /> : kpis.totalDwellFormatted}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">Cumulative occupancy sum</p>
+        </div>
+
+        {/* Repeat Visitors */}
+        <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 mb-1">
+            <span className="text-[11px] font-semibold uppercase tracking-wider">Repeat Visitors</span>
+            <History size={15} className="text-amber-500" />
+          </div>
+          <div className="text-2xl font-bold text-amber-600 dark:text-amber-400">
+            {isLoading ? <span className="inline-block w-12 h-6 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" /> : kpis.repeatVisitors}
+          </div>
+          <p className="text-[10px] text-slate-400 mt-1">
+            {kpis.uniquePeople > 0 ? `${Math.round((kpis.repeatVisitors / kpis.uniquePeople) * 100)}% of personnel` : '0%'}
+          </p>
+        </div>
+      </div>
+
+      {/* 3. FILTERS BAR */}
+      <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+            <Filter size={14} className="text-[#007BC4]" />
+            <span>Filter Analytics Scope</span>
+            {isAnyFilterActive && (
+              <span className="ml-2 px-2 py-0.5 rounded-full bg-blue-50 text-[#007BC4] text-[10px] font-semibold border border-blue-200">
+                Active Filter
               </span>
+            )}
+          </div>
+
+          {isAnyFilterActive && (
+            <button
+              onClick={handleResetFilters}
+              className="text-xs text-rose-600 hover:text-rose-700 font-medium inline-flex items-center gap-1"
+            >
+              <X size={12} />
+              <span>Reset Filters</span>
+            </button>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5">
+          {/* Search Box */}
+          <div className="relative">
+            <Search size={14} className="absolute left-2.5 top-2.5 text-slate-400" />
+            <input
+              type="text"
+              placeholder={`Search ${personnelSingular.toLowerCase()}, tag, ${zoneLabel.toLowerCase()}...`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full text-xs pl-8 pr-3 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 focus:outline-none focus:ring-1 focus:ring-[#007BC4] text-slate-800 dark:text-slate-200"
+            />
+          </div>
+
+          {/* Date Range Selector */}
+          <div>
+            <select
+              value={dateRange}
+              onChange={(e) => setDateRange(e.target.value as any)}
+              className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-[#007BC4]"
+            >
+              <option value="all">Date: All Available</option>
+              <option value="today">Date: Today</option>
+              <option value="yesterday">Date: Yesterday</option>
+              <option value="7d">Date: Last 7 Days</option>
+              <option value="30d">Date: Last 30 Days</option>
+              <option value="custom">Date: Custom Range...</option>
+            </select>
+          </div>
+
+          {/* Custom Dates if selected */}
+          {dateRange === 'custom' && (
+            <div className="flex items-center gap-1">
+              <input
+                type="date"
+                value={customStartDate}
+                onChange={(e) => setCustomStartDate(e.target.value)}
+                className="w-full text-xs px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
+                title="Start Date"
+              />
+              <span className="text-slate-400 text-xs">to</span>
+              <input
+                type="date"
+                value={customEndDate}
+                onChange={(e) => setCustomEndDate(e.target.value)}
+                className="w-full text-xs px-2 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200"
+                title="End Date"
+              />
             </div>
-            <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400">
-              Compliance: {intelligenceProfile?.complianceFramework || config?.complianceFramework || 'Standard'}
-            </span>
+          )}
+
+          {/* Time / Shift Range Selector */}
+          <div>
+            <select
+              value={shiftFilter}
+              onChange={(e) => setShiftFilter(e.target.value as any)}
+              className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-[#007BC4]"
+            >
+              <option value="all">Shift: All Hours (24h)</option>
+              <option value="morning">Morning Shift (06:00 - 14:00)</option>
+              <option value="afternoon">Afternoon Shift (14:00 - 22:00)</option>
+              <option value="night">Night Shift (22:00 - 06:00)</option>
+            </select>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-            {(dynamicKpis.length > 0 ? dynamicKpis : (intelligenceProfile?.kpis || [])).map((k: any) => (
-              <div key={k.key} className="bg-white dark:bg-slate-800 p-3.5 rounded-xl border border-slate-200 dark:border-slate-700/80 shadow-2xs space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block truncate" title={k.label}>
-                  {k.label}
-                </span>
-                <div className="text-xl font-black text-slate-800 dark:text-slate-100 flex items-baseline gap-1">
-                  {k.value !== undefined ? k.value : k.target}
-                  <span className="text-xs font-semibold text-slate-400">{k.unit}</span>
-                </div>
-                <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate" title={k.description}>
-                  Target: {k.target} {k.unit}
-                </div>
-              </div>
-            ))}
+          {/* Zone Filter */}
+          <div>
+            <select
+              value={selectedZoneFilter}
+              onChange={(e) => setSelectedZoneFilter(e.target.value)}
+              className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-[#007BC4]"
+            >
+              <option value="All">{zoneLabel}: All {zoneLabel}s ({uniqueZones.length})</option>
+              {uniqueZones.map(z => (
+                <option key={z} value={z}>{zoneLabel}: {z}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Person Filter */}
+          <div>
+            <select
+              value={selectedPersonFilter}
+              onChange={(e) => setSelectedPersonFilter(e.target.value)}
+              className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-[#007BC4]"
+            >
+              <option value="All">{personnelSingular}: All ({uniquePeopleList.length})</option>
+              {uniquePeopleList.map(p => (
+                <option key={p.tagId} value={p.tagId}>{p.name} ({p.tagId.slice(-6)})</option>
+              ))}
+            </select>
           </div>
         </div>
+      </div>
 
-        {/* Executive Top Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-3 gap-4">
-          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
-            <CardContent className="p-4 flex items-center justify-between">
-              <div className="space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Safety Compliance Score</span>
-                <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{executiveKPIs.safetyScore}%</div>
-                <span className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
-                  <ShieldCheck size={12} /> {executiveKPIs.safetyScore >= 90 ? 'Optimal Compliance' : 'Attention Required'}
-                </span>
-              </div>
-              <div className="w-11 h-11 bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200/60 dark:border-emerald-800/60 rounded-2xl flex items-center justify-center text-emerald-600 dark:text-emerald-400 shadow-2xs">
-                <ShieldCheck size={22} />
-              </div>
-            </CardContent>
-          </Card>
+      {/* 4. SECTION TABS */}
+      <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-2 overflow-x-auto">
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={() => setActiveTab('overview')}
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition flex items-center gap-2 ${
+              activeTab === 'overview'
+                ? 'bg-[#007BC4] text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <BarChart3 size={15} />
+            <span>Dashboard Overview</span>
+          </button>
 
-          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
-            <CardContent className="p-4 flex items-center justify-between">
-              <div className="space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">Productivity Index</span>
-                <div className="text-2xl font-black text-blue-600 dark:text-blue-400">{executiveKPIs.productivityIndex}%</div>
-                <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400 flex items-center gap-0.5">
-                  <TrendingUp size={12} /> {executiveKPIs.productivityIndex}% Active Presence
-                </span>
-              </div>
-              <div className="w-11 h-11 bg-blue-50 dark:bg-blue-950/50 border border-blue-200/60 dark:border-blue-800/60 rounded-2xl flex items-center justify-center text-[#007BC4] shadow-2xs">
-                <TrendingUp size={22} />
-              </div>
-            </CardContent>
-          </Card>
+          <button
+            onClick={() => setActiveTab('time')}
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition flex items-center gap-2 ${
+              activeTab === 'time'
+                ? 'bg-[#007BC4] text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Calendar size={15} />
+            <span>Time & Trend Analysis</span>
+          </button>
 
-          <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs hover:shadow-xs transition">
-            <CardContent className="p-4 flex items-center justify-between">
-              <div className="space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider block">OSHA TRIR Rate</span>
-                <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">{executiveKPIs.trirScore}</div>
-                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
-                  {executiveKPIs.openIncidents} Open Recordable Incidents
-                </span>
-              </div>
-              <div className="w-11 h-11 bg-amber-50 dark:bg-amber-950/50 border border-amber-200/60 dark:border-amber-800/60 rounded-2xl flex items-center justify-center text-amber-600 dark:text-amber-400 shadow-2xs">
-                <ShieldAlert size={22} />
-              </div>
-            </CardContent>
-          </Card>
+          <button
+            onClick={() => setActiveTab('zones')}
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition flex items-center gap-2 ${
+              activeTab === 'zones'
+                ? 'bg-[#007BC4] text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <MapPin size={15} />
+            <span>{zoneLabel} Analytics ({zoneAnalytics.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('people')}
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition flex items-center gap-2 ${
+              activeTab === 'people'
+                ? 'bg-[#007BC4] text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Users size={15} />
+            <span>{personnelSingular} Activity ({personAnalytics.length})</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('duration')}
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition flex items-center gap-2 ${
+              activeTab === 'duration'
+                ? 'bg-[#007BC4] text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Clock size={15} />
+            <span>Duration Distribution</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('ai_observations')}
+            className={`px-3.5 py-2 text-xs font-semibold rounded-lg transition flex items-center gap-2 ${
+              activeTab === 'ai_observations'
+                ? 'bg-[#007BC4] text-white shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'
+            }`}
+          >
+            <Sparkles size={15} className="text-amber-500" />
+            <span>AI Observations ({aiObservations.filter(o => !o.insufficientData).length})</span>
+          </button>
         </div>
 
-        {/* Combined Attendance & Zone Occupancy Section */}
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          <Card className="lg:col-span-8 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-            <CardHeader className="pb-2 flex flex-row items-center justify-between border-b border-slate-100 dark:border-slate-700/60">
-              <div>
-                <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">Daily On-Site Headcount & Shift Attendance</CardTitle>
-                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">On-time arrivals, late arrivals, and overtime {personnelSingular} counts</p>
-              </div>
-              <Badge variant="outline" className="text-[10px] font-bold text-[#007BC4] border-blue-200 dark:border-blue-800">MongoDB Atlas Synced</Badge>
-            </CardHeader>
-            <CardContent className="p-4 h-72">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={attendanceTrendData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" strokeOpacity={0.5} vertical={false} />
-                  <XAxis dataKey="time" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={{ backgroundColor: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }} />
-                  <Legend wrapperStyle={{ fontSize: '11px', paddingTop: '8px' }} />
-                  <Bar dataKey="onTime" name={`On-Time ${personnelPlural}`} fill="#007BC4" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="late" name="Late Arrivals" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-                  <Bar dataKey="overtime" name={`Overtime ${personnelPlural}`} fill="#8B5CF6" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </CardContent>
-          </Card>
+        {/* Telemetry Record Selector */}
+        <div className="flex items-center gap-2 text-xs text-slate-500 shrink-0">
+          <span className="hidden sm:inline">Telemetry Scope:</span>
+          <select
+            value={fetchBatchSize}
+            onChange={(e) => {
+              const sz = parseInt(e.target.value, 10);
+              setFetchBatchSize(sz);
+              loadData(sz, true);
+            }}
+            className="text-xs px-2.5 py-1 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 font-medium"
+          >
+            <option value={100}>100 records</option>
+            <option value={200}>200 records (Standard)</option>
+            <option value={500}>500 records</option>
+            <option value={1000}>1,000 records</option>
+          </select>
+        </div>
+      </div>
 
-          {/* Zone Capacity & Occupancy Matrix */}
-          <Card className="lg:col-span-4 bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-            <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
-              <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">Zone Capacity & Occupancy</CardTitle>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Real-time headcount vs permitted safety capacity</p>
-            </CardHeader>
-            <CardContent className="p-4 space-y-4 max-h-72 overflow-y-auto">
-              {zoneOccupancyData.length === 0 ? (
-                <div className="p-4 text-center text-slate-400 text-xs font-medium">
-                  No active zone telemetry. Monitored zones will update in real time.
+      {/* 5. TAB 1: DASHBOARD OVERVIEW */}
+      {activeTab === 'overview' && (
+        <div className="space-y-6">
+          {/* AI Observation Highlights */}
+          {aiObservations.length > 0 && !aiObservations[0].insufficientData && (
+            <div className="p-4 rounded-xl bg-gradient-to-r from-blue-500/10 via-indigo-500/5 to-transparent border border-blue-500/20 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-blue-900 dark:text-blue-300">
+                  <Sparkles size={15} className="text-[#007BC4]" />
+                  <span>AI Movement Intelligence Observations</span>
                 </div>
-              ) : (
-                zoneOccupancyData.map(z => (
-                  <div key={z.zone} className="space-y-1.5">
-                    <div className="flex justify-between items-center text-xs">
-                      <span className="font-bold text-slate-800 dark:text-slate-200 truncate pr-2">{z.zone}</span>
-                      <span className="font-mono font-bold text-slate-500 dark:text-slate-400 shrink-0">{z.current} / {z.capacity} ({z.loadPct}%)</span>
+                <button
+                  onClick={() => setActiveTab('ai_observations')}
+                  className="text-xs text-[#007BC4] font-semibold hover:underline flex items-center gap-1"
+                >
+                  <span>View All Observations</span>
+                  <ArrowRight size={12} />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+                {aiObservations.slice(0, 4).map((obs) => (
+                  <div key={obs.id} className="p-3 rounded-lg bg-white/80 dark:bg-slate-900/80 border border-slate-200/80 dark:border-slate-800 shadow-2xs space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase text-slate-400 tracking-wider">
+                        {obs.metric}
+                      </span>
+                      <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40 px-1.5 py-0.2 rounded border border-emerald-300">
+                        {obs.change}
+                      </span>
                     </div>
-                    <div className="w-full h-2 bg-slate-100 dark:bg-slate-700/80 rounded-full overflow-hidden">
+                    <p className="text-xs font-bold text-slate-800 dark:text-white line-clamp-1">
+                      {obs.currentValue}
+                    </p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-tight">
+                      {obs.explanation}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Dual Charts Grid: Activity Trend & Zone Activity */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            {/* Activity Trend */}
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Hourly Movement Flow
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Distribution of entries and unique {personnelPlural.toLowerCase()} across 24h cycle
+                  </p>
+                </div>
+                <div className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 p-0.5 rounded-lg text-[10px]">
+                  <button
+                    onClick={() => setTrendMode('hourly_volume')}
+                    className={`px-2 py-1 rounded font-medium ${trendMode === 'hourly_volume' ? 'bg-white dark:bg-slate-700 shadow-2xs text-slate-900 dark:text-white' : 'text-slate-500'}`}
+                  >
+                    Volume
+                  </button>
+                  <button
+                    onClick={() => setTrendMode('unique_people')}
+                    className={`px-2 py-1 rounded font-medium ${trendMode === 'unique_people' ? 'bg-white dark:bg-slate-700 shadow-2xs text-slate-900 dark:text-white' : 'text-slate-500'}`}
+                  >
+                    Personnel
+                  </button>
+                </div>
+              </div>
+
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={hourlyTraffic} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="hourlyColor" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#007BC4" stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor="#007BC4" stopOpacity={0.0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
+                    <XAxis dataKey="hourLabel" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', border: 'none', color: '#f8fafc', fontSize: '11px' }}
+                      formatter={(val: any, name: any) => [val, name === 'eventCount' ? 'Movement Events' : 'Distinct People']}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey={trendMode === 'hourly_volume' ? 'eventCount' : 'uniquePeople'}
+                      name={trendMode === 'hourly_volume' ? 'eventCount' : 'uniquePeople'}
+                      stroke="#007BC4"
+                      fillOpacity={1}
+                      fill="url(#hourlyColor)"
+                      strokeWidth={2}
+                    />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Zone Activity */}
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    {zoneLabel} Traffic & Occupancy
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Total transit volume and mean dwell per {zoneLabel.toLowerCase()}
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('zones')}
+                  className="text-xs text-[#007BC4] font-semibold hover:underline flex items-center gap-1"
+                >
+                  <span>Detailed Table</span>
+                  <ArrowRight size={12} />
+                </button>
+              </div>
+
+              <div className="h-56 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={zoneAnalytics.slice(0, 6)} margin={{ top: 10, right: 10, left: -20, bottom: 20 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
+                    <XAxis dataKey="zone" tick={{ fontSize: 10 }} angle={-15} textAnchor="end" />
+                    <YAxis tick={{ fontSize: 10 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', border: 'none', color: '#f8fafc', fontSize: '11px' }}
+                      formatter={(val: any, name: any) => [
+                        name === 'totalVisits' ? `${val} visits` : `${val} mins avg`,
+                        name === 'totalVisits' ? 'Total Visits' : 'Average Dwell'
+                      ]}
+                    />
+                    <Bar dataKey="totalVisits" name="totalVisits" fill="#007BC4" radius={[4, 4, 0, 0]} />
+                    <Bar dataKey="avgDurationMinutes" name="avgDurationMinutes" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* Quick Previews: Top People & Duration Distribution */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Top Personnel by Visits */}
+            <div className="lg:col-span-2 p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                    Active {personnelPlural} Highlights
+                  </h3>
+                  <p className="text-[11px] text-slate-500">
+                    Highest movement frequency recorded in current filter scope
+                  </p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('people')}
+                  className="text-xs text-[#007BC4] font-semibold hover:underline"
+                >
+                  View All ({personAnalytics.length})
+                </button>
+              </div>
+
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="text-[10px] uppercase text-slate-500">
+                      <TableHead>{personnelSingular}</TableHead>
+                      <TableHead>Tag ID</TableHead>
+                      <TableHead className="text-right">Total Visits</TableHead>
+                      <TableHead className="text-right">{zoneLabel}s Visited</TableHead>
+                      <TableHead className="text-right">Average Dwell</TableHead>
+                      <TableHead className="text-right">Total Dwell</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {personAnalytics.slice(0, 5).map((p) => (
+                      <TableRow 
+                        key={p.tagId}
+                        onClick={() => setDrillDownPersonTag(p.tagId)}
+                        className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs"
+                      >
+                        <TableCell className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
+                          <span className="w-5 h-5 rounded-full bg-[#007BC4]/10 text-[#007BC4] flex items-center justify-center text-[10px] font-bold shrink-0">
+                            {p.name.slice(0, 1).toUpperCase()}
+                          </span>
+                          <span>{p.name}</span>
+                        </TableCell>
+                        <TableCell className="font-mono text-[11px] text-slate-500">
+                          {p.tagId.slice(-8)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-slate-800 dark:text-slate-200">
+                          {p.totalVisits}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-slate-600 dark:text-slate-400">
+                          {p.distinctZonesCount}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-slate-600 dark:text-slate-400">
+                          {p.avgDurationFormatted}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-[#007BC4]">
+                          {p.totalDwellFormatted}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </div>
+
+            {/* Dwell Breakdown Mini Card */}
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+              <div>
+                <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                  Duration Profile
+                </h3>
+                <p className="text-[11px] text-slate-500">
+                  Dwell time distribution across all records
+                </p>
+              </div>
+
+              <div className="space-y-2 pt-1">
+                {durationAnalytics.distribution.map((b) => (
+                  <div key={b.range} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-600 dark:text-slate-400">{b.label}</span>
+                      <span className="font-mono font-bold text-slate-800 dark:text-slate-200">{b.count} ({b.percentage}%)</span>
+                    </div>
+                    <div className="h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                       <div 
-                        className={`h-full rounded-full transition-all duration-500 ${
-                          z.loadPct > 90 ? 'bg-rose-500' : z.loadPct > 75 ? 'bg-amber-500' : 'bg-[#007BC4]'
-                        }`}
-                        style={{ width: `${Math.min(100, z.loadPct)}%` }}
+                        className="h-full bg-[#007BC4] rounded-full" 
+                        style={{ width: `${b.percentage}%` }}
                       />
                     </div>
                   </div>
-                ))
-              )}
-            </CardContent>
-          </Card>
-        </div>
+                ))}
+              </div>
 
-        {/* Zone Throughput & Congestion Risk Table */}
-        <Card className="bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700/80 shadow-2xs">
-          <CardHeader className="border-b border-slate-100 dark:border-slate-700/60 pb-3">
-            <CardTitle className="text-sm font-bold text-slate-900 dark:text-white">
-              Zone Hourly Flow & Dwell Risk
-            </CardTitle>
-            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">Automated detection of personnel density, dwell duration, and choke points</p>
-          </CardHeader>
-          <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr className="bg-slate-50 dark:bg-slate-900/50 text-slate-400 dark:text-slate-500 font-bold uppercase text-[10px] border-b border-slate-100 dark:border-slate-700">
-                  <th className="p-3.5 pl-4">Zone Location</th>
-                  <th className="p-3.5 text-right">Active Flow</th>
-                  <th className="p-3.5 text-right">Avg Dwell</th>
-                  <th className="p-3.5 text-center pr-4">Congestion Risk</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/60 font-medium">
-                {movementFlowData.length === 0 ? (
-                  <tr>
-                    <td colSpan={4} className="p-6 text-center text-slate-400 font-medium">
-                      No active personnel in monitored sectors.
-                    </td>
-                  </tr>
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs">
+                <span className="text-slate-500">Median Duration:</span>
+                <span className="font-bold text-slate-800 dark:text-white font-mono">
+                  {durationAnalytics.medianDurationFormatted}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. TAB 2: TIME & TREND ANALYSIS */}
+      {activeTab === 'time' && (
+        <div className="space-y-6">
+          {/* View Mode Controls */}
+          <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Calendar size={18} className="text-[#007BC4]" />
+                  <span>Time Series & Traffic Heat Trends</span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Continuous chronological movement telemetry aggregated across diurnal intervals.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 p-1 rounded-lg text-xs font-medium">
+                <button
+                  onClick={() => setTrendMode('hourly_volume')}
+                  className={`px-3 py-1.5 rounded-md transition ${trendMode === 'hourly_volume' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs font-bold' : 'text-slate-500'}`}
+                >
+                  Events by Hour
+                </button>
+                <button
+                  onClick={() => setTrendMode('unique_people')}
+                  className={`px-3 py-1.5 rounded-md transition ${trendMode === 'unique_people' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs font-bold' : 'text-slate-500'}`}
+                >
+                  {personnelPlural} by Hour
+                </button>
+                <button
+                  onClick={() => setTrendMode('hourly_dwell')}
+                  className={`px-3 py-1.5 rounded-md transition ${trendMode === 'hourly_dwell' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs font-bold' : 'text-slate-500'}`}
+                >
+                  Avg Dwell by Hour
+                </button>
+                <button
+                  onClick={() => setTrendMode('daily_trend')}
+                  className={`px-3 py-1.5 rounded-md transition ${trendMode === 'daily_trend' ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-xs font-bold' : 'text-slate-500'}`}
+                >
+                  Events by Day
+                </button>
+              </div>
+            </div>
+
+            {/* Time Chart */}
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                {trendMode === 'daily_trend' ? (
+                  <BarChart data={dailyTraffic} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
+                    <XAxis dataKey="dateLabel" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', border: 'none', color: '#f8fafc', fontSize: '12px' }}
+                      formatter={(val: any, name: any) => [val, name === 'eventCount' ? 'Movement Events' : 'Total Dwell Minutes']}
+                    />
+                    <Bar dataKey="eventCount" name="eventCount" fill="#007BC4" radius={[4, 4, 0, 0]} />
+                  </BarChart>
                 ) : (
-                  movementFlowData.map(row => (
-                    <tr key={row.zone} className="hover:bg-slate-50/50 dark:hover:bg-slate-700/30 transition">
-                      <td className="p-3.5 pl-4 font-bold text-slate-800 dark:text-slate-200">{row.zone}</td>
-                      <td className="p-3.5 text-right font-mono font-bold text-[#007BC4]">{row.hourlyFlow} {personnelPlural.toLowerCase()}</td>
-                      <td className="p-3.5 text-right font-mono text-slate-600 dark:text-slate-300">{row.avgDwellMin} min</td>
-                      <td className="p-3.5 text-center pr-4">
-                        <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase ${
-                          row.congestionRisk === 'High' 
-                            ? 'bg-rose-50 text-rose-700 border border-rose-200 dark:bg-rose-950/50 dark:text-rose-300 dark:border-rose-800' 
-                            : row.congestionRisk === 'Medium'
-                            ? 'bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/50 dark:text-amber-300 dark:border-amber-800'
-                            : 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-300 dark:border-emerald-800'
-                        }`}>
-                          {row.congestionRisk}
-                        </span>
-                      </td>
-                    </tr>
-                  ))
+                  <AreaChart data={hourlyTraffic} margin={{ top: 10, right: 30, left: 0, bottom: 10 }}>
+                    <defs>
+                      <linearGradient id="timeColor" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor={trendMode === 'hourly_dwell' ? '#8b5cf6' : '#007BC4'} stopOpacity={0.4}/>
+                        <stop offset="95%" stopColor={trendMode === 'hourly_dwell' ? '#8b5cf6' : '#007BC4'} stopOpacity={0.0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
+                    <XAxis dataKey="hourLabel" tick={{ fontSize: 11 }} />
+                    <YAxis tick={{ fontSize: 11 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', border: 'none', color: '#f8fafc', fontSize: '12px' }}
+                      formatter={(val: any) => [
+                        trendMode === 'hourly_dwell' ? `${val} mins` : val,
+                        trendMode === 'hourly_volume' ? 'Events' : trendMode === 'unique_people' ? 'Distinct People' : 'Avg Dwell Duration'
+                      ]}
+                    />
+                    <Area
+                      type="monotone"
+                      dataKey={
+                        trendMode === 'hourly_volume' 
+                          ? 'eventCount' 
+                          : trendMode === 'unique_people' 
+                          ? 'uniquePeople' 
+                          : 'avgDurationMinutes'
+                      }
+                      stroke={trendMode === 'hourly_dwell' ? '#8b5cf6' : '#007BC4'}
+                      strokeWidth={2}
+                      fillOpacity={1}
+                      fill="url(#timeColor)"
+                    />
+                  </AreaChart>
                 )}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-      </div>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7. TAB 3: ZONE ANALYTICS TABLE */}
+      {activeTab === 'zones' && (
+        <div className="space-y-6">
+          <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <MapPin size={18} className="text-[#007BC4]" />
+                  <span>{zoneLabel} Movement Ledger & Analytics</span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Full aggregate traffic breakdown, baseline dwell metrics, and repeat visitor cadence across all physical {zoneLabel.toLowerCase()}s. Click any row for deep-dive.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">Rows:</span>
+                <select
+                  value={zonePageSize}
+                  onChange={(e) => setZonePageSize(parseInt(e.target.value, 10))}
+                  className="text-xs px-2 py-1 rounded bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="text-[11px] uppercase tracking-wider text-slate-500">
+                    <TableHead>{zoneLabel} Name</TableHead>
+                    <TableHead className="text-right">Total Visits</TableHead>
+                    <TableHead className="text-right">Unique People</TableHead>
+                    <TableHead className="text-right">Repeat Visitors</TableHead>
+                    <TableHead className="text-right">Average Dwell</TableHead>
+                    <TableHead className="text-right">Min Dwell</TableHead>
+                    <TableHead className="text-right">Max Dwell</TableHead>
+                    <TableHead className="text-right">Total Dwell</TableHead>
+                    <TableHead>First Activity</TableHead>
+                    <TableHead>Last Activity</TableHead>
+                    <TableHead className="text-center">Action</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paginatedZones.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={11} className="py-8 text-center text-slate-500 text-xs">
+                        No {zoneLabel.toLowerCase()} records match current filters.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    paginatedZones.map((z) => (
+                      <TableRow
+                        key={z.zone}
+                        onClick={() => setDrillDownZoneName(z.zone)}
+                        className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs transition"
+                      >
+                        <TableCell className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
+                          <MapPin size={12} className="text-[#007BC4]" />
+                          {z.zone}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-slate-900 dark:text-white">
+                          {z.totalVisits}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-slate-600 dark:text-slate-400">
+                          {z.uniquePeople}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-amber-600 dark:text-amber-400 font-semibold">
+                          {z.repeatVisitors}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-medium text-[#007BC4]">
+                          {z.avgDurationFormatted}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-slate-500">
+                          {z.minDurationFormatted}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-slate-500">
+                          {z.maxDurationFormatted}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-slate-800 dark:text-slate-200">
+                          {z.totalDwellFormatted}
+                        </TableCell>
+                        <TableCell className="text-slate-500 text-[11px] whitespace-nowrap">
+                          {z.firstActivity}
+                        </TableCell>
+                        <TableCell className="text-slate-500 text-[11px] whitespace-nowrap">
+                          {z.lastActivity}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDrillDownZoneName(z.zone);
+                            }}
+                            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-[#007BC4]"
+                            title="Inspect Zone Analytics"
+                          >
+                            <Eye size={13} />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            {totalZonePages > 1 && (
+              <div className="flex items-center justify-between text-xs text-slate-500 pt-2">
+                <span>Page {zonePage} of {totalZonePages}</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setZonePage(p => Math.max(1, p - 1))}
+                    disabled={zonePage === 1}
+                    className="p-1.5 rounded border border-slate-200 dark:border-slate-700 disabled:opacity-40"
+                  >
+                    <ChevronLeft size={13} />
+                  </button>
+                  <button
+                    onClick={() => setZonePage(p => Math.min(totalZonePages, p + 1))}
+                    disabled={zonePage === totalZonePages}
+                    className="p-1.5 rounded border border-slate-200 dark:border-slate-700 disabled:opacity-40"
+                  >
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 8. TAB 4: PEOPLE ACTIVITY TABLE */}
+      {activeTab === 'people' && (
+        <div className="space-y-6">
+          <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <Users size={18} className="text-[#007BC4]" />
+                  <span>{personnelSingular} Movement Activity & Dwell Ledger</span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Per-tag visit counts, dwell statistics, and multi-zone mobility. Click any row to view complete movement history.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-slate-500">Rows:</span>
+                <select
+                  value={peoplePageSize}
+                  onChange={(e) => setPeoplePageSize(parseInt(e.target.value, 10))}
+                  className="text-xs px-2 py-1 rounded bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium"
+                >
+                  <option value={10}>10</option>
+                  <option value={20}>20</option>
+                  <option value={50}>50</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow className="text-[11px] uppercase tracking-wider text-slate-500">
+                    <TableHead>{personnelSingular}</TableHead>
+                    <TableHead>Tag ID</TableHead>
+                    <TableHead className="text-right">Total Visits</TableHead>
+                    <TableHead className="text-right">{zoneLabel}s Visited</TableHead>
+                    <TableHead className="text-right">Average Dwell</TableHead>
+                    <TableHead className="text-right">Min Dwell</TableHead>
+                    <TableHead className="text-right">Max Dwell</TableHead>
+                    <TableHead className="text-right">Total Dwell</TableHead>
+                    <TableHead>First Activity</TableHead>
+                    <TableHead>Last Activity</TableHead>
+                    <TableHead className="text-center">History</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {paginatedPeople.length === 0 ? (
+                    <TableRow>
+                      <TableCell colSpan={11} className="py-8 text-center text-slate-500 text-xs">
+                        No {personnelSingular.toLowerCase()} records match current filters.
+                      </TableCell>
+                    </TableRow>
+                  ) : (
+                    paginatedPeople.map((p) => (
+                      <TableRow
+                        key={p.tagId}
+                        onClick={() => setDrillDownPersonTag(p.tagId)}
+                        className="cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50 text-xs transition"
+                      >
+                        <TableCell className="font-semibold text-slate-900 dark:text-white flex items-center gap-1.5">
+                          <span className="w-5 h-5 rounded-full bg-[#007BC4]/10 text-[#007BC4] flex items-center justify-center text-[10px] font-bold shrink-0">
+                            {p.name.slice(0, 1).toUpperCase()}
+                          </span>
+                          <span>{p.name}</span>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1 font-mono text-[11px] text-slate-500">
+                            <span>{p.tagId.slice(-8)}</span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCopy(p.tagId);
+                              }}
+                              className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                              title="Copy Tag ID"
+                            >
+                              {copiedTagId === p.tagId ? <Check size={11} className="text-emerald-500" /> : <Copy size={11} />}
+                            </button>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-slate-900 dark:text-white">
+                          {p.totalVisits}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-slate-600 dark:text-slate-400">
+                          {p.distinctZonesCount}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-medium text-[#007BC4]">
+                          {p.avgDurationFormatted}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-slate-500">
+                          {p.minDurationFormatted}
+                        </TableCell>
+                        <TableCell className="text-right font-mono text-slate-500">
+                          {p.maxDurationFormatted}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-bold text-slate-800 dark:text-slate-200">
+                          {p.totalDwellFormatted}
+                        </TableCell>
+                        <TableCell className="text-slate-500 text-[11px] whitespace-nowrap">
+                          {p.firstActivity}
+                        </TableCell>
+                        <TableCell className="text-slate-500 text-[11px] whitespace-nowrap">
+                          {p.lastActivity}
+                        </TableCell>
+                        <TableCell className="text-center">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setDrillDownPersonTag(p.tagId);
+                            }}
+                            className="p-1 rounded hover:bg-slate-100 dark:hover:bg-slate-800 text-[#007BC4]"
+                            title="View Movement Timeline"
+                          >
+                            <History size={13} />
+                          </button>
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </div>
+
+            {totalPeoplePages > 1 && (
+              <div className="flex items-center justify-between text-xs text-slate-500 pt-2">
+                <span>Page {peoplePage} of {totalPeoplePages}</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => setPeoplePage(p => Math.max(1, p - 1))}
+                    disabled={peoplePage === 1}
+                    className="p-1.5 rounded border border-slate-200 dark:border-slate-700 disabled:opacity-40"
+                  >
+                    <ChevronLeft size={13} />
+                  </button>
+                  <button
+                    onClick={() => setPeoplePage(p => Math.min(totalPeoplePages, p + 1))}
+                    disabled={peoplePage === totalPeoplePages}
+                    className="p-1.5 rounded border border-slate-200 dark:border-slate-700 disabled:opacity-40"
+                  >
+                    <ChevronRight size={13} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 9. TAB 5: DURATION DISTRIBUTION */}
+      {activeTab === 'duration' && (
+        <div className="space-y-6">
+          {/* Duration Summary Cards */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+              <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Median Dwell</span>
+              <span className="text-2xl font-bold font-mono text-[#007BC4]">
+                {durationAnalytics.medianDurationFormatted}
+              </span>
+              <p className="text-[10px] text-slate-400 mt-1">50th percentile of visits</p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+              <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Average Dwell</span>
+              <span className="text-2xl font-bold font-mono text-slate-900 dark:text-white">
+                {durationAnalytics.avgDurationFormatted}
+              </span>
+              <p className="text-[10px] text-slate-400 mt-1">Arithmetic mean of all visits</p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+              <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Shortest Visit</span>
+              <span className="text-2xl font-bold font-mono text-emerald-600">
+                {durationAnalytics.minDurationFormatted}
+              </span>
+              <p className="text-[10px] text-slate-400 mt-1">Minimum recorded dwell</p>
+            </div>
+
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+              <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1">Longest Visit</span>
+              <span className="text-2xl font-bold font-mono text-purple-600">
+                {durationAnalytics.maxDurationFormatted}
+              </span>
+              <p className="text-[10px] text-slate-400 mt-1">Maximum recorded dwell</p>
+            </div>
+          </div>
+
+          {/* Distribution Bar Chart */}
+          <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+              Dwell Duration Bucket Distribution
+            </h3>
+            <p className="text-xs text-slate-500">
+              Categorization of visit dwell times from quick transit swipes to prolonged stays
+            </p>
+
+            <div className="h-60 w-full pt-2">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={durationAnalytics.distribution} margin={{ top: 10, right: 30, left: 0, bottom: 20 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
+                  <XAxis dataKey="range" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} />
+                  <Tooltip
+                    contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', border: 'none', color: '#f8fafc', fontSize: '12px' }}
+                    formatter={(val: any) => [`${val} visits`, 'Visit Count']}
+                  />
+                  <Bar dataKey="count" name="count" fill="#007BC4" radius={[4, 4, 0, 0]}>
+                    {durationAnalytics.distribution.map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={index === 0 ? '#06b6d4' : index === 4 ? '#8b5cf6' : '#007BC4'} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+
+          {/* Shortest vs Longest Records */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Shortest */}
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+              <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">
+                Top 5 Shortest Visits (Transits)
+              </h4>
+              <div className="space-y-2">
+                {durationAnalytics.shortestVisits.map((e, idx) => (
+                  <div key={e.id} className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="font-bold text-slate-900 dark:text-white block">{e.personName}</span>
+                      <span className="text-slate-400 text-[11px]">{zoneLabel} {e.locationName} · {e.enterTime}</span>
+                    </div>
+                    <span className="font-mono font-bold text-cyan-600 bg-cyan-50 dark:bg-cyan-950/40 px-2 py-0.5 rounded border border-cyan-200">
+                      {e.durationFormatted}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Longest */}
+            <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+              <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">
+                Top 5 Longest Visits (Extended Stays)
+              </h4>
+              <div className="space-y-2">
+                {durationAnalytics.longestVisits.map((e, idx) => (
+                  <div key={e.id} className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200/60 dark:border-slate-700/60 flex items-center justify-between text-xs">
+                    <div>
+                      <span className="font-bold text-slate-900 dark:text-white block">{e.personName}</span>
+                      <span className="text-slate-400 text-[11px]">{zoneLabel} {e.locationName} · {e.enterTime}</span>
+                    </div>
+                    <span className="font-mono font-bold text-purple-600 bg-purple-50 dark:bg-purple-950/40 px-2 py-0.5 rounded border border-purple-200">
+                      {e.durationFormatted}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 10. TAB 6: AI OBSERVATIONS */}
+      {activeTab === 'ai_observations' && (
+        <div className="space-y-6">
+          <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+            <div className="border-b border-slate-200 dark:border-slate-800 pb-3">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <Sparkles size={18} className="text-[#007BC4]" />
+                <span>Evidence-Based AI Movement Observations</span>
+              </h3>
+              <p className="text-xs text-slate-500">
+                Mathematical deviations and pattern discoveries derived strictly from real API timestamps and dwell metrics.
+              </p>
+            </div>
+
+            {aiObservations.length === 0 || aiObservations[0].insufficientData ? (
+              <div className="py-12 text-center space-y-2">
+                <AlertCircle size={32} className="mx-auto text-amber-500" />
+                <h4 className="text-sm font-bold text-slate-800 dark:text-slate-200">
+                  Insufficient Historical Data
+                </h4>
+                <p className="text-xs text-slate-500 max-w-md mx-auto">
+                  A statistically valid comparison requires at least 5 movement records in the active filter scope.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {aiObservations.map((obs) => (
+                  <div key={obs.id} className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/30 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wide">
+                        {obs.metric}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 px-2 py-0.5 rounded border border-emerald-300">
+                          {obs.change}
+                        </span>
+                        <span className="text-[10px] font-mono text-slate-400">
+                          {obs.confidence}% Confidence
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-2 text-xs">
+                      <div className="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                        <span className="text-slate-400 text-[10px] uppercase block">Observed Metric</span>
+                        <span className="font-bold text-slate-900 dark:text-white mt-0.5 block">{obs.currentValue}</span>
+                      </div>
+                      <div className="p-2 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700">
+                        <span className="text-slate-400 text-[10px] uppercase block">Comparative Baseline</span>
+                        <span className="font-medium text-slate-600 dark:text-slate-300 mt-0.5 block">{obs.baselineValue}</span>
+                      </div>
+                    </div>
+
+                    <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed bg-blue-50/60 dark:bg-blue-950/30 p-2.5 rounded-lg border border-blue-100 dark:border-blue-900">
+                      <strong className="text-blue-900 dark:text-blue-200 block mb-0.5">Statistical Reasoning:</strong>
+                      {obs.explanation}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 11. MODAL: PERSON MOVEMENT HISTORY */}
+      {drillDownPersonTag && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <User size={18} className="text-[#007BC4]" />
+                  <span>{drillDownPersonMeta?.name}</span>
+                </h3>
+                <p className="text-xs font-mono text-slate-400">
+                  Tag ID: {drillDownPersonTag} · {drillDownPersonEvents.length} Recorded Visits
+                </p>
+              </div>
+              <button
+                onClick={() => setDrillDownPersonTag(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Sequential Breadcrumb Trail */}
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-lg border border-slate-200 dark:border-slate-700/60">
+              <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1.5">
+                Chronological Movement Path:
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5 font-mono text-xs">
+                {drillDownPersonEvents.map((evt, idx) => {
+                  const hh = String(evt.enterDate.getHours()).padStart(2, '0');
+                  const mm = String(evt.enterDate.getMinutes()).padStart(2, '0');
+                  const ss = String(evt.enterDate.getSeconds()).padStart(2, '0');
+                  return (
+                    <React.Fragment key={evt.id}>
+                      <span className="px-2 py-0.5 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200">
+                        {`${hh}:${mm}:${ss}`} → {evt.locationName}
+                      </span>
+                      {idx < drillDownPersonEvents.length - 1 && (
+                        <ArrowRight size={11} className="text-slate-400 shrink-0" />
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* List of individual visits */}
+            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+              {drillDownPersonEvents.map((e, idx) => (
+                <div key={e.id} className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 flex items-center justify-between text-xs">
+                  <div>
+                    <span className="font-semibold text-slate-900 dark:text-white">
+                      #{idx + 1} · {zoneLabel}: {e.locationName}
+                    </span>
+                    <span className="text-[11px] text-slate-400 block mt-0.5">
+                      {e.enterTime} &nbsp;→&nbsp; {e.leaveTime}
+                    </span>
+                  </div>
+                  <span className="font-mono font-bold text-[#007BC4] bg-[#007BC4]/10 px-2 py-0.5 rounded">
+                    {e.durationFormatted}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+              <button
+                onClick={() => setDrillDownPersonTag(null)}
+                className="px-4 py-1.5 rounded-lg bg-[#007BC4] hover:bg-[#006cae] text-white text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 12. MODAL: DETAILED ZONE ANALYTICS */}
+      {drillDownZoneName && drillDownZoneMeta && (
+        <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-2xl p-6 space-y-4 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                  <MapPin size={18} className="text-[#007BC4]" />
+                  <span>{zoneLabel}: {drillDownZoneName}</span>
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Total Visits: {drillDownZoneMeta.totalVisits} · Unique People: {drillDownZoneMeta.uniquePeople}
+                </p>
+              </div>
+              <button
+                onClick={() => setDrillDownZoneName(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            {/* Dwell Metrics */}
+            <div className="grid grid-cols-3 gap-3 text-xs">
+              <div className="p-3 rounded bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                <span className="text-slate-400 text-[10px] uppercase block">Average Dwell</span>
+                <span className="font-bold font-mono text-[#007BC4] text-sm mt-0.5 block">
+                  {drillDownZoneMeta.avgDurationFormatted}
+                </span>
+              </div>
+              <div className="p-3 rounded bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                <span className="text-slate-400 text-[10px] uppercase block">Total Dwell</span>
+                <span className="font-bold font-mono text-slate-900 dark:text-white text-sm mt-0.5 block">
+                  {drillDownZoneMeta.totalDwellFormatted}
+                </span>
+              </div>
+              <div className="p-3 rounded bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                <span className="text-slate-400 text-[10px] uppercase block">Repeat Visitors</span>
+                <span className="font-bold font-mono text-amber-600 text-sm mt-0.5 block">
+                  {drillDownZoneMeta.repeatVisitors}
+                </span>
+              </div>
+            </div>
+
+            {/* Hourly Profile for this zone */}
+            <div className="p-3 rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 space-y-2">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
+                Hourly Entry Distribution for {drillDownZoneName}
+              </span>
+              <div className="h-44 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={drillDownZoneHourly} margin={{ top: 5, right: 10, left: -20, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
+                    <XAxis dataKey="hourLabel" tick={{ fontSize: 9 }} />
+                    <YAxis tick={{ fontSize: 9 }} />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#0f172a', borderRadius: '8px', border: 'none', color: '#f8fafc', fontSize: '11px' }}
+                      formatter={(val: any) => [`${val} visits`, 'Visits']}
+                    />
+                    <Bar dataKey="eventCount" fill="#007BC4" radius={[2, 2, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+              <button
+                onClick={() => setDrillDownZoneName(null)}
+                className="px-4 py-1.5 rounded-lg bg-[#007BC4] hover:bg-[#006cae] text-white text-xs font-semibold"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

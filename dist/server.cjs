@@ -79,6 +79,34 @@ function validateTelemetrySource(source) {
     normalizedSource: source || "rfid_hardware"
   };
 }
+function isRealTelemetryTag(tagId) {
+  if (!tagId || typeof tagId !== "string") return false;
+  const tid = tagId.trim();
+  if (!tid) return false;
+  const testPrefixes = [
+    "test_",
+    "batch-",
+    "uhf-real-",
+    "tag_diag",
+    "diag_",
+    "tag_hist_",
+    "tag_rt_",
+    "tag_raw_",
+    "tag_api_worker_",
+    "tag_123",
+    "w-101",
+    "worker-1",
+    "worker-2",
+    "worker-3"
+  ];
+  const tidLower = tid.toLowerCase();
+  for (const prefix of testPrefixes) {
+    if (tidLower.startsWith(prefix) || tidLower === prefix) {
+      return false;
+    }
+  }
+  return true;
+}
 function generateEventHash(tagId, timestamp, location, readerId, orgId = "default", externalEventId) {
   if (externalEventId && String(externalEventId).trim()) {
     return String(externalEventId).trim();
@@ -263,8 +291,12 @@ var DATA_RETENTION_COLLECTIONS = [
   "notifications",
   "system_events"
 ];
+var indexesInitialized = false;
+var cleanupsInitialized = false;
 async function initDatabaseIndexes() {
   if (!mongoDb) return;
+  if (indexesInitialized) return;
+  indexesInitialized = true;
   const indexSpecs = [
     { col: "rfid_realtime_events", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
     { col: "tag_history", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
@@ -370,8 +402,11 @@ async function initDatabase(customUri) {
     }
     console.log(`[DB Service] Successfully connected to MongoDB Atlas database (DATA_MODE=${getDataMode()}).`);
     await initDatabaseIndexes();
-    await pruneDuplicateAlerts();
-    await purgeLegacySampleWorkers();
+    if (!cleanupsInitialized) {
+      cleanupsInitialized = true;
+      await pruneDuplicateAlerts();
+      await purgeLegacySampleWorkers();
+    }
   } catch (err) {
     console.error("[DB Service] Failed to connect to MongoDB:", err.message);
     console.warn("[DB Service] Operating with in-memory storage fallback.");
@@ -521,10 +556,9 @@ async function getCollectionDocs(colName, opts, organizationId) {
       if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
         const isSpatialConfig = colName === "map_configurations" || colName === "zones" || colName === "projects" || colName === "sites";
         if (!isSpatialConfig) {
-          if (organizationId === "default" || organizationId === "demo" || organizationId === "org_main" || organizationId === "org_aperture_default") {
+          if (organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default") {
             query.$or = [
               { organizationId: "default" },
-              { organizationId: "demo" },
               { organizationId: "org_main" },
               { organizationId: "org_aperture_default" },
               { organizationId: { $exists: false } },
@@ -561,14 +595,14 @@ async function getCollectionDocs(colName, opts, organizationId) {
   let result = items;
   if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
     result = items.filter(
-      (item) => organizationId === "demo" || organizationId === "default" || organizationId === "org_main" ? !item.organizationId || item.organizationId === "demo" || item.organizationId === "default" || item.organizationId === "org_main" : item.organizationId === organizationId
+      (item) => organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default" ? !item.organizationId || item.organizationId === "default" || item.organizationId === "org_main" || item.organizationId === "org_aperture_default" : item.organizationId === organizationId
     );
   }
   const serialized = result.map((item) => serializeBinaryImages(item));
   collectionReadCache.set(cacheKey, { docs: serialized, cachedAt: Date.now() });
   return serialized;
 }
-var DEFAULT_ORGS = ["default", "demo", "org_main", "org_aperture_default"];
+var DEFAULT_ORGS = ["default", "org_main", "org_aperture_default"];
 async function getDocById(colName, id, organizationId) {
   if (mongoDb) {
     try {
@@ -716,8 +750,12 @@ async function upsertDoc(colName, doc, organizationId) {
           { $set: cleanDoc }
         );
       } else {
+        const insertFilter = { id: cleanDoc.id };
+        if (cleanDoc.organizationId && colName !== "organizations") {
+          insertFilter.organizationId = cleanDoc.organizationId;
+        }
         await mongoDb.collection(colName).updateOne(
-          { id: cleanDoc.id },
+          insertFilter,
           { $set: cleanDoc },
           { upsert: true }
         );
@@ -999,7 +1037,12 @@ async function bulkWriteRealtimeTags(tags, organizationId = "default") {
       insertedCount = result.upsertedCount || 0;
       updatedCount = result.modifiedCount || 0;
       for (const t of normalizedTags) {
-        await upsertDoc("live_tags", t, t.organizationId);
+        await mongoDb.collection("live_tags").updateOne(
+          { TagID: t.TagID, organizationId: t.organizationId },
+          { $set: t },
+          { upsert: true }
+        ).catch(() => {
+        });
       }
       setImmediate(() => savePlaybackSnapshot(normalizedTags, organizationId).catch(() => {
       }));
@@ -1014,6 +1057,48 @@ async function bulkWriteRealtimeTags(tags, organizationId = "default") {
     updatedCount++;
   }
   return { insertedCount: tags.length, updatedCount, totalProcessed: tags.length };
+}
+async function bulkUpsertDocs(colName, docs, organizationId = "default") {
+  if (!Array.isArray(docs) || docs.length === 0) {
+    return { count: 0, success: true };
+  }
+  invalidateCollectionCache(colName);
+  const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1e3;
+  const now = /* @__PURE__ */ new Date();
+  const preparedDocs = docs.map((doc, idx) => {
+    const docId = String(doc.id || doc._id || `${colName}_${now.getTime()}_${idx}`);
+    const cleanDoc = { ...doc, id: docId, organizationId: doc.organizationId || organizationId };
+    delete cleanDoc._id;
+    if (DATA_RETENTION_COLLECTIONS.includes(colName)) {
+      if (!cleanDoc.createdAt || !(cleanDoc.createdAt instanceof Date)) {
+        const parsed = cleanDoc.createdAt ? new Date(cleanDoc.createdAt) : now;
+        cleanDoc.createdAt = isNaN(parsed.getTime()) ? now : parsed;
+      }
+      if (!cleanDoc.expireAt || !(cleanDoc.expireAt instanceof Date)) {
+        cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + TEN_DAYS_MS);
+      }
+    }
+    return cleanDoc;
+  });
+  if (mongoDb) {
+    try {
+      const operations = preparedDocs.map((doc) => ({
+        updateOne: {
+          filter: { id: doc.id, ...colName !== "organizations" ? { organizationId: doc.organizationId } : {} },
+          update: { $set: doc },
+          upsert: true
+        }
+      }));
+      await mongoDb.collection(colName).bulkWrite(operations, { ordered: false });
+      return { count: preparedDocs.length, success: true };
+    } catch (err) {
+      console.error(`[DB Service] Error during bulkUpsertDocs into ${colName}:`, err.message);
+    }
+  }
+  for (const doc of preparedDocs) {
+    await upsertDoc(colName, doc, doc.organizationId);
+  }
+  return { count: preparedDocs.length, success: true };
 }
 async function savePlaybackSnapshot(tags, organizationId = "default") {
   if (!tags || tags.length === 0) return;
@@ -1331,46 +1416,151 @@ async function pruneDuplicateAlerts() {
     return 0;
   }
 }
-async function purgeLegacySampleWorkers() {
-  if (!mongoDb) return;
+async function purgeAllDemoAndTestData() {
+  const deletedCounts = {};
+  if (!mongoDb) return { deletedCounts };
   try {
-    const fakeIds = ["TAG_123", "W-101", "worker-1", "worker-2", "worker-3", "TEST_AUTH_CHECK", "TEST_DEVICE_INGEST"];
-    const fakeNames = ["Staff User", "John Miller"];
-    const filter = {
+    const fakeIds = [
+      "TAG_123",
+      "W-101",
+      "worker-1",
+      "worker-2",
+      "worker-3",
+      "TEST_AUTH_CHECK",
+      "TEST_DEVICE_INGEST",
+      "UHF-REAL-001",
+      "UHF-REAL-002",
+      "TAG_API_WORKER_99",
+      "BATCH-001",
+      "BATCH-002",
+      "TEST_WS_TAG_991",
+      "TEST_MQTT_TAG_992",
+      "TEST_BULK_TAG_993",
+      "TAG_DIAG_WS_MQTT",
+      "DIAG_MQTT_PING_01",
+      "TAG_HAZARD_01",
+      "TAG_SAFE_02"
+    ];
+    const fakeTagRegex = /^(TEST_|BATCH-|UHF-REAL-|TAG_DIAG|DIAG_|TAG_HIST_|TAG_RT_|TAG_RAW_|TAG_API_|TAG_HAZARD_|TAG_SAFE_)/i;
+    const fakeOrgRegex = /^(safety_org_|ai_workflow_org_|test_|demo$)/i;
+    const fakeNames = [
+      "Staff User",
+      "John Miller",
+      "Marcus Vance",
+      "Alice Smith",
+      "Sarah Jenkins",
+      "David Wilson",
+      "WebSocket Tester",
+      "MQTT Tester"
+    ];
+    const tagFilter = {
       $or: [
         { id: { $in: fakeIds } },
         { _id: { $in: fakeIds } },
         { tagId: { $in: fakeIds } },
         { TagID: { $in: fakeIds } },
         { hardhatTagId: { $in: fakeIds } },
+        { id: { $regex: fakeTagRegex } },
+        { tagId: { $regex: fakeTagRegex } },
+        { TagID: { $regex: fakeTagRegex } },
+        { hardhatTagId: { $regex: fakeTagRegex } },
+        { organizationId: { $regex: fakeOrgRegex } },
+        { organizationId: "demo" },
         { name: { $in: fakeNames } },
         { personName: { $in: fakeNames } }
       ]
     };
-    await mongoDb.collection("people").deleteMany(filter);
-    await mongoDb.collection("registered_people").deleteMany(filter);
-    await mongoDb.collection("attendance_logs").deleteMany(filter);
-    await mongoDb.collection("real_time_tags").deleteMany(filter);
-    await mongoDb.collection("live_tags").deleteMany(filter);
-    await mongoDb.collection("tag_history").deleteMany(filter);
-    await mongoDb.collection("rfid_realtime_events").deleteMany(filter);
-    await mongoDb.collection("playback_history").deleteMany({
-      $or: [
-        { "tags.tagId": { $in: fakeIds } },
-        { "tags.TagID": { $in: fakeIds } }
-      ]
-    });
-    await mongoDb.collection("alerts").deleteMany({
+    const trackingCols = [
+      "people",
+      "registered_people",
+      "attendance_logs",
+      "real_time_tags",
+      "live_tags",
+      "tag_history",
+      "rfid_realtime_events",
+      "devices"
+    ];
+    for (const col of trackingCols) {
+      const res = await mongoDb.collection(col).deleteMany(tagFilter);
+      deletedCounts[col] = res.deletedCount || 0;
+    }
+    const incidentAndAlertFilter = {
       $or: [
         { tagId: { $in: fakeIds } },
+        { tagId: { $regex: fakeTagRegex } },
+        { TagID: { $in: fakeIds } },
+        { TagID: { $regex: fakeTagRegex } },
+        { organizationId: { $regex: fakeOrgRegex } },
+        { organizationId: "demo" },
         { personName: { $in: fakeNames } }
       ]
+    };
+    const aiCols = ["alerts", "alerts_enterprise", "incidents", "incidents_enterprise", "ai_insights", "ai_recommendations"];
+    for (const col of aiCols) {
+      const res = await mongoDb.collection(col).deleteMany(incidentAndAlertFilter);
+      deletedCounts[col] = res.deletedCount || 0;
+    }
+    const playbackRes = await mongoDb.collection("playback_history").deleteMany({
+      $or: [
+        { "tags.tagId": { $in: fakeIds } },
+        { "tags.TagID": { $in: fakeIds } },
+        { "tags.tagId": { $regex: fakeTagRegex } },
+        { "tags.TagID": { $regex: fakeTagRegex } },
+        { organizationId: { $regex: fakeOrgRegex } },
+        { organizationId: "demo" }
+      ]
     });
+    deletedCounts["playback_history"] = playbackRes.deletedCount || 0;
+    const orgRes = await mongoDb.collection("organizations").deleteMany({
+      $or: [
+        { id: { $regex: fakeOrgRegex } },
+        { id: "demo" },
+        { organizationId: "demo" }
+      ]
+    });
+    deletedCounts["organizations"] = orgRes.deletedCount || 0;
+    const userRes = await mongoDb.collection("users").deleteMany({
+      $or: [
+        { id: { $in: ["usr_viewer", "usr_admin", "demo_user"] } },
+        { email: { $in: ["viewer@example.com", "admin@gaostaff.com", "demo@aperture.io", "forged_admin@gaostaff.com"] } },
+        { organizationId: { $regex: fakeOrgRegex } },
+        { organizationId: "demo" }
+      ]
+    });
+    deletedCounts["users"] = userRes.deletedCount || 0;
+    const thirdPartyRes = await mongoDb.collection("third_party_apis").deleteMany({
+      $or: [
+        { id: "failing_api_conn" },
+        { endpointUrl: /localhost:59999/i },
+        { name: /Non Existent/i }
+      ]
+    });
+    deletedCounts["third_party_apis"] = thirdPartyRes.deletedCount || 0;
+    await mongoDb.collection("people").updateMany(
+      { lastName: "Doe Testing" },
+      { $set: { lastName: "", name: "John" } }
+    );
+    await mongoDb.collection("registered_people").updateMany(
+      { lastName: "Doe Testing" },
+      { $set: { lastName: "", name: "John" } }
+    );
+    await mongoDb.collection("incidents").updateMany(
+      { personName: "John Doe Testing" },
+      { $set: { personName: "John" } }
+    );
+    await mongoDb.collection("alerts").updateMany(
+      { personName: "John Doe Testing" },
+      { $set: { personName: "John" } }
+    );
     invalidateCollectionCache();
-    console.log("[DB Service] Purged test/mock sample tags (TAG_123, Staff User, John Miller, etc.) from MongoDB.");
+    console.log("[DB Service] Purged all demo, test, and dummy records from MongoDB Atlas:", deletedCounts);
   } catch (err) {
-    console.warn("[DB Service] Note on purgeLegacySampleWorkers:", err.message);
+    console.warn("[DB Service] Note on purgeAllDemoAndTestData:", err.message);
   }
+  return { deletedCounts };
+}
+async function purgeLegacySampleWorkers() {
+  await purgeAllDemoAndTestData();
 }
 
 // src/server/routes/connections.ts
@@ -2996,21 +3186,38 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       }, orgId);
     }
     const existingPerson = await getDocById("registered_people", tagId, orgId) || await getDocById("people", tagId, orgId);
-    const personName = existingPerson?.name || item.personName || item.name || (item.fullName || (item.firstName ? `${item.firstName} ${item.lastName || ""}`.trim() : `Tag ${tagId}`));
-    const personRole = existingPerson?.role || (item.role && item.role !== "General Staff" ? item.role : "Field Specialist");
-    const personCompany = existingPerson?.tradeCompany || existingPerson?.company || item.company || "Direct RFID / Ingested Data";
-    if (existingPerson) {
-      const updatedPersonDoc = {
-        ...existingPerson,
-        currentZone: item.location || existingPerson.currentZone || "Site Perimeter",
-        location: item.location || existingPerson.location || "Site Perimeter",
-        shiftStatus: existingPerson.shiftStatus || "ON_SITE",
+    const fn = String(item.FirstName || item.firstName || existingPerson?.firstName || "").trim();
+    const ln = String(item.LastName || item.lastName || existingPerson?.lastName || "").trim();
+    const personName = fn || ln ? `${fn} ${ln}`.trim() : existingPerson?.name || item.personName || item.name || `Tag ${tagId}`;
+    const personRole = existingPerson?.role || (item.role && item.role !== "General Staff" ? item.role : "Field Personnel");
+    const personCompany = existingPerson?.tradeCompany || existingPerson?.company || item.company || "External API / RFID";
+    if (isRealTelemetryTag(tagId)) {
+      const personDoc = {
+        ...existingPerson || {},
+        id: tagId,
+        tagId,
+        hardhatTagId: tagId,
+        organizationId: orgId,
+        firstName: fn,
+        lastName: ln,
+        name: personName,
+        role: personRole,
+        company: personCompany,
+        tradeCompany: personCompany,
+        currentZone: item.location || existingPerson?.currentZone || "Site Area",
+        location: item.location || existingPerson?.location || "Site Area",
+        shiftStatus: existingPerson?.shiftStatus || "ON_SITE",
         presenceState: "ACTIVE",
+        safetyScore: existingPerson?.safetyScore || 95,
+        ppeStatus: existingPerson?.ppeStatus || "COMPLIANT",
+        trainingStatus: existingPerson?.trainingStatus || "COMPLIANT",
         lastSeen: item.timestamp || nowIso,
-        updatedAt: nowIso
+        updatedAt: nowIso,
+        createdAt: existingPerson?.createdAt || nowIso,
+        expireAt: tenDaysLater
       };
-      await upsertDoc("registered_people", updatedPersonDoc, orgId);
-      await upsertDoc("people", updatedPersonDoc, orgId);
+      await upsertDoc("registered_people", personDoc, orgId);
+      await upsertDoc("people", personDoc, orgId);
     }
     const enterDate = new Date(item.timestamp || now);
     const timeStr = enterDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -3214,9 +3421,9 @@ async function ingestTelemetry(rawPayload, sourceName, connectionId) {
         latencyMs: Date.now() - startTime
       };
     }
-    const telemetryItems = rawList.map((item) => mapRawItemToTelemetry(item, connection?.dataMapping)).filter((item) => Boolean(item.TagID && item.TagID.trim() !== ""));
+    const telemetryItems = rawList.map((item) => mapRawItemToTelemetry(item, connection?.dataMapping)).filter((item) => Boolean(item.TagID && item.TagID.trim() !== "") && isRealTelemetryTag(item.TagID));
     if (telemetryItems.length === 0) {
-      console.warn(`[INGEST] rejected: invalid external telemetry from source="${sourceName}" (missing tag identifiers)`);
+      console.warn(`[INGEST] rejected: no valid real external telemetry found from source="${sourceName}" (missing or test/dummy tag identifiers)`);
       return {
         success: true,
         recordsProcessed: 0,
@@ -3283,14 +3490,14 @@ var lastSyncMetadata = {
 var lastBatchFingerprint = "";
 var lastAiProcessedAt = 0;
 async function getPeopleTrackingApiHost() {
+  if (runtimeHostOverride && runtimeHostOverride.trim()) {
+    return runtimeHostOverride.trim().replace(/\/+$/, "");
+  }
   if (process.env.PEOPLE_TRACKING_API_HOST && process.env.PEOPLE_TRACKING_API_HOST.trim()) {
     return process.env.PEOPLE_TRACKING_API_HOST.trim().replace(/\/+$/, "");
   }
   if (process.env.APERTURE_RFID_HOST && process.env.APERTURE_RFID_HOST.trim()) {
     return process.env.APERTURE_RFID_HOST.trim().replace(/\/+$/, "");
-  }
-  if (runtimeHostOverride && runtimeHostOverride.trim()) {
-    return runtimeHostOverride.trim().replace(/\/+$/, "");
   }
   return "";
 }
@@ -3368,18 +3575,22 @@ async function fetchHistoryRecords(skipCount = 0, takeCount = 50, customHost) {
     if (!Array.isArray(data)) {
       return [];
     }
-    const records = data.map((rec, idx) => ({
-      TagID: String(rec.TagID || rec.tagId || `TAG_HIST_${skip}_${idx}`),
-      tagId: String(rec.TagID || rec.tagId || `TAG_HIST_${skip}_${idx}`),
-      FirstName: rec.FirstName || rec.firstName || "Personnel",
-      LastName: rec.LastName || rec.lastName || "",
-      LocationName: rec.LocationName || rec.Location || rec.location || "Site Perimeter",
-      Location: rec.LocationName || rec.Location || rec.location || "Site Perimeter",
-      EnterTime: rec.EnterTime || rec.enterTime || (/* @__PURE__ */ new Date()).toISOString(),
-      LeaveTime: rec.LeaveTime || rec.leaveTime || null,
-      Duration: typeof rec.Duration === "number" ? rec.Duration : parseFloat(rec.Duration) || 0,
-      timestamp: rec.EnterTime || (/* @__PURE__ */ new Date()).toISOString()
-    }));
+    const validItems = data.filter((rec) => rec && (rec.TagID || rec.tagId));
+    const records = validItems.map((rec) => {
+      const tid = String(rec.TagID || rec.tagId).trim();
+      return {
+        TagID: tid,
+        tagId: tid,
+        FirstName: rec.FirstName || rec.firstName || "",
+        LastName: rec.LastName || rec.lastName || "",
+        LocationName: rec.LocationName || rec.Location || rec.location || "Site Perimeter",
+        Location: rec.LocationName || rec.Location || rec.location || "Site Perimeter",
+        EnterTime: rec.EnterTime || rec.enterTime || (/* @__PURE__ */ new Date()).toISOString(),
+        LeaveTime: rec.LeaveTime || rec.leaveTime || null,
+        Duration: typeof rec.Duration === "number" ? rec.Duration : parseFloat(rec.Duration) || 0,
+        timestamp: rec.EnterTime || (/* @__PURE__ */ new Date()).toISOString()
+      };
+    });
     records.sort((a, b) => new Date(b.EnterTime).getTime() - new Date(a.EnterTime).getTime());
     return records;
   } catch (err) {
@@ -3407,19 +3618,63 @@ async function fetchTagsInRealtime(customHost) {
       throw new Error(`HTTP ${res.status}: ${res.statusText}`);
     }
     const data = await res.json();
-    if (!Array.isArray(data)) {
+    const rawTags = Array.isArray(data) ? data : [];
+    const validTags = rawTags.filter((tag) => tag && (tag.TagID || tag.tagId) && isRealTelemetryTag(tag.TagID || tag.tagId));
+    if (validTags.length === 0) {
+      const liveDocs = await getCollectionDocs("live_tags", "default").catch(() => []);
+      const realLiveDocs = (liveDocs || []).filter((t) => isRealTelemetryTag(t.TagID || t.tagId || t.id));
+      if (realLiveDocs.length > 0) {
+        return realLiveDocs.map((t) => ({
+          TagID: String(t.TagID || t.tagId || t.id).trim(),
+          tagId: String(t.TagID || t.tagId || t.id).trim(),
+          Location: String(t.Location || t.location || t.LocationName || "Site Area"),
+          LocationName: String(t.Location || t.location || t.LocationName || "Site Area"),
+          Timestamp: t.Timestamp || t.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+          timestamp: t.Timestamp || t.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+          FirstName: t.FirstName || t.firstName || "",
+          LastName: t.LastName || t.lastName || "",
+          status: "Active"
+        }));
+      }
+      const latestHistory = await fetchHistoryRecords(0, 50, host).catch(() => []);
+      const realHistory = (latestHistory || []).filter((r) => r && isRealTelemetryTag(r.TagID || r.tagId));
+      const seen = /* @__PURE__ */ new Set();
+      const distinctTags = [];
+      for (const r of realHistory) {
+        const tid = String(r.TagID || r.tagId).trim();
+        if (!seen.has(tid)) {
+          seen.add(tid);
+          distinctTags.push({
+            TagID: tid,
+            tagId: tid,
+            Location: String(r.LocationName || r.Location || "Site Area"),
+            LocationName: String(r.LocationName || r.Location || "Site Area"),
+            Timestamp: r.EnterTime || (/* @__PURE__ */ new Date()).toISOString(),
+            timestamp: r.EnterTime || (/* @__PURE__ */ new Date()).toISOString(),
+            FirstName: r.FirstName || "",
+            LastName: r.LastName || "",
+            status: "Active"
+          });
+        }
+      }
+      if (distinctTags.length > 0) {
+        return distinctTags;
+      }
       return [];
     }
-    const tags = data.map((tag, idx) => ({
-      TagID: String(tag.TagID || tag.tagId || `TAG_RT_${idx}`),
-      tagId: String(tag.TagID || tag.tagId || `TAG_RT_${idx}`),
-      Location: String(tag.Location || tag.location || tag.LocationName || "Active Zone"),
-      LocationName: String(tag.Location || tag.location || tag.LocationName || "Active Zone"),
-      Timestamp: tag.Timestamp || tag.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
-      timestamp: tag.Timestamp || tag.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
-      FirstName: tag.FirstName || tag.firstName || "",
-      LastName: tag.LastName || tag.lastName || ""
-    }));
+    const tags = validTags.map((tag) => {
+      const tid = String(tag.TagID || tag.tagId).trim();
+      return {
+        TagID: tid,
+        tagId: tid,
+        Location: String(tag.Location || tag.location || tag.LocationName || "Active Zone"),
+        LocationName: String(tag.Location || tag.location || tag.LocationName || "Active Zone"),
+        Timestamp: tag.Timestamp || tag.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+        timestamp: tag.Timestamp || tag.timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+        FirstName: tag.FirstName || tag.firstName || "",
+        LastName: tag.LastName || tag.lastName || ""
+      };
+    });
     tags.sort((a, b) => new Date(b.Timestamp).getTime() - new Date(a.Timestamp).getTime());
     return tags;
   } catch (err) {
@@ -3460,11 +3715,12 @@ async function syncPeopleTrackingData(options) {
       try {
         historyRecords = await fetchHistoryRecords(0, historyTake, host);
         if (historyRecords.length > 0) {
-          for (const rec of historyRecords) {
+          const docsToPersist = historyRecords.map((rec) => {
             const enter = rec.EnterTime || rec.enterTime || (/* @__PURE__ */ new Date()).toISOString();
             const docId = `hist_${rec.TagID}_${String(enter).replace(/[: ]/g, "_")}`;
-            const recordDoc = {
+            return {
               id: docId,
+              _id: docId,
               organizationId: orgId,
               TagID: rec.TagID,
               tagId: rec.TagID,
@@ -3481,14 +3737,48 @@ async function syncPeopleTrackingData(options) {
               timestamp: enter,
               createdAt: (/* @__PURE__ */ new Date()).toISOString()
             };
-            await upsertDoc("tag_history", recordDoc, orgId).catch(() => {
-            });
-            await upsertDoc("history_records", recordDoc, orgId).catch(() => {
-            });
-          }
+          });
+          await bulkUpsertDocs("tag_history", docsToPersist, orgId).catch(() => {
+          });
+          await bulkUpsertDocs("history_records", docsToPersist, orgId).catch(() => {
+          });
         }
       } catch (e) {
         console.warn("[PeopleTrackingAPI] History records fetch warning:", e.message);
+      }
+    }
+    if (doRealtime && realtimeTags.length === 0 && historyRecords.length > 0) {
+      const realHistory = historyRecords.filter((r) => r && r.TagID && isRealTelemetryTag(r.TagID));
+      const seen = /* @__PURE__ */ new Set();
+      const distinctFallbackTags = [];
+      for (const r of realHistory) {
+        const tid = String(r.TagID || r.tagId).trim();
+        if (!seen.has(tid)) {
+          seen.add(tid);
+          distinctFallbackTags.push({
+            id: tid,
+            TagID: tid,
+            tagId: tid,
+            organizationId: orgId,
+            Location: r.LocationName || r.Location || "Site Area",
+            LocationName: r.LocationName || r.Location || "Site Area",
+            Timestamp: r.EnterTime || (/* @__PURE__ */ new Date()).toISOString(),
+            timestamp: r.EnterTime || (/* @__PURE__ */ new Date()).toISOString(),
+            FirstName: r.FirstName || "",
+            LastName: r.LastName || "",
+            createdAt: /* @__PURE__ */ new Date(),
+            expireAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1e3)
+          });
+        }
+      }
+      if (distinctFallbackTags.length > 0) {
+        realtimeTags = distinctFallbackTags;
+        await bulkWriteRealtimeTags(realtimeTags, orgId).catch(() => {
+        });
+        for (const tag of distinctFallbackTags) {
+          await upsertDoc("live_tags", tag, orgId).catch(() => {
+          });
+        }
       }
     }
     const telemetryBatch = [];
@@ -5094,7 +5384,10 @@ var handleGetTotalCount = async (req, res) => {
   const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   try {
     try {
-      const upstream = await fetchHistoryTotalCount();
+      const upstream = await Promise.race([
+        fetchHistoryTotalCount(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream total count timeout after 4000ms")), 4e3))
+      ]);
       if (upstream && typeof upstream.totalCount === "number" && upstream.totalCount > 0) {
         if (req.query.format === "object") {
           return res.json({ totalCount: upstream.totalCount, count: upstream.totalCount, organizationId: orgId });
@@ -5159,16 +5452,35 @@ var handleGetHistory = async (req, res) => {
       return 0.5;
     };
     try {
-      const liveRecords = await fetchHistoryRecords(skipCount, takeCount);
+      const liveRecords = await Promise.race([
+        fetchHistoryRecords(skipCount, takeCount),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream API timeout after 6000ms")), 6e3))
+      ]);
       if (Array.isArray(liveRecords) && liveRecords.length > 0) {
         const enrichedLive = [];
         for (const rec of liveRecords) {
           const tagKey = String(rec.TagID || rec.tagId || "").toLowerCase();
           const matched = personMap.get(tagKey);
-          const fullName = matched?.name || (rec.FirstName ? `${rec.FirstName} ${rec.LastName || ""}`.trim() : rec.name || `Personnel ${rec.TagID}`);
-          const parts = fullName.split(" ");
-          const fName = matched?.firstName || rec.FirstName || parts[0] || "";
-          const lName = matched?.lastName || rec.LastName || parts.slice(1).join(" ") || "";
+          const matchedFirst = String(matched?.firstName || matched?.FirstName || rec.FirstName || rec.firstName || "").trim();
+          const matchedLast = String(matched?.lastName || matched?.LastName || rec.LastName || rec.lastName || "").trim();
+          let fullName = "";
+          if (matchedFirst && matchedLast) {
+            fullName = `${matchedFirst} ${matchedLast}`;
+          } else if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown") {
+            fullName = matched.name.trim();
+          } else if (rec.FirstName && rec.LastName) {
+            fullName = `${rec.FirstName} ${rec.LastName}`.trim();
+          } else if (rec.name && rec.name.trim() && rec.name !== "Personnel" && rec.name !== "Unknown") {
+            fullName = rec.name.trim();
+          } else if (matchedFirst) {
+            fullName = matchedFirst;
+          } else if (matchedLast) {
+            fullName = matchedLast;
+          } else {
+            fullName = `Personnel ${rec.TagID || ""}`;
+          }
+          const fName = matchedFirst;
+          const lName = matchedLast;
           const role = matched?.role || (matched?.badgeId || matched?.isVisitor ? "Visitor" : rec.role || "Field Personnel");
           const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes("visitor"));
           const enter = rec.EnterTime || rec.enterTime || (/* @__PURE__ */ new Date()).toISOString();
@@ -5191,16 +5503,17 @@ var handleGetHistory = async (req, res) => {
             durationMins
           };
           enrichedLive.push(formattedRec);
-          const docId = `hist_${rec.TagID}_${String(enter).replace(/[: ]/g, "_")}`;
-          upsertDoc("tag_history", {
-            id: docId,
-            organizationId: orgId,
-            ...formattedRec,
-            timestamp: enter,
-            createdAt: /* @__PURE__ */ new Date()
-          }, orgId).catch(() => {
-          });
         }
+        const docsToPersist = enrichedLive.map((rec) => ({
+          id: `hist_${rec.TagID}_${String(rec.EnterTime).replace(/[: ]/g, "_")}`,
+          organizationId: orgId,
+          ...rec,
+          timestamp: rec.EnterTime,
+          createdAt: /* @__PURE__ */ new Date()
+        }));
+        bulkUpsertDocs("tag_history", docsToPersist, orgId).catch((err) => {
+          console.warn("[RFID Route] Async bulkUpsertDocs error for tag_history:", err.message);
+        });
         let filtered = enrichedLive;
         if (filterDate) {
           filtered = enrichedLive.filter((r) => r.EnterTime && r.EnterTime.includes(filterDate) || r.LeaveTime && r.LeaveTime.includes(filterDate));
@@ -5217,10 +5530,26 @@ var handleGetHistory = async (req, res) => {
       const durationMins = calcDurationMins(enter, leave, item.Duration);
       const tagKey = String(item.TagID || item.tagId || item.epc || "").toLowerCase();
       const matched = personMap.get(tagKey);
-      const fullName = matched?.name || item.name || item.personName || (item.FirstName ? `${item.FirstName} ${item.LastName || ""}`.trim() : `Personnel ${item.TagID || item.id}`);
-      const parts = fullName.split(" ");
-      const firstName = matched?.firstName || item.FirstName || item.firstName || parts[0] || "";
-      const lastName = matched?.lastName || item.LastName || item.lastName || parts.slice(1).join(" ") || "";
+      const matchedFirst = String(matched?.firstName || matched?.FirstName || item.FirstName || item.firstName || "").trim();
+      const matchedLast = String(matched?.lastName || matched?.LastName || item.LastName || item.lastName || "").trim();
+      let fullName = "";
+      if (matchedFirst && matchedLast) {
+        fullName = `${matchedFirst} ${matchedLast}`;
+      } else if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown") {
+        fullName = matched.name.trim();
+      } else if (item.FirstName && item.LastName) {
+        fullName = `${item.FirstName} ${item.LastName}`.trim();
+      } else if (item.name && item.name.trim() && item.name !== "Personnel" && item.name !== "Unknown") {
+        fullName = item.name.trim();
+      } else if (matchedFirst) {
+        fullName = matchedFirst;
+      } else if (matchedLast) {
+        fullName = matchedLast;
+      } else {
+        fullName = `Personnel ${item.TagID || item.id || ""}`;
+      }
+      const firstName = matchedFirst;
+      const lastName = matchedLast;
       const role = matched?.role || item.role || (matched?.badgeId || matched?.isVisitor ? "Visitor" : "Field Personnel");
       const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes("visitor"));
       return {
@@ -5278,7 +5607,10 @@ var handleGetRealtime = async (req, res) => {
     });
     let rawTags = [];
     try {
-      const upstreamTags = await fetchTagsInRealtime();
+      const upstreamTags = await Promise.race([
+        fetchTagsInRealtime(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream real-time tags timeout after 3500ms")), 3500))
+      ]);
       if (Array.isArray(upstreamTags) && upstreamTags.length > 0) {
         rawTags = upstreamTags;
       }
@@ -5291,14 +5623,31 @@ var handleGetRealtime = async (req, res) => {
       const ts = item.Timestamp || item.timestamp || item.lastSeen || (/* @__PURE__ */ new Date()).toISOString();
       const tagKey = String(item.TagID || item.tagId || item.epc || "").toLowerCase();
       const matched = personMap.get(tagKey);
-      const fullName = matched?.name || item.personName || item.name || "";
+      const fn = String(matched?.firstName || matched?.FirstName || item.FirstName || item.firstName || "").trim();
+      const ln = String(matched?.lastName || matched?.LastName || item.LastName || item.lastName || "").trim();
+      let fullName = "";
+      if (fn && ln) {
+        fullName = `${fn} ${ln}`;
+      } else if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown") {
+        fullName = matched.name.trim();
+      } else if (item.personName && item.personName.trim()) {
+        fullName = item.personName.trim();
+      } else if (item.name && item.name.trim()) {
+        fullName = item.name.trim();
+      } else if (fn) {
+        fullName = fn;
+      } else {
+        fullName = `Tag ${item.TagID || item.tagId || ""}`;
+      }
       const role = matched?.role || item.role || (matched?.badgeId || matched?.isVisitor ? "Visitor" : "Field Personnel");
-      const company = matched?.tradeCompany || matched?.company || item.tradeCompany || "";
+      const company = matched?.tradeCompany || matched?.company || item.tradeCompany || item.company || "";
       return {
         TagID: item.TagID || item.tagId || item.epc || "",
         Timestamp: formatUtcTimestampMs(ts),
         Location: item.Location || item.location || item.LocationName || item.zone || "Active Zone",
         LocationName: item.LocationName || item.Location || item.zone || "Active Zone",
+        FirstName: fn,
+        LastName: ln,
         personName: fullName,
         name: fullName,
         role,
@@ -5310,7 +5659,7 @@ var handleGetRealtime = async (req, res) => {
         x: item.x,
         y: item.y,
         rssi: item.rssi || -60,
-        readerId: item.readerId || "READER-01",
+        readerId: item.readerId || "",
         antennaId: item.antennaId || 1
       };
     });
@@ -5478,7 +5827,7 @@ function getFallbackCopilotResponse(question, context, profile) {
   const pSingular = profile?.terminology?.personnelSingular || "Worker";
   const idLabel = profile?.terminology?.idBadgeLabel || "RFID Tag ID";
   const zoneLabel = profile?.terminology?.zoneLabel || "Zone";
-  const q = (question || "").trim();
+  const q = (typeof question === "string" ? question : String(question || "")).trim();
   const qLower = q.toLowerCase();
   const rawWorkers = context?.workers || context?.people || context?.registeredPeople || [];
   const workers = Array.isArray(rawWorkers) ? rawWorkers : [];
@@ -6067,9 +6416,12 @@ Respond ONLY with valid JSON with this exact structure:
 });
 aiRouter.post(["/ai-copilot", "/ai/copilot", "/api/ai-copilot", "/api/ai/copilot"], async (req, res) => {
   const parseResult = copilotSchema.safeParse(req.body);
-  const question = parseResult.success ? parseResult.data.question : req.body?.question || "Summary of operations";
-  const history = parseResult.success ? parseResult.data.history : req.body?.history || [];
-  const context = parseResult.success ? parseResult.data.context : req.body?.context || {};
+  if (!parseResult.success) {
+    return res.status(400).json({ error: "Invalid question payload", details: parseResult.error.errors });
+  }
+  const question = parseResult.data.question;
+  const history = parseResult.data.history || [];
+  const context = parseResult.data.context || {};
   const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   const tenantProfile = await getTenantIntelligenceProfile(orgId);
   const apiKey = getGeminiApiKey();
@@ -6451,7 +6803,51 @@ Provide a clear, highly structured, executive-level BI summary in markdown style
 // src/server/routes/data.ts
 var import_express6 = require("express");
 var dataRouter = (0, import_express6.Router)();
-dataRouter.use(optionalAuth);
+var serveFloorplanImageHandler = async (req, res) => {
+  const { id } = req.params;
+  const orgId = req.user?.organizationId || "default";
+  try {
+    const config = await getDocById("map_configurations", id, orgId) || await getDocById("floorplans", id, orgId) || await getDocById("floorplans", `fp_${id}`, orgId);
+    if (!config) {
+      return res.status(404).send("Floorplan not found");
+    }
+    const binary = config.imageBinary || config.floorplanBinary || config.binaryData;
+    if (binary) {
+      let buffer = null;
+      if (Buffer.isBuffer(binary)) {
+        buffer = binary;
+      } else if (binary && typeof binary.buffer === "object" && binary.buffer) {
+        buffer = Buffer.from(binary.buffer);
+      } else if (binary && typeof binary.value === "function") {
+        buffer = Buffer.from(binary.value());
+      }
+      if (buffer && buffer.length > 0) {
+        res.setHeader("Content-Type", config.imageMimeType || "image/png");
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        return res.send(buffer);
+      }
+    }
+    const base64Data = config.imageUrl || config.image || config.floorplanImage || "";
+    if (typeof base64Data === "string" && base64Data.startsWith("data:")) {
+      const parts = base64Data.split(",");
+      const mimeMatch = parts[0].match(/:(.*?);/);
+      const mimeType = mimeMatch ? mimeMatch[1] : "image/png";
+      const imgBuffer = Buffer.from(parts[1], "base64");
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Cache-Control", "public, max-age=86400");
+      return res.send(imgBuffer);
+    }
+    if (config.imageUrl && !config.imageUrl.startsWith("data:")) {
+      return res.redirect(config.imageUrl);
+    }
+    return res.status(404).send("No image data found");
+  } catch (err) {
+    console.error(`[Data Route] Error serving floorplan image ${id}:`, err);
+    return res.status(500).send("Internal server error loading image");
+  }
+};
+dataRouter.get("/floorplan_image/:id", optionalAuth, serveFloorplanImageHandler);
+dataRouter.use(requireAuth);
 dataRouter.get("/playback_frames", async (req, res) => {
   const orgId = req.user?.organizationId || "default";
   const date = req.query.date || (/* @__PURE__ */ new Date()).toISOString().split("T")[0];
@@ -6567,61 +6963,6 @@ dataRouter.get("/:collection", async (req, res) => {
     return res.status(500).json({ error: `Failed to fetch collection ${collection}` });
   }
 });
-var serveFloorplanImageHandler = async (req, res) => {
-  const { id } = req.params;
-  const orgId = req.user?.organizationId || "default";
-  try {
-    const config = await getDocById("map_configurations", id, orgId) || await getDocById("floorplans", id, orgId) || await getDocById("floorplans", `fp_${id}`, orgId);
-    if (!config) {
-      return res.status(404).send("Floorplan not found");
-    }
-    const binary = config.imageBinary || config.floorplanBinary || config.binaryData;
-    if (binary) {
-      let buffer = null;
-      if (Buffer.isBuffer(binary)) {
-        buffer = binary;
-      } else if (binary && typeof binary.buffer === "object" && binary.buffer) {
-        buffer = Buffer.from(binary.buffer);
-      } else if (binary && typeof binary.value === "function") {
-        buffer = Buffer.from(binary.value());
-      }
-      if (buffer && buffer.length > 0) {
-        res.setHeader("Content-Type", config.contentType || "image/webp");
-        res.setHeader("Content-Length", buffer.length);
-        res.setHeader("Cache-Control", "public, max-age=86400");
-        return res.send(buffer);
-      }
-    }
-    const raw = config.floorplanData || config.imageData || config.floorplanUrl || config.url;
-    if (!raw) {
-      return res.status(404).send("No image data in floorplan");
-    }
-    if (typeof raw === "string" && raw.startsWith("data:image/")) {
-      const match = raw.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
-      if (match) {
-        const mimeType = match[1] === "svg+xml" ? "image/svg+xml" : `image/${match[1]}`;
-        const buffer = Buffer.from(match[2], "base64");
-        res.setHeader("Content-Type", mimeType);
-        res.setHeader("Content-Length", buffer.length);
-        res.setHeader("Cache-Control", "public, max-age=86400");
-        return res.send(buffer);
-      }
-    }
-    if (typeof raw === "string" && raw.startsWith("<svg")) {
-      res.setHeader("Content-Type", "image/svg+xml");
-      res.setHeader("Cache-Control", "public, max-age=86400");
-      return res.send(raw);
-    }
-    if (typeof raw === "string" && (raw.startsWith("/") || raw.startsWith("http"))) {
-      return res.redirect(raw);
-    }
-    return res.status(400).send("Invalid image format");
-  } catch (err) {
-    console.error("[Data Route] Error serving floorplan image from MongoDB:", err);
-    return res.status(500).send("Error serving image");
-  }
-};
-dataRouter.get("/floorplan_image/:id", serveFloorplanImageHandler);
 dataRouter.get("/map_configurations/:id/image", serveFloorplanImageHandler);
 dataRouter.get("/floorplans/:id/image", serveFloorplanImageHandler);
 dataRouter.get("/:collection/:id", async (req, res) => {
@@ -6673,6 +7014,21 @@ dataRouter.post("/zones/batch", async (req, res) => {
   } catch (err) {
     console.error("[Data Route] Error saving zones batch:", err);
     return res.status(500).json({ error: "Failed to save zones batch" });
+  }
+});
+dataRouter.post("/:collection/batch", async (req, res) => {
+  const { collection } = req.params;
+  const orgId = req.user?.organizationId || "default";
+  const docs = Array.isArray(req.body) ? req.body : req.body?.docs || [];
+  if (!Array.isArray(docs) || docs.length === 0) {
+    return res.json({ success: true, count: 0 });
+  }
+  try {
+    const result = await bulkUpsertDocs(collection, docs, orgId);
+    return res.json({ success: true, count: result.count });
+  } catch (err) {
+    console.error(`[Data Route] Error during batch upsert for ${collection}:`, err);
+    return res.status(500).json({ error: `Failed to batch save documents in ${collection}` });
   }
 });
 dataRouter.post("/:collection", async (req, res) => {
@@ -6883,8 +7239,12 @@ mongodbRouter.post("/prune-alerts", async (_req, res) => {
 });
 mongodbRouter.post("/purge-samples", async (_req, res) => {
   try {
-    await purgeLegacySampleWorkers();
-    return res.json({ success: true, message: "Purged legacy sample worker data from MongoDB Atlas" });
+    const { deletedCounts } = await purgeAllDemoAndTestData();
+    return res.json({
+      success: true,
+      message: "Purged all demo, test, and dummy data from MongoDB Atlas. Real API data preserved.",
+      deletedCounts
+    });
   } catch (err) {
     return res.status(500).json({ success: false, error: err.message });
   }
@@ -6951,9 +7311,12 @@ mongodbRouter.post("/config", async (req, res) => {
 var import_express9 = require("express");
 
 // src/server/services/hardwareIntegrationService.ts
-async function processDirectHardwareScan(scan, organizationId = "demo") {
+async function processDirectHardwareScan(scan, organizationId = "default") {
   const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-  const rawTagId = String(scan.tagId || `TAG_${Date.now()}`).trim();
+  const rawTagId = String(scan.tagId || "").trim();
+  if (!rawTagId) {
+    throw new Error("Valid hardware tagId is required for hardware scan ingestion");
+  }
   const readers = await getCollectionDocs("hardware_readers", void 0, organizationId);
   let matchedReader = readers.find((r) => r.readerId === scan.readerId || r.id === scan.readerId || r.serialno === scan.readerId);
   if (!matchedReader && scan.readerId) {

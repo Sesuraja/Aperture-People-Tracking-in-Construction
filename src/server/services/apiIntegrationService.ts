@@ -1,5 +1,6 @@
 import { getCollectionDocs, upsertDoc, deleteDocById } from './db.js';
 import { processTelemetryWithAI, TelemetryPayload } from './aiPipeline.js';
+import { isRealTelemetryTag } from './dataPolicy.js';
 
 export interface ThirdPartyApiConfig {
   id: string;
@@ -119,30 +120,31 @@ export function extractTelemetryFromPayload(data: any, mapping?: ThirdPartyApiCo
   const nameKey = mapping?.nameField || 'FirstName';
   const rssiKey = mapping?.rssiField || 'rssi';
 
-  return rawList.map((item, idx) => {
-    if (!item || typeof item !== 'object') {
-      return { tagId: `TAG_RAW_${idx}`, location: 'Default Zone', timestamp: new Date().toISOString() };
-    }
+  return rawList
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.EPC || item.id;
+      if (!tagId || !isRealTelemetryTag(String(tagId))) return null;
 
-    const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.id || `TAG_${Date.now()}_${idx}`;
-    const location = item[locKey] || item.Location || item.location || item.LocationName || item.zone || 'Zone 1';
-    const timestamp = item[timeKey] || item.Timestamp || item.timestamp || item.EnterTime || new Date().toISOString();
-    const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(' ')[0] || '';
-    const lastName = item.LastName || item.lastName || item.name?.split(' ').slice(1).join(' ') || '';
-    const rssi = item[rssiKey] !== undefined ? Number(item[rssiKey]) : (item.rssi || -60);
+      const location = item[locKey] || item.Location || item.location || item.LocationName || item.zone || 'Zone 1';
+      const timestamp = item[timeKey] || item.Timestamp || item.timestamp || item.EnterTime || new Date().toISOString();
+      const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(' ')[0] || '';
+      const lastName = item.LastName || item.lastName || item.name?.split(' ').slice(1).join(' ') || '';
+      const rssi = item[rssiKey] !== undefined ? Number(item[rssiKey]) : (item.rssi || -60);
 
-    return {
-      ...item,
-      TagID: String(tagId),
-      tagId: String(tagId),
-      Location: String(location),
-      LocationName: String(location),
-      Timestamp: String(timestamp),
-      FirstName: String(firstName),
-      LastName: String(lastName),
-      rssi: Number(rssi)
-    };
-  });
+      return {
+        ...item,
+        TagID: String(tagId).trim(),
+        tagId: String(tagId).trim(),
+        Location: String(location),
+        LocationName: String(location),
+        Timestamp: String(timestamp),
+        FirstName: String(firstName),
+        LastName: String(lastName),
+        rssi: Number(rssi)
+      };
+    })
+    .filter((item): item is TelemetryPayload => Boolean(item && item.TagID));
 }
 
 /**

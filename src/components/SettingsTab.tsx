@@ -45,9 +45,6 @@ import {
   Zap,
   Code2
 } from "lucide-react";
-import RealTimeConnectionsTab from "./RealTimeConnectionsTab";
-import WebhookInspector from "./WebhookInspector";
-import { RfidApiConfiguration } from "./RfidApiConfiguration";
 import DeveloperApiTab from "./DeveloperApiTab";
 import ThirdPartyApiIntegrationSection from "./ThirdPartyApiIntegrationSection";
 import DirectHardwareIntegrationSection from "./DirectHardwareIntegrationSection";
@@ -56,6 +53,7 @@ import IndustryConfigurationSection from "./IndustryConfigurationSection";
 import { gaoApi, DEFAULT_HOST } from "../lib/gaoApi";
 import { doc, getDoc, setDoc, onSnapshot, isMongoActive, db } from "../lib/db";
 import { AppModeContext } from "../App";
+import { useTracking } from "../context/TrackingContext";
 
 export default function SettingsTab() {
   const { mode } = React.useContext(AppModeContext);
@@ -139,13 +137,32 @@ export default function SettingsTab() {
   // 2. Security & Tracking States
   const [loiteringThreshold, setLoiteringThreshold] = useState(300);
   const [idleAlertThreshold, setIdleAlertThreshold] = useState(3600);
+  const { zones } = useTracking();
   const [occupancyThresholds, setOccupancyThresholds] = useState<Record<string, number>>({
-    Entrance: 20,
-    Office: 50,
-    "Meeting Room": 15,
-    "Server Room": 2,
-    Cafeteria: 30,
+    "Zone 1 - Main Floor": 25,
+    "Zone 2 - North Perimeter": 15,
   });
+  const [newZoneName, setNewZoneName] = useState("");
+  const [newZoneLimit, setNewZoneLimit] = useState(20);
+
+  // Sync occupancy thresholds dynamically with real site CAD/tracking zones
+  useEffect(() => {
+    if (zones && zones.length > 0) {
+      setOccupancyThresholds(prev => {
+        const next = { ...prev };
+        let updated = false;
+        zones.forEach(z => {
+          const zoneKey = z.name || z.zoneId || z.id;
+          if (zoneKey && next[zoneKey] === undefined) {
+            next[zoneKey] = z.capacity || 20;
+            updated = true;
+          }
+        });
+        return updated ? next : prev;
+      });
+    }
+  }, [zones]);
+
   const [rfidSensitivity, setRfidSensitivity] = useState("High (-65 dBm)");
   const [autoExclusionZones, setAutoExclusionZones] = useState(true);
   const [uncardedPersonnelAlarm, setUncardedPersonnelAlarm] = useState("Audible Siren & Turnstile Lock");
@@ -177,7 +194,7 @@ export default function SettingsTab() {
   const [heartbeatInterval, setHeartbeatInterval] = useState(10); // sec
 
   // 4. AI Analytics & Gemini Vision Config (New Feature)
-  const [aiModel, setAiModel] = useState("gemini-3.6-flash");
+  const [aiModel, setAiModel] = useState("gemini-2.5-flash");
   const [anomalyScanSensitivity, setAnomalyScanSensitivity] = useState("Medium");
   const [aiPromptCustomizer, setAiPromptCustomizer] = useState(
     "Identify unauthorized loitering, tailgating, and tag anomalies with confidence score."
@@ -1588,10 +1605,10 @@ export default function SettingsTab() {
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               activeSection === "industry" || activeSection === "usecase" || activeSection === "presets"
                 ? "bg-[#007BC4] text-white shadow-sm"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
-            <Sparkles className="w-4 h-4 text-amber-400" /> Industry & Use-Case Customizer
+            <Sparkles className="w-4 h-4 text-amber-500" /> Industry & Use-Case Customizer
           </button>
 
           <button
@@ -1600,12 +1617,11 @@ export default function SettingsTab() {
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               activeSection === "third_party_api" || activeSection === "rfid" || activeSection === "rfid_config" || activeSection === "aperture"
                 ? "bg-[#007BC4] text-white shadow-sm"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
-            <Radio className="w-4 h-4 text-cyan-400" /> Option 1: Third-Party API Integration
+            <Radio className="w-4 h-4 text-cyan-600" /> Option 1: Third-Party API Integration
           </button>
-
 
           <button
             onClick={() => setActiveSection("direct_hardware")}
@@ -1613,12 +1629,11 @@ export default function SettingsTab() {
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               activeSection === "direct_hardware" || activeSection === "hardware_integration" || activeSection === "hardware"
                 ? "bg-[#007BC4] text-white shadow-sm"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
-            <Cpu className="w-4 h-4 text-emerald-400" /> Option 2: Direct Hardware Connection
+            <Cpu className="w-4 h-4 text-emerald-600" /> Option 2: Direct Hardware Connection
           </button>
-
 
           <button
             onClick={() => setActiveSection("ai")}
@@ -1626,10 +1641,10 @@ export default function SettingsTab() {
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               activeSection === "ai"
                 ? "bg-[#007BC4] text-white shadow-sm"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
-            <Bot className="w-4 h-4 text-purple-400" /> AI Engine & Gemini Vision
+            <Bot className="w-4 h-4 text-purple-600" /> AI Engine & Gemini Vision
           </button>
 
           <button
@@ -1638,10 +1653,10 @@ export default function SettingsTab() {
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               activeSection === "security"
                 ? "bg-[#007BC4] text-white shadow-sm"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
-            <Shield className="w-4 h-4 text-amber-400" /> Hardware & Safety Thresholds
+            <Shield className="w-4 h-4 text-amber-600" /> Hardware & Safety Thresholds
           </button>
 
           <button
@@ -1650,10 +1665,10 @@ export default function SettingsTab() {
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               activeSection === "access"
                 ? "bg-[#007BC4] text-white shadow-sm"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
-            <Users className="w-4 h-4 text-blue-400" /> Access Control & User Roles
+            <Users className="w-4 h-4 text-blue-600" /> Access Control & User Roles
           </button>
 
           <button
@@ -1662,10 +1677,10 @@ export default function SettingsTab() {
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               activeSection === "developer_api" || activeSection === "api_docs" || activeSection === "developer_console" || activeSection === "api_documentation"
                 ? "bg-[#007BC4] text-white shadow-sm"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
-            <Code2 className="w-4 h-4 text-cyan-500" /> API Docs & Webhook Console
+            <Code2 className="w-4 h-4 text-cyan-600" /> API Docs & Webhook Console
           </button>
 
           <button
@@ -1674,10 +1689,10 @@ export default function SettingsTab() {
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               activeSection === "database" || activeSection === "mongodb"
                 ? "bg-[#007BC4] text-white shadow-sm"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
-            <Database className="w-4 h-4 text-emerald-500" /> Database & MongoDB Cluster
+            <Database className="w-4 h-4 text-emerald-600" /> Database & MongoDB Cluster
           </button>
 
           <button
@@ -1686,7 +1701,7 @@ export default function SettingsTab() {
             className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-xs font-bold transition cursor-pointer ${
               activeSection === "general"
                 ? "bg-[#007BC4] text-white shadow-sm"
-                : "text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
             <Layout className="w-4 h-4" /> General Preferences
@@ -1857,26 +1872,10 @@ export default function SettingsTab() {
           )}
 
 
-          {/* REAL-TIME API STREAMS SECTION */}
-          {activeSection === "realtime" && (
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 space-y-6">
-              <RealTimeConnectionsTab />
-              <WebhookInspector />
-            </div>
-          )}
-
-          {/* WEBHOOK INSPECTOR SECTION */}
-          {activeSection === "webhook_inspector" && (
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <WebhookInspector />
-            </div>
-          )}
-
           {/* DEVELOPER API & DOCUMENTATION SECTION */}
           {(activeSection === "developer_api" || activeSection === "api_docs" || activeSection === "developer_console" || activeSection === "api_documentation" || activeSection === "dev_console") && (
-            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 space-y-6">
+            <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
               <DeveloperApiTab />
-              <WebhookInspector />
             </div>
           )}
 
@@ -1939,22 +1938,83 @@ export default function SettingsTab() {
                 </div>
 
                 <div className="p-6">
-                  <h4 className="font-bold text-slate-900 text-sm mb-3">Zone Occupancy Limits</h4>
-                  <div className="space-y-3">
+                  <div className="flex items-center justify-between mb-3">
+                    <div>
+                      <h4 className="font-bold text-slate-900 text-sm">Zone Safety Occupancy Limits</h4>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        Dynamic headcount thresholds synchronized with live site CAD zones and RFID monitoring.
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Add New Custom Zone Limit */}
+                  <div className="flex items-center gap-2 mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
+                    <input
+                      type="text"
+                      value={newZoneName}
+                      onChange={(e) => setNewZoneName(e.target.value)}
+                      placeholder="Add Zone Name (e.g. Zone 3 - Storage Facility)"
+                      className="flex-1 bg-white border border-slate-200 rounded-lg px-3 py-1.5 text-xs text-slate-900 focus:outline-none focus:border-[#007BC4]"
+                    />
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-xs text-slate-500 font-medium">Limit:</span>
+                      <input
+                        type="number"
+                        min="1"
+                        value={newZoneLimit}
+                        onChange={(e) => setNewZoneLimit(parseInt(e.target.value) || 1)}
+                        className="w-16 bg-white border border-slate-200 rounded-lg px-2 py-1.5 text-center text-xs font-bold"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!newZoneName.trim()) return;
+                        setOccupancyThresholds({
+                          ...occupancyThresholds,
+                          [newZoneName.trim()]: newZoneLimit
+                        });
+                        setNewZoneName("");
+                      }}
+                      className="px-3 py-1.5 bg-[#007BC4] hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3.5 h-3.5" /> Add Zone
+                    </button>
+                  </div>
+
+                  <div className="space-y-2.5">
                     {Object.entries(occupancyThresholds).map(([zone, limit]) => (
-                      <div key={zone} className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200 rounded-lg">
-                        <span className="font-bold text-xs text-slate-800">{zone}</span>
+                      <div key={zone} className="flex items-center justify-between p-3 bg-white border border-slate-200 rounded-lg shadow-xs hover:border-slate-300 transition">
                         <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500 font-medium">Max Occupants:</span>
-                          <input
-                            type="number"
-                            value={limit}
-                            onChange={(e) => setOccupancyThresholds({
-                              ...occupancyThresholds,
-                              [zone]: parseInt(e.target.value) || 1
-                            })}
-                            className="w-20 bg-white border border-slate-200 rounded-md px-2 py-1 text-center font-bold text-xs"
-                          />
+                          <span className="w-2 h-2 rounded-full bg-[#007BC4]" />
+                          <span className="font-bold text-xs text-slate-800">{zone}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500 font-medium">Max Occupants:</span>
+                            <input
+                              type="number"
+                              min="1"
+                              value={limit}
+                              onChange={(e) => setOccupancyThresholds({
+                                ...occupancyThresholds,
+                                [zone]: parseInt(e.target.value) || 1
+                              })}
+                              className="w-20 bg-slate-50 border border-slate-200 rounded-md px-2 py-1 text-center font-bold text-xs focus:bg-white focus:border-[#007BC4] outline-none"
+                            />
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const next = { ...occupancyThresholds };
+                              delete next[zone];
+                              setOccupancyThresholds(next);
+                            }}
+                            className="text-slate-400 hover:text-rose-500 p-1 transition cursor-pointer"
+                            title="Remove Zone Limit"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                       </div>
                     ))}
@@ -2127,110 +2187,6 @@ export default function SettingsTab() {
             </div>
           )}
 
-          {/* SECTION 3: HARDWARE & IOT GATEWAYS */}
-          {activeSection === "hardware" && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div>
-                <h3 className="text-xl font-bold text-slate-900">Hardware & IoT Gateways Config</h3>
-                <p className="text-slate-500 text-xs font-medium mt-1">
-                  Fine-tune UHF RFID antenna power levels, gateway scan frequencies, and turnstile controls.
-                </p>
-              </div>
-
-              <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden divide-y divide-slate-100">
-                <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                      RFID Antenna Transmit Power ({antennaPower} dBm)
-                    </label>
-                    <input
-                      type="range"
-                      min="10"
-                      max="33"
-                      value={antennaPower}
-                      onChange={(e) => setAntennaPower(parseInt(e.target.value))}
-                      className="w-full accent-[#007BC4] cursor-pointer"
-                    />
-                    <div className="flex justify-between text-[10px] font-mono text-slate-400 mt-1">
-                      <span>10 dBm (Short Range ~2m)</span>
-                      <span>33 dBm (Max Range ~15m)</span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                      Scan Cycle Rate ({scanFrequency} ms)
-                    </label>
-                    <input
-                      type="number"
-                      value={scanFrequency}
-                      onChange={(e) => setScanFrequency(parseInt(e.target.value) || 100)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition"
-                    />
-                    <p className="text-[11px] text-slate-500 mt-1">Sampling delay between RFID reader sweeps.</p>
-                  </div>
-                </div>
-
-                <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                      Gateway Communication Protocol
-                    </label>
-                    <select
-                      value={gatewayProtocol}
-                      onChange={(e) => setGatewayProtocol(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition cursor-pointer"
-                    >
-                      <option value="MQTT / WebSockets SSL">MQTT / WebSockets SSL (Recommended)</option>
-                      <option value="HTTP REST Polling">HTTP REST Polling (Legacy 3s Interval)</option>
-                      <option value="UDP Raw Stream">UDP Raw High-Speed Multicast</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                      Hardware Listener Port
-                    </label>
-                    <input
-                      type="number"
-                      value={readerPort}
-                      onChange={(e) => setReaderPort(parseInt(e.target.value) || 8080)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition"
-                    />
-                  </div>
-                </div>
-
-                <div className="p-6 flex items-center justify-between">
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm">Turnstile Auto-Lock Rules</div>
-                    <div className="text-xs text-slate-500 mt-1">
-                      Automatically lock access turnstiles when blacklisted or unknown tags approach.
-                    </div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={turnstileAutoLock}
-                      onChange={(e) => setTurnstileAutoLock(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#007BC4]"></div>
-                  </label>
-                </div>
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <button
-                  onClick={handleSaveSettings}
-                  disabled={isSaving}
-                  className="flex items-center gap-2 bg-[#007BC4] hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-xs font-bold shadow-md transition disabled:opacity-50 cursor-pointer"
-                >
-                  <Save className="w-4 h-4" />
-                  {isSaving ? "Syncing..." : "Save Hardware Settings"}
-                </button>
-              </div>
-            </div>
-          )}
 
           {/* SECTION 4: AI ANALYTICS & GEMINI VISION */}
           {activeSection === "ai" && (
@@ -2307,8 +2263,9 @@ export default function SettingsTab() {
                       onChange={(e) => setAiModel(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition cursor-pointer"
                     >
-                      <option value="gemini-3.6-flash">gemini-3.6-flash (Fast & Recommended)</option>
-                      <option value="gemini-3.1-pro-preview">gemini-3.1-pro-preview (Deep Reasoning & Analysis)</option>
+                      <option value="gemini-2.5-flash">gemini-2.5-flash (Fast, Multimodal & Recommended)</option>
+                      <option value="gemini-1.5-flash">gemini-1.5-flash (High Throughput)</option>
+                      <option value="gemini-1.5-pro">gemini-1.5-pro (Complex Reasoning & Deep Audit)</option>
                     </select>
                   </div>
 
@@ -2372,335 +2329,6 @@ export default function SettingsTab() {
             </div>
           )}
 
-          {/* SECTION 5: NOTIFICATIONS & ALERTS */}
-          {activeSection === "notifications" && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div>
-                <h3 className="text-xl font-bold text-slate-900">Notifications & Alerts</h3>
-                <p className="text-slate-500 text-xs font-medium mt-1">
-                  Manage alert channels, email notification lists, SMS gateways, and webhook URLs.
-                </p>
-              </div>
-
-              <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden divide-y divide-slate-100">
-                <div className="p-6 flex items-center justify-between">
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm">Email Security Notifications</div>
-                    <div className="text-xs text-slate-500 mt-1">Send immediate emails for critical security alarms.</div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={emailAlerts}
-                      onChange={(e) => setEmailAlerts(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#007BC4]"></div>
-                  </label>
-                </div>
-
-                <div className="p-6">
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                    Alert Recipient Emails (Comma Separated)
-                  </label>
-                  <input
-                    type="text"
-                    value={emailRecipients}
-                    onChange={(e) => setEmailRecipients(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition"
-                  />
-                </div>
-
-                <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                      Slack / Teams Webhook URL
-                    </label>
-                    <input
-                      type="text"
-                      value={slackWebhookUrl}
-                      onChange={(e) => setSlackWebhookUrl(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-mono text-xs focus:border-[#007BC4] outline-none transition"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                      MQTT Broker URL
-                    </label>
-                    <input
-                      type="text"
-                      value={mqttBrokerUrl}
-                      onChange={(e) => setMqttBrokerUrl(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-mono text-xs focus:border-[#007BC4] outline-none transition"
-                    />
-                  </div>
-                </div>
-
-                <div className="p-6 flex items-center justify-between">
-                  <div>
-                    <div className="font-bold text-slate-900 text-sm">System Audio Chimes</div>
-                    <div className="text-xs text-slate-500 mt-1">Play audio feedback when new alert triggers arrive.</div>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={systemSounds}
-                      onChange={(e) => setSystemSounds(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-11 h-6 bg-slate-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#007BC4]"></div>
-                  </label>
-                </div>
-              </div>
-
-              <div className="flex justify-end pt-2">
-                <button
-                  onClick={handleSaveSettings}
-                  disabled={isSaving}
-                  className="flex items-center gap-2 bg-[#007BC4] hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-xs font-bold shadow-md transition disabled:opacity-50 cursor-pointer"
-                >
-                  <Save className="w-4 h-4" />
-                  {isSaving ? "Syncing..." : "Save Notification Settings"}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* SECTION 6: NETWORK & APIS */}
-          {activeSection === "network" && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div>
-                <h3 className="text-xl font-bold text-slate-900">Network & API Configuration</h3>
-                <p className="text-slate-500 text-xs font-medium mt-1">
-                  Configure external RFID reader hardware endpoints, WebSockets, and real-time streams.
-                </p>
-              </div>
-
-              <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden divide-y divide-slate-100">
-                <div className="p-6">
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
-                    Primary API Target URL
-                  </label>
-                  <input
-                    type="url"
-                    value={apiUrl}
-                    onChange={(e) => setApiUrl(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-mono text-xs focus:border-[#007BC4] outline-none transition"
-                  />
-                </div>
-              </div>
-
-              <div className="flex justify-between items-center pt-2">
-                <div>
-                  {testResult === "success" && (
-                    <div className="text-emerald-600 font-bold bg-emerald-50 px-3 py-1.5 rounded-lg border border-emerald-200 text-xs flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500" /> Connection Successful
-                    </div>
-                  )}
-                  {testResult === "error" && (
-                    <div className="text-rose-600 font-bold bg-rose-50 px-3 py-1.5 rounded-lg border border-rose-200 text-xs flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-rose-500" /> Connection Failed
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleTestConnection}
-                    disabled={isTesting}
-                    className="px-4 py-2 border border-slate-200 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-bold text-slate-700 transition"
-                  >
-                    {isTesting ? "Testing..." : "Test Host Endpoint"}
-                  </button>
-                  <button
-                    onClick={handleSaveSettings}
-                    disabled={isSaving}
-                    className="flex items-center gap-2 bg-[#007BC4] hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-xs font-bold shadow-md transition disabled:opacity-50 cursor-pointer"
-                  >
-                    <Save className="w-4 h-4" />
-                    {isSaving ? "Syncing..." : "Save Network Config"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* SECTION 8: SMART ALERT RULES ENGINE */}
-          {activeSection === "rules" && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-xl font-bold text-slate-900">Smart Alert Rules Engine</h3>
-                  <p className="text-slate-500 text-xs font-medium mt-1">
-                    Configure automated condition rules and event reaction workflows.
-                  </p>
-                </div>
-              </div>
-
-              <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden divide-y divide-slate-100">
-                <div className="p-6">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="bg-slate-100 text-slate-700 text-[10px] font-black px-2 py-0.5 rounded border border-slate-200">
-                      RULE #1
-                    </span>
-                    <span className="font-bold text-slate-800 text-xs">Loitering in Server Room</span>
-                  </div>
-                  <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200 font-mono">
-                    IF tag_dwell_time &gt; 300s AND zone == "Server Room" THEN trigger_alarm("HIGH") AND dispatch_email()
-                  </div>
-                </div>
-
-                <div className="p-6">
-                  <div className="flex items-center gap-3 mb-2">
-                    <span className="bg-slate-100 text-slate-700 text-[10px] font-black px-2 py-0.5 rounded border border-slate-200">
-                      RULE #2
-                    </span>
-                    <span className="font-bold text-slate-800 text-xs">Blacklisted Tag Detected at Perimeter</span>
-                  </div>
-                  <div className="text-xs text-slate-600 bg-slate-50 p-3 rounded-lg border border-slate-200 font-mono">
-                    IF tag_status == "Blacklisted" THEN turnstile_lock() AND trigger_cctv_snapshot()
-                  </div>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* SECTION 9: API DOCS & CONSOLE */}
-          {activeSection === "apidocs" && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div>
-                <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                  <Terminal className="w-5 h-5 text-[#007BC4]" /> API Documentation & Developer Console
-                </h3>
-                <p className="text-slate-500 text-xs font-medium mt-1">
-                  Test backend API endpoints directly in browser using custom auth credentials.
-                </p>
-              </div>
-
-              <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden p-6 space-y-4">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                      Authentication Mechanism
-                    </label>
-                    <select
-                      value={authType}
-                      onChange={(e) => setAuthType(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition cursor-pointer"
-                    >
-                      <option value="none">None (Public / Server Proxy)</option>
-                      <option value="api_key">API Key (Custom Headers)</option>
-                      <option value="bearer">Bearer Token (Authorization Header)</option>
-                      <option value="basic">Basic Auth (Username / Password)</option>
-                      <option value="oauth">OAuth 2.0 (Client Credentials)</option>
-                    </select>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">
-                      Target API Host URL
-                    </label>
-                    <input
-                      type="url"
-                      value={apiUrl}
-                      onChange={(e) => setApiUrl(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-mono text-xs focus:border-[#007BC4] outline-none transition"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex justify-end">
-                  <button
-                    onClick={handleSaveSettings}
-                    disabled={isSaving}
-                    className="flex items-center gap-2 bg-[#007BC4] hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer disabled:opacity-50"
-                  >
-                    <Save className="w-3.5 h-3.5" />
-                    {isSaving ? "Saving..." : "Save Credentials"}
-                  </button>
-                </div>
-              </div>
-
-              {/* Endpoint Runner */}
-              <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden">
-                <div className="flex border-b border-slate-200 text-xs font-bold bg-slate-50 overflow-x-auto">
-                  <button
-                    onClick={() => setActiveEndpoint("get_realtime")}
-                    className={`px-4 py-3 shrink-0 border-b-2 transition ${
-                      activeEndpoint === "get_realtime" ? "border-[#007BC4] text-[#007BC4] bg-white" : "border-transparent text-slate-500"
-                    }`}
-                  >
-                    GET /api/GetTagsInRealtime
-                  </button>
-                  <button
-                    onClick={() => setActiveEndpoint("get_records")}
-                    className={`px-4 py-3 shrink-0 border-b-2 transition ${
-                      activeEndpoint === "get_records" ? "border-[#007BC4] text-[#007BC4] bg-white" : "border-transparent text-slate-500"
-                    }`}
-                  >
-                    GET /api/GetHistoryRecords
-                  </button>
-                  <button
-                    onClick={() => setActiveEndpoint("get_count")}
-                    className={`px-4 py-3 shrink-0 border-b-2 transition ${
-                      activeEndpoint === "get_count" ? "border-[#007BC4] text-[#007BC4] bg-white" : "border-transparent text-slate-500"
-                    }`}
-                  >
-                    GET /api/GetHistoryTotalCount
-                  </button>
-                </div>
-
-                <div className="p-6 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-mono font-bold text-slate-700">
-                      {apiUrl}/api/
-                      {activeEndpoint === "get_count"
-                        ? "GetHistoryTotalCount"
-                        : activeEndpoint === "get_records"
-                        ? `GetHistoryRecords/${sandboxSkip}/${sandboxTake}`
-                        : "GetTagsInRealtime"}
-                    </span>
-                    <button
-                      onClick={async () => {
-                        setIsRunningSandbox(true);
-                        setSandboxResponse(null);
-                        setSandboxStatus(null);
-                        try {
-                          let data = null;
-                          if (activeEndpoint === "get_count") {
-                            data = { totalCount: await gaoApi.getHistoryTotalCount() };
-                          } else if (activeEndpoint === "get_records") {
-                            data = await gaoApi.getHistoryRecords(sandboxSkip, sandboxTake);
-                          } else {
-                            data = await gaoApi.getTagsInRealtime();
-                          }
-                          setSandboxResponse(data);
-                          setSandboxStatus("200 OK");
-                        } catch (err: any) {
-                          setSandboxStatus("Error");
-                          setSandboxResponse({ error: err.message });
-                        } finally {
-                          setIsRunningSandbox(false);
-                        }
-                      }}
-                      disabled={isRunningSandbox}
-                      className="flex items-center gap-2 bg-[#007BC4] hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition shadow-sm cursor-pointer disabled:opacity-50"
-                    >
-                      {isRunningSandbox ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
-                      Execute Request
-                    </button>
-                  </div>
-
-                  {sandboxResponse && (
-                    <div className="p-4 bg-slate-900 text-emerald-400 rounded-xl font-mono text-xs overflow-x-auto max-h-60">
-                      <pre>{JSON.stringify(sandboxResponse, null, 2)}</pre>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
 
           {/* SECTION 10: ACCESS CONTROL & CUSTOM CLAIMS */}
           {activeSection === "access" && (
@@ -3676,86 +3304,7 @@ export default function SettingsTab() {
             </div>
           )}
 
-          {/* SECTION 11: DATABASE BACKUP & SNAPSHOT (NEW FEATURE) */}
-          {activeSection === "dataBackup" && (
-            <div className="space-y-6 animate-in fade-in slide-in-from-bottom-2 duration-300">
-              <div>
-                <h3 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                  <HardDrive className="w-5 h-5 text-[#007BC4]" /> Database Backup & Snapshot
-                </h3>
-                <p className="text-slate-500 text-xs font-medium mt-1">
-                  Export system settings JSON backups, restore MongoDB snapshots, or export full collection JSON data.
-                </p>
-              </div>
 
-              {importStatus && (
-                <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold rounded-lg flex items-center gap-2">
-                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  <span>{importStatus}</span>
-                </div>
-              )}
-
-              <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden divide-y divide-slate-100">
-                {/* Download Settings Backup */}
-                <div className="p-6 flex items-center justify-between">
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">Download Settings JSON Backup</h4>
-                    <p className="text-xs text-slate-500 mt-1">Export all configuration settings, threshold limits, and rules.</p>
-                  </div>
-                  <button
-                    onClick={handleDownloadSettingsBackup}
-                    className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer"
-                  >
-                    <Download className="w-3.5 h-3.5" /> Download JSON
-                  </button>
-                </div>
-
-                {/* Restore Settings Backup */}
-                <div className="p-6 flex items-center justify-between">
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">Restore Settings JSON Snapshot</h4>
-                    <p className="text-xs text-slate-500 mt-1">Upload a previously exported settings JSON file directly to MongoDB.</p>
-                  </div>
-                  <label className="flex items-center gap-2 bg-[#007BC4] hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer shadow-sm">
-                    <Upload className="w-3.5 h-3.5" /> Upload & Restore
-                    <input type="file" accept=".json" onChange={handleRestoreSettingsJson} className="hidden" />
-                  </label>
-                </div>
-
-                {/* Full Database Export */}
-                <div className="p-6 flex items-center justify-between">
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">Export Full MongoDB Collections Snapshot</h4>
-                    <p className="text-xs text-slate-500 mt-1">Download complete JSON dump of Personnel, Devices, History, Alerts, and Audit logs.</p>
-                  </div>
-                  <button
-                    onClick={handleExportAllCollections}
-                    disabled={isExportingDb}
-                    className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer disabled:opacity-50"
-                  >
-                    <Download className="w-3.5 h-3.5" />
-                    {isExportingDb ? "Exporting..." : "Export Full Snapshot"}
-                  </button>
-                </div>
-
-                {/* Purge Expired Logs */}
-                <div className="p-6 flex items-center justify-between">
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">Purge Expired Database Logs</h4>
-                    <p className="text-xs text-slate-500 mt-1">Clean up tracking history older than the configured data retention limit.</p>
-                  </div>
-                  <button
-                    onClick={handlePurgeOldLogs}
-                    disabled={isPurgingLogs}
-                    className="flex items-center gap-2 bg-rose-50 border border-rose-200 hover:bg-rose-100 text-rose-700 px-4 py-2 rounded-lg text-xs font-bold transition cursor-pointer disabled:opacity-50"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    {isPurgingLogs ? "Purging..." : "Purge Expired Logs"}
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
 
         </div>
       </div>

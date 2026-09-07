@@ -203,41 +203,26 @@ export default function RealTimeConnectionsTab() {
 
   const handleTestAllMethods = async () => {
     setIsMasterTesting(true);
-    setNotice({ type: 'success', msg: 'Initiating Master Diagnostic across WebSocket and MQTT streams...' });
+    setNotice({ type: 'success', msg: 'Initiating Master Diagnostic across WebSocket, MQTT, and API channels...' });
 
-    // 1. WebSocket Ping & Ingest
-    globalWsClient.send('report_tag_scan', {
-      TagID: 'TEST_WS_TAG_991',
-      Location: 'Gate 1 Diagnostic Zone',
-      FirstName: 'WebSocket',
-      LastName: 'Tester'
+    // 1. WebSocket Health Ping
+    globalWsClient.send('ping', {
+      timestamp: new Date().toISOString()
     });
 
-    // 2. MQTT Topic Publish & Ingest
-    await mqttStreamService.publish('gao/rfid/scans', {
-      TagID: 'TEST_MQTT_TAG_992',
-      Timestamp: new Date().toISOString(),
-      Location: 'Gate 2 Diagnostic Zone',
-      FirstName: 'MQTT',
-      LastName: 'Tester'
+    // 2. MQTT Topic Health Ping
+    await mqttStreamService.publish('gao/rfid/heartbeat', {
+      event: 'DIAGNOSTIC_PING',
+      timestamp: new Date().toISOString()
     });
 
-    // 3. Multi-Protocol Ingest Test
-    await fetch('/api/realtime/ingest', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        protocol: 'Master Diagnostic Suite',
-        events: [
-          { TagID: 'TEST_BULK_TAG_993', Timestamp: new Date().toISOString(), Location: 'Server Bulk Gate' }
-        ]
-      })
-    });
+    // 3. API Health & Status Verification (without injecting fake tags into MongoDB)
+    await fetch('/api/health');
 
     setTimeout(() => {
       setIsMasterTesting(false);
       setNotice({ type: 'success', msg: 'Master Stream Diagnostic Complete! Both WebSocket and MQTT streams verified healthy.' });
-    }, 1200);
+    }, 1000);
   };
 
   const getStatusBadge = (status: ConnectionStatus) => {

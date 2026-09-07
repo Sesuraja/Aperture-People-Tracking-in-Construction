@@ -86,16 +86,16 @@ class GaoWebSocketService {
    * Maps raw incoming WebSocket payload to MongoDB schemas (real_time_tags & history_records)
    */
   public mapRawTagToSchema(raw: RawGaoTagMessage): MappedIngestionData {
-    const tagId = raw.TagID || raw.tagId || raw.epc || `TAG_${Date.now()}`;
-    const rawLocation = raw.Location || raw.LocationName || raw.location || raw.zone || 'Zone1';
+    const tagId = String(raw.TagID || raw.tagId || raw.epc || '').trim();
+    const rawLocation = raw.Location || raw.LocationName || raw.location || raw.zone || 'Zone 1';
     
     const now = new Date();
     const timestampStr = raw.Timestamp || raw.timestamp ? this.formatUtcTimestampMs(raw.Timestamp || raw.timestamp) : this.formatUtcTimestampMs(now);
     const enterTimeStr = raw.EnterTime ? this.formatUtcDateTime(raw.EnterTime) : this.formatUtcDateTime(now);
     const leaveTimeStr = raw.LeaveTime ? this.formatUtcDateTime(raw.LeaveTime) : enterTimeStr;
     
-    const firstName = raw.FirstName || raw.firstName || 'Staff';
-    const lastName = raw.LastName || raw.lastName || 'Member';
+    const firstName = raw.FirstName || raw.firstName || '';
+    const lastName = raw.LastName || raw.lastName || '';
 
     let duration = raw.Duration !== undefined ? Number(raw.Duration) : 0;
     if (duration === 0 && raw.EnterTime && raw.LeaveTime) {
