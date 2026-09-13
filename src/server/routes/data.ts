@@ -383,8 +383,18 @@ const handleCollectionItemUpsert = async (req: AuthRequest, res: Response) => {
   const orgId = user?.organizationId || 'default';
 
   // IDOR check: if updating existing doc, ensure it belongs to the tenant
-  const isSpatialConfig = ['map_configurations', 'zones', 'projects', 'sites', 'floorplans'].includes(collection);
-  if (!isSpatialConfig) {
+  const isGlobalOrSystemConfig = [
+    'settings',
+    'organizations',
+    'map_configurations',
+    'zones',
+    'geofences',
+    'projects',
+    'sites',
+    'floorplans'
+  ].includes(collection);
+
+  if (!isGlobalOrSystemConfig) {
     const existingDoc = await getDocById(collection, id, orgId);
     const allExisting = await getDocById(collection, id, 'ALL');
     const DEFAULT_ORGS = ['default', 'demo', 'org_main', 'org_aperture_default'];

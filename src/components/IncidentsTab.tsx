@@ -45,7 +45,7 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
   } = useTerminology();
 
   const activeIndustry = intelligenceProfile?.industry || config?.industryId || 'construction';
-  const activeSubIndustry = intelligenceProfile?.subIndustry || config?.name || 'General Operations';
+  const activeSubIndustry = intelligenceProfile?.subIndustry || config?.subIndustry || config?.industryName || 'General Operations';
 
   // Live workforce registry from MongoDB registered_people
   const [dbPeople, setDbPeople] = useState<any[]>([]);
@@ -97,6 +97,17 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
   const [anomalyStatusFilter, setAnomalyStatusFilter] = useState<'all' | 'anomalies_only' | 'normal_only'>('all');
   const [selectedZoneFilter, setSelectedZoneFilter] = useState<string>('All');
   const [selectedPersonFilter, setSelectedPersonFilter] = useState<string>('All');
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<string>('All');
+
+  const availableIncidentCategories = useMemo(() => {
+    if (config?.defaultAlertCategories && config.defaultAlertCategories.length > 0) {
+      return config.defaultAlertCategories;
+    }
+    if (intelligenceProfile?.incidentCategories && intelligenceProfile.incidentCategories.length > 0) {
+      return intelligenceProfile.incidentCategories.map((c: any) => c.category);
+    }
+    return ['Safety Breach', 'Unauthorized Zone Incursion', 'Dwell Threshold Exceeded', 'Unregistered Tag'];
+  }, [config?.defaultAlertCategories, intelligenceProfile?.incidentCategories]);
 
   // Detail Modal / Drawer State
   const [selectedEvent, setSelectedEvent] = useState<NormalizedEvent | null>(null);
@@ -299,6 +310,18 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
         return false;
       }
 
+      // Incident / Alert Category filter
+      if (selectedCategoryFilter !== 'All') {
+        const cat = selectedCategoryFilter.toLowerCase();
+        const matchesAnomaly = event.anomalyReason?.toLowerCase().includes(cat);
+        const matchesReason = event.explanation?.whatHappened?.toLowerCase().includes(cat);
+        const matchesZone = event.locationName?.toLowerCase().includes(cat);
+        const matchesType = event.eventType?.toLowerCase().includes(cat);
+        if (!matchesAnomaly && !matchesReason && !matchesZone && !matchesType) {
+          return false;
+        }
+      }
+
       // AI Anomaly Status filter
       if (anomalyStatusFilter === 'anomalies_only' && !event.isAnomaly) {
         return false;
@@ -325,6 +348,7 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
     shiftFilter,
     selectedZoneFilter,
     selectedPersonFilter,
+    selectedCategoryFilter,
     severityFilter,
     eventTypeFilter,
     anomalyStatusFilter,
@@ -356,6 +380,7 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
     shiftFilter,
     selectedZoneFilter,
     selectedPersonFilter,
+    selectedCategoryFilter,
     severityFilter,
     eventTypeFilter,
     anomalyStatusFilter,
@@ -475,6 +500,7 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
     setAnomalyStatusFilter('all');
     setSelectedZoneFilter('All');
     setSelectedPersonFilter('All');
+    setSelectedCategoryFilter('All');
   };
 
   const isAnyFilterActive = 
@@ -485,7 +511,8 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
     eventTypeFilter !== 'All' || 
     anomalyStatusFilter !== 'all' || 
     selectedZoneFilter !== 'All' || 
-    selectedPersonFilter !== 'All';
+    selectedPersonFilter !== 'All' ||
+    selectedCategoryFilter !== 'All';
 
   // Severity color maps
   const getSeverityBadgeClass = (severity: EventSeverity) => {
@@ -912,6 +939,20 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
               <option value="all">AI Status: All Events</option>
               <option value="anomalies_only">AI Status: Anomalies Only</option>
               <option value="normal_only">AI Status: Normal Events</option>
+            </select>
+          </div>
+
+          {/* Incident / Alert Category Filter (Dynamic from Industry Presets) */}
+          <div>
+            <select
+              value={selectedCategoryFilter}
+              onChange={(e) => setSelectedCategoryFilter(e.target.value)}
+              className="w-full text-xs px-2.5 py-1.5 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-[#007BC4]"
+            >
+              <option value="All">Category: All Categories ({availableIncidentCategories.length})</option>
+              {availableIncidentCategories.map((cat) => (
+                <option key={cat} value={cat}>Category: {cat}</option>
+              ))}
             </select>
           </div>
         </div>
@@ -1646,10 +1687,13 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
                     key={st}
                     onClick={async () => {
                       const docId = `inc_${selectedEvent.id}`;
+                      const incidentCat = intelligenceProfile?.incidentCategories?.[0]?.category || 'Operational Safety Incident';
                       await setDoc(doc(db, 'incidents', docId), {
                         id: docId,
                         eventId: selectedEvent.id,
                         status: st,
+                        category: incidentCat,
+                        industry: activeIndustry,
                         updatedAt: serverTimestamp()
                       });
                       setActionToast(`Updated incident ${selectedEvent.id} to "${st}" in MongoDB Atlas.`);

@@ -17,6 +17,13 @@ export interface DeterministicEvaluationInput {
   dwellMinutes?: number;
   currentOccupancy?: number;
   timestamp?: string;
+  zoneConflict?: boolean;
+  repeatedMovement?: boolean;
+  speed?: number;
+  secondaryRssi?: number;
+  isEntryEvent?: boolean;
+  isExitEvent?: boolean;
+  occupancyChanged?: boolean;
 }
 
 export interface DeterministicEvaluationResult {
@@ -194,8 +201,35 @@ export function evaluateDeterministicRules(
   if (matchedArea) {
     aiActivityInferred = `Operations in ${matchedArea.name}`;
 
-    // 1. Critical Hazard & Exclusion Zone Rules
-    if (matchedArea.hazardLevel === 'critical') {
+    // 1. Dwell Duration Threshold Breach (Continuous Overstay / Worker Welfare)
+    const isDwellBreach = Boolean(matchedArea.maxDwellMinutes && dwellMinutes > matchedArea.maxDwellMinutes);
+    if (isDwellBreach) {
+      aiRiskScore = matchedArea.hazardLevel === 'critical' ? 95 : 75;
+      aiRiskLevel = matchedArea.hazardLevel === 'critical' ? 'CRITICAL' : 'HIGH';
+      aiComplianceScore = 60;
+      aiActivityInferred = `Extended Dwell in ${matchedArea.name}`;
+      aiAnomaly = {
+        title: `Extended Dwell Duration in ${matchedArea.name}`,
+        description: `Personnel ${personName} has occupied ${matchedArea.name} for ${dwellMinutes} mins (maximum permitted safe threshold: ${matchedArea.maxDwellMinutes}m).`,
+        severity: matchedArea.hazardLevel === 'critical' ? 'CRITICAL' : 'HIGH'
+      };
+      aiInsight = `Worker Welfare / Safety Alert: Overstay detected in ${matchedArea.name} (${dwellMinutes}m elapsed, safe threshold ${matchedArea.maxDwellMinutes}m). Immediate check on personnel welfare advised.`;
+      triggeredAlert = {
+        title: `Extended Dwell Duration in ${matchedArea.name}`,
+        category: 'Safety',
+        priority: matchedArea.hazardLevel === 'critical' ? 'Critical' : 'High',
+        description: `Safe dwell duration exceeded in ${matchedArea.name} (${dwellMinutes}m > ${matchedArea.maxDwellMinutes}m).`,
+        targetZone: matchedArea.name,
+        triggerSiren: matchedArea.hazardLevel === 'critical'
+      };
+      triggeredIncident = {
+        title: `Extended Dwell Duration in ${matchedArea.name}`,
+        category: profile.incidentCategories[0]?.category || 'Dwell Threshold Exceeded',
+        severity: matchedArea.hazardLevel === 'critical' ? 'Critical' : 'High',
+        description: `Personnel ${personName} exceeded safe duration threshold in ${matchedArea.name}.`,
+        locationZone: matchedArea.name
+      };
+    } else if (matchedArea.hazardLevel === 'critical') {
       const isRoleAuthorized = matchedArea.allowedRoles && matchedArea.allowedRoles.length > 0
         ? matchedArea.allowedRoles.some(r => (role || '').toLowerCase().includes(r.toLowerCase()))
         : false;
@@ -255,7 +289,29 @@ export function evaluateDeterministicRules(
       aiInsight = `${matchedArea.name} telemetry verified. Standard operational protocols active.`;
     }
 
-    // 2. AI Rules: After-Hours Meeting Room / Facility Entry (🔴 Critical)
+    // 2. AI Rules: Capacity Exceeded (🔴 Critical)
+    const effectiveMaxCap = matchedArea?.maxOccupancy || 6;
+    if (currentOccupancy > effectiveMaxCap && !triggeredAlert) {
+      aiRiskScore = Math.max(aiRiskScore, 85);
+      aiRiskLevel = 'CRITICAL';
+      aiComplianceScore = Math.min(aiComplianceScore, 72);
+      aiAnomaly = {
+        title: `Capacity Limit Exceeded in ${matchedArea.name}`,
+        description: `Current occupancy in ${matchedArea.name} (${currentOccupancy} persons) exceeds safety limit of ${effectiveMaxCap}.`,
+        severity: 'CRITICAL'
+      };
+      aiInsight = `Safety Overcrowding: Headcount in ${matchedArea.name} exceeded by ${currentOccupancy - effectiveMaxCap} people. Ventilation and emergency egress compromised.`;
+      triggeredAlert = {
+        title: `Capacity Limit Exceeded in ${matchedArea.name}`,
+        category: 'Safety',
+        priority: 'Critical',
+        description: `Room capacity exceeded in ${matchedArea.name} (${currentOccupancy}/${effectiveMaxCap} people).`,
+        targetZone: matchedArea.name,
+        triggerSiren: true
+      };
+    }
+
+    // 3. AI Rules: After-Hours Meeting Room / Facility Entry (🔴 Critical)
     if (isAfterHours && isMeetingOrOffice && !triggeredAlert) {
       aiRiskScore = Math.max(aiRiskScore, 90);
       aiRiskLevel = 'CRITICAL';
@@ -271,28 +327,6 @@ export function evaluateDeterministicRules(
         category: 'Security',
         priority: 'Critical',
         description: `Unauthorized after-hours entry into ${location} by ${personName} (${tagId}).`,
-        targetZone: location,
-        triggerSiren: true
-      };
-    }
-
-    // 3. AI Rules: Capacity Exceeded (🔴 Critical)
-    const effectiveMaxCap = matchedArea?.maxOccupancy || 6;
-    if (currentOccupancy > effectiveMaxCap && !triggeredAlert) {
-      aiRiskScore = Math.max(aiRiskScore, 85);
-      aiRiskLevel = 'CRITICAL';
-      aiComplianceScore = Math.min(aiComplianceScore, 72);
-      aiAnomaly = {
-        title: 'Capacity exceeded',
-        description: `Current occupancy in ${location} (${currentOccupancy} persons) exceeds safety limit of ${effectiveMaxCap}.`,
-        severity: 'CRITICAL'
-      };
-      aiInsight = `Safety Overcrowding: Headcount in ${location} exceeded by ${currentOccupancy - effectiveMaxCap} people. Ventilation and emergency egress compromised.`;
-      triggeredAlert = {
-        title: 'Capacity exceeded',
-        category: 'Safety',
-        priority: 'Critical',
-        description: `Room capacity exceeded in ${location} (${currentOccupancy}/${effectiveMaxCap} people).`,
         targetZone: location,
         triggerSiren: true
       };

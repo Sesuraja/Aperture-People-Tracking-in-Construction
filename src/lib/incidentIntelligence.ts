@@ -78,6 +78,8 @@ export interface NormalizedEvent {
   severity: EventSeverity;
   isAnomaly: boolean;
   anomalyScore: number; // 0 - 100
+  severityScore?: number;
+  anomalyReason?: string;
   explanation: AIExplanation;
   rawPayload: {
     TagID: string;
@@ -659,6 +661,8 @@ export function analyzeApiEvents(
       severity,
       isAnomaly,
       anomalyScore,
+      severityScore: anomalyScore,
+      anomalyReason: explanation.whyUnusual || explanation.whatHappened,
       explanation
     };
   });

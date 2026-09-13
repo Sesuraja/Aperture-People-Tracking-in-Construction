@@ -4,12 +4,21 @@ import crypto from 'crypto';
 import { getDocById, getCollectionDocs, upsertDoc } from '../services/db.js';
 import { DEFAULT_PERMISSIONS_MAP } from '../../constants/permissions.js';
 
-let jwtSecret = process.env.JWT_SECRET;
-if (!jwtSecret) {
-  jwtSecret = crypto.randomBytes(32).toString('hex');
-  console.warn('[Auth] JWT_SECRET not set in environment. Generated random per-boot secret. Set JWT_SECRET in production.');
+const isProduction = process.env.NODE_ENV === 'production';
+let jwtSecret = process.env.JWT_SECRET?.trim();
+
+if (isProduction) {
+  if (!jwtSecret || jwtSecret === 'aperture-jwt-secret-change-in-production' || jwtSecret.length < 16) {
+    throw new Error(
+      '[FATAL AUTH CONFIG] JWT_SECRET must be set to a secure, persistent key (at least 16 characters) in production to ensure consistent authentication across serverless cold starts and instances.'
+    );
+  }
+} else if (!jwtSecret) {
+  jwtSecret = 'aperture-dev-jwt-secret-stable-key';
+  console.warn('[Auth] JWT_SECRET not set in environment. Using stable development secret. Configure JWT_SECRET in .env for production.');
 }
-export const JWT_SECRET = jwtSecret;
+
+export const JWT_SECRET: string = jwtSecret;
 
 export interface AuthenticatedUser {
   id: string;

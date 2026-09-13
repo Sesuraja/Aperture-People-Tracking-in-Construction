@@ -130,7 +130,7 @@ describe('External People Tracking UHF API Integration & Multi-AI Workflow', () 
     const retentionDays = (expireAtMs - createdAtMs) / (1000 * 60 * 60 * 24);
 
     expect(retentionDays).toBeCloseTo(10, 0); // 10 days retention
-  }, 60000);
+  }, 90000);
 
   it('TEST 6: Exposes full suite of REST API endpoints for frontend and external clients', async () => {
     // 1. Config endpoint

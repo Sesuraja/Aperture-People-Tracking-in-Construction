@@ -128,6 +128,8 @@ const aiEngineDecisionSchema = z.object({
 
 // Runtime provider configuration
 let configuredProvider: AIProviderName = 'auto';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_FALLBACK_CANDIDATES } from '../../constants/aiConfig.js';
+
 let runtimeOpenAiKey: string | null = null;
 let runtimeClaudeKey: string | null = null;
 let runtimeGeminiKey: string | null = null;
@@ -176,12 +178,12 @@ export function resolveActiveProvider(): { provider: 'gemini' | 'chatgpt' | 'cla
     return { provider: 'claude', model: process.env.ANTHROPIC_MODEL || 'claude-3-5-haiku-20241022' };
   }
   if (requested === 'gemini' && geminiKey) {
-    return { provider: 'gemini', model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' };
+    return { provider: 'gemini', model: DEFAULT_GEMINI_MODEL };
   }
 
   // Auto-selection based on available keys
   if (geminiKey) {
-    return { provider: 'gemini', model: process.env.GEMINI_MODEL || 'gemini-2.5-flash' };
+    return { provider: 'gemini', model: DEFAULT_GEMINI_MODEL };
   }
   if (openAiKey) {
     return { provider: 'chatgpt', model: process.env.OPENAI_MODEL || 'gpt-4o-mini' };
@@ -223,7 +225,7 @@ Return strictly valid JSON with this exact schema:
   "incident": { "category": string, "title": string, "description": string, "severity": "Critical" | "High" | "Medium" | "Low" } | null
 }`;
 
-  const candidateModels = [model || 'gemini-2.5-flash', 'gemini-3.1-pro-preview'].filter((v, i, a) => a.indexOf(v) === i);
+  const candidateModels = [model || DEFAULT_GEMINI_MODEL, ...DEFAULT_GEMINI_FALLBACK_CANDIDATES].filter((v, i, a) => a.indexOf(v) === i);
   let lastError: any = null;
 
   for (const m of candidateModels) {
@@ -387,12 +389,15 @@ export async function analyzeTelemetryItemWithAI(
     aiActivityInferred: deterministicEval.aiActivityInferred,
     aiAnomaly: deterministicEval.aiAnomaly,
     aiInsight: deterministicEval.aiInsight,
-    alert: deterministicEval.triggeredAlert,
+    alert: deterministicEval.triggeredAlert ? {
+      ...deterministicEval.triggeredAlert,
+      message: deterministicEval.triggeredAlert.description
+    } : null,
     incident: deterministicEval.triggeredIncident
   };
 
   const active = resolveActiveProvider();
-  let aiEngineUsed = active.provider;
+  let aiEngineUsed: string = active.provider;
   let modelUsed = active.model;
 
   const eventContext = {
@@ -465,19 +470,26 @@ export async function analyzeTelemetryBatchWithAI(
   let totalComplianceScore = 0;
   let highRiskCount = 0;
   let anomalyCount = 0;
-  let primaryEngineUsed = active.provider;
-  let primaryModelUsed = active.model;
+  let primaryEngineUsed: string = active.provider;
+  let primaryModelUsed: string = active.model;
   const tenantProfile = await getTenantIntelligenceProfile(orgId);
+  const criticalAreaNames = (tenantProfile.functionalAreas || [])
+    .filter(f => f.hazardLevel === 'critical' || f.hazardLevel === 'warning')
+    .map(f => f.name.toLowerCase());
 
   for (let idx = 0; idx < items.length; idx++) {
     const item = items[idx];
     let decision: z.infer<typeof aiEngineDecisionSchema>;
-    let aiEngineUsed = primaryEngineUsed;
-    let modelUsed = primaryModelUsed;
+    let aiEngineUsed: string = primaryEngineUsed;
+    let modelUsed: string = primaryModelUsed;
     let fullName = item.fullName || 'Personnel';
 
-    // Deep AI analysis for first 3 items or any zone with potential hazards; deterministic engine for remainder
-    if (idx < 3 || (item.location && /hazard|danger|crane|confined|trench|perimeter|restricted/i.test(item.location))) {
+    const locLower = (item.location || '').toLowerCase();
+    const isHighHazardArea = criticalAreaNames.some(name => locLower.includes(name)) ||
+      /hazard|danger|restricted|critical|warning|vault|high-risk|perimeter/i.test(item.location || '');
+
+    // Deep AI analysis for first 3 items or any zone matching critical/warning tenant functional areas
+    if (idx < 3 || (item.location && isHighHazardArea)) {
       const itemRes = await analyzeTelemetryItemWithAI(item, orgId, registeredPeople);
       decision = itemRes.decision;
       aiEngineUsed = itemRes.aiEngineUsed;
@@ -500,7 +512,10 @@ export async function analyzeTelemetryBatchWithAI(
         aiActivityInferred: deterministicEval.aiActivityInferred,
         aiAnomaly: deterministicEval.aiAnomaly,
         aiInsight: deterministicEval.aiInsight,
-        alert: deterministicEval.triggeredAlert,
+        alert: deterministicEval.triggeredAlert ? {
+          ...deterministicEval.triggeredAlert,
+          message: deterministicEval.triggeredAlert.description
+        } : null,
         incident: deterministicEval.triggeredIncident
       };
     }

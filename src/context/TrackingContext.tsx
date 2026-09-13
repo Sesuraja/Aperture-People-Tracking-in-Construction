@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { doc, setDoc, collection, onSnapshot, db } from '../lib/db';
-import { Person } from '../types';
+import { Person, PresenceState } from '../types';
 import { RealtimeTag, gaoApi } from '../lib/gaoApi';
 import { 
   AssetItem, VehicleItem, CCTVCameraItem, EnvironmentalSensorItem, InfrastructureItem
@@ -1089,7 +1089,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         const zoneChanged = existing.currentZone !== newZoneName;
         const targetCoordX = hasExplicitCoords ? targetX : (zoneChanged ? targetX : (existing.x || targetX));
         const targetCoordY = hasExplicitCoords ? targetY : (zoneChanged ? targetY : (existing.y || targetY));
-        const updatedPerson = {
+        const updatedPerson: Person = {
           ...existing,
           currentZone: newZoneName,
           x: targetCoordX,
@@ -1097,7 +1097,7 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
           rssi,
           lastReader: readerId || existing.lastReader,
           lastSeen: new Date(timestamp),
-          presenceState: zoneChanged ? 'MOVING' : 'ACTIVE',
+          presenceState: (zoneChanged ? 'MOVING' : 'ACTIVE') as PresenceState,
           trail: zoneChanged ? [...(existing.trail || []).slice(-9), { x: targetCoordX, y: targetCoordY }] : existing.trail
         };
 

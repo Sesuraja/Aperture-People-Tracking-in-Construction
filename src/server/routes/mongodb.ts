@@ -4,30 +4,6 @@ import { requireAuth, requireRole } from '../middleware/auth.js';
 
 export const mongodbRouter = Router();
 
-// POST /api/mongodb/prune-alerts
-mongodbRouter.post('/prune-alerts', async (_req: Request, res: Response) => {
-  try {
-    const prunedCount = await pruneDuplicateAlerts();
-    return res.json({ success: true, prunedCount });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// POST /api/mongodb/purge-samples
-mongodbRouter.post('/purge-samples', async (_req: Request, res: Response) => {
-  try {
-    const { deletedCounts } = await purgeAllDemoAndTestData();
-    return res.json({ 
-      success: true, 
-      message: 'Purged all demo, test, and dummy data from MongoDB Atlas. Real API data preserved.',
-      deletedCounts
-    });
-  } catch (err: any) {
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
-
 // GET /api/mongodb/status - accessible for system health checks across all tabs
 mongodbRouter.get('/status', async (req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
@@ -43,9 +19,11 @@ mongodbRouter.get('/status', async (req: Request, res: Response) => {
     const stats = await getMongoStats(forceRefresh);
     return res.json(stats);
   } catch (err: any) {
+    const rawUri = getMongoUri();
+    const maskedUri = rawUri ? rawUri.replace(/\/\/[^:]+:[^@]+@/, '//***:***@') : 'None (In-Memory Fallback)';
     return res.status(500).json({
       connected: false,
-      connectionString: getMongoUri(),
+      connectionString: maskedUri,
       engine: 'In-Memory Fallback',
       collectionsCount: 0,
       totalRecords: 0,
@@ -54,10 +32,34 @@ mongodbRouter.get('/status', async (req: Request, res: Response) => {
   }
 });
 
-// Secure mutation endpoints with Admin authentication
+// Secure all database mutation and diagnostic endpoints with Admin authentication
 mongodbRouter.use(requireAuth, requireRole('admin'));
 
-// POST /api/mongodb/test-connection
+// POST /api/mongodb/prune-alerts (Admin only)
+mongodbRouter.post('/prune-alerts', async (_req: Request, res: Response) => {
+  try {
+    const prunedCount = await pruneDuplicateAlerts();
+    return res.json({ success: true, prunedCount });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/mongodb/purge-samples (Admin only)
+mongodbRouter.post('/purge-samples', async (_req: Request, res: Response) => {
+  try {
+    const { deletedCounts } = await purgeAllDemoAndTestData();
+    return res.json({ 
+      success: true, 
+      message: 'Purged all demo, test, and dummy data from MongoDB Atlas. Real API data preserved.',
+      deletedCounts
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// POST /api/mongodb/test-connection (Admin only)
 mongodbRouter.post('/test-connection', async (req: Request, res: Response) => {
   const { mongodbUri } = req.body || {};
   const uriToTest = mongodbUri || getMongoUri();
@@ -69,7 +71,7 @@ mongodbRouter.post('/test-connection', async (req: Request, res: Response) => {
   return res.json(result);
 });
 
-// POST /api/mongodb/config
+// POST /api/mongodb/config (Admin only)
 mongodbRouter.post('/config', async (req: Request, res: Response) => {
   const { mongodbUri } = req.body || {};
   if (!mongodbUri || typeof mongodbUri !== 'string') {
@@ -83,8 +85,9 @@ mongodbRouter.post('/config', async (req: Request, res: Response) => {
       success: true,
       connected: true,
       latencyMs: result.latencyMs,
+      isEphemeral: true,
       stats,
-      message: 'MongoDB connection established and runtime configuration saved successfully.'
+      message: 'MongoDB connection established and active in-memory for this runtime session. Note: For permanent persistence across serverless cold starts or reboots, configure MONGODB_URI in your deployment environment variables (e.g. Vercel / Railway).'
     });
   } else {
     return res.status(400).json({

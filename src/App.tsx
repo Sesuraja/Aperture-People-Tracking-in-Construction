@@ -182,6 +182,28 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ id?: string; email?: string; name?: string; role?: string } | null>(null);
   
+  const [brandTitle, setBrandTitle] = useState<string>(() => {
+    if (typeof window === 'undefined') return 'Aperture People Tracking';
+    const directName = localStorage.getItem('gao_company_name');
+    if (directName) return directName;
+    try {
+      const cfg = JSON.parse(localStorage.getItem('gao_industry_config') || '{}');
+      return cfg.appTitle || 'Aperture People Tracking';
+    } catch {
+      return 'Aperture People Tracking';
+    }
+  });
+
+  useEffect(() => {
+    const handleSettingsUpdate = (e: any) => {
+      if (e?.detail?.companyName) {
+        setBrandTitle(e.detail.companyName);
+      }
+    };
+    window.addEventListener('gao_settings_updated', handleSettingsUpdate);
+    return () => window.removeEventListener('gao_settings_updated', handleSettingsUpdate);
+  }, []);
+
   // Custom Claims Role-based visibility and access controls
   const [userRole, setUserRole] = useState<string>('operator');
   const [permissions, setPermissions] = useState<any>({});
@@ -315,9 +337,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
               <ApertureLogo variant="horizontal" size="sm" />
               <div className="flex flex-col gap-0.5 mt-2 px-0.5">
                 <span className="text-[11px] font-bold text-slate-800 dark:text-slate-100 tracking-tight leading-tight">
-                  {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config')
-                    ? JSON.parse(localStorage.getItem('gao_industry_config') || '{}').appTitle || 'Aperture People Tracking'
-                    : 'Aperture People Tracking'}
+                  {brandTitle}
                 </span>
                 {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config') && JSON.parse(localStorage.getItem('gao_industry_config') || '{}').subIndustry && (
                   <span className="text-[9px] font-semibold text-[#007BC4] tracking-tight">

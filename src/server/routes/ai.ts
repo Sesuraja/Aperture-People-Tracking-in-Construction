@@ -16,6 +16,7 @@ import {
 } from '../services/industryIntelligenceEngine.js';
 import { getAiConfigStatus, setRuntimeAiKeys, AIProviderName } from '../services/aiEngine.js';
 import { processTelemetryWithAI } from '../services/aiPipeline.js';
+import { DEFAULT_GEMINI_MODEL, DEFAULT_GEMINI_FALLBACK_CANDIDATES } from '../../constants/aiConfig.js';
 
 let activeIndustryPersona = 'You are an intelligent Industrial IoT Safety & Personnel Telemetry AI Director.';
 let activeComplianceStandard = 'Enterprise Safety & Compliance Standards (OSHA / ISO 45001 / JCAHO)';
@@ -48,7 +49,7 @@ async function generateContentWithFallback(ai: any, params: {
   contents: any;
   config?: any;
 }) {
-  const models = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro'];
+  const models = Array.from(new Set([DEFAULT_GEMINI_MODEL, ...DEFAULT_GEMINI_FALLBACK_CANDIDATES]));
   let lastError: any = null;
 
   for (const model of models) {
@@ -269,8 +270,11 @@ aiRouter.get(['/ai/status', '/status'], async (req: Request, res: Response) => {
 });
 
 // POST /api/ai/config-key
-aiRouter.post(['/ai/config-key', '/config-key'], async (req: Request, res: Response) => {
+aiRouter.post(['/ai/config-key', '/config-key'], requireAuth, requireRole('admin'), async (req: Request, res: Response) => {
   const { geminiApiKey, openAiApiKey, claudeApiKey, provider } = req.body || {};
+  if (typeof geminiApiKey === 'string') {
+    setRuntimeGeminiKey(geminiApiKey.trim());
+  }
   setRuntimeAiKeys({
     geminiKey: geminiApiKey,
     openAiKey: openAiApiKey,
@@ -389,19 +393,7 @@ aiRouter.post('/ai/update-industry', async (req: Request, res: Response) => {
   });
 });
 
-// POST /api/ai/config-key
-aiRouter.post('/ai/config-key', requireAuth, requireRole('admin'), (req: Request, res: Response) => {
-  const { geminiApiKey } = req.body || {};
-  if (typeof geminiApiKey === 'string') {
-    setRuntimeGeminiKey(geminiApiKey.trim());
-    return res.json({
-      success: true,
-      configured: Boolean(getGeminiApiKey()),
-      message: geminiApiKey.trim() ? 'Gemini API key connected to server backend successfully.' : 'Gemini API key cleared from runtime.'
-    });
-  }
-  return res.status(400).json({ success: false, error: 'geminiApiKey must be a string' });
-});
+
 
 // GET /api/ai/provider-status - Returns status of Gemini, ChatGPT, Claude AI, and active model
 aiRouter.get(['/ai/provider-status', '/api/ai/provider-status'], (req: Request, res: Response) => {
@@ -699,7 +691,7 @@ Respond ONLY with valid JSON with this exact structure:
 aiRouter.post(['/ai-copilot', '/ai/copilot', '/api/ai-copilot', '/api/ai/copilot'], async (req: Request, res: Response) => {
   const parseResult = copilotSchema.safeParse(req.body);
   if (!parseResult.success) {
-    return res.status(400).json({ error: 'Invalid question payload', details: parseResult.error.errors });
+    return res.status(400).json({ error: 'Invalid question payload', details: parseResult.error.issues });
   }
   const question = parseResult.data.question;
   const history = parseResult.data.history || [];
@@ -861,19 +853,19 @@ aiRouter.post(['/analyze-incident', '/ai/incident-rca'], aiRateLimiter, async (r
   if (!apiKey || isGeminiAuthFailed()) {
     return res.json({
       severityScore: 82,
-      aiSummary: `AI RCA Assessment: Incident '${title || 'Site Hazard Event'}' (${category || 'Near Miss'}, ${severity || 'High'}) in ${locationZone || 'Structural Work Area'} logged into immutable compliance ledger under ${std}. Immediate CAPA containment initiated.`,
-      probableRootCause: 'Proximity breach during heavy equipment slewing operation without secondary flagger verification.',
+      aiSummary: `AI RCA Assessment: Incident '${title || 'Operational Event'}' (${category || 'Safety Incident'}, ${severity || 'High'}) in ${locationZone || 'Designated Operational Area'} logged into immutable compliance ledger under ${std}. Immediate CAPA containment initiated.`,
+      probableRootCause: `Proximity boundary threshold breach in ${locationZone || 'monitored operational sector'} during active operations without secondary verification.`,
       contributingFactors: [
-        'High ambient noise levels obscuring standard equipment travel alarm',
-        'Simultaneous concrete pour and crane swing radius overlap',
-        'Blind spot at structural column junction'
+        `High ambient operational activity obscuring standard audio-visual warning signals in ${locationZone || 'work zone'}`,
+        `Simultaneous high-traffic transit and restricted boundary proximity overlap`,
+        `Sensory or line-of-sight limitations at ${locationZone || 'designated zone'} interface`
       ],
       capaRecommendations: [
-        'Recalibrate UHF RFID exclusion zone audio-visual beacons to 5-meter standoff boundary',
-        'Conduct mandatory toolbox refresher for riggers and crane operators before next shift',
-        'Deploy redundant AI vision safety boundary detection camera on mast'
+        `Recalibrate UHF RFID exclusion zone boundaries and audio-visual beacons for ${locationZone || 'monitored zone'}`,
+        `Conduct mandatory ${indName} safety briefing and operational protocol refresher before next shift`,
+        `Deploy redundant RFID reader verification portal at ${locationZone || 'zone perimeter'}`
       ],
-      regulatoryImpact: `${std} Protocol - Minor Near-Miss recordable, zero lost-time days.`
+      regulatoryImpact: `${std} Protocol - Minor incident recordable under ${indName} compliance framework, zero lost-time days.`
     });
   }
 

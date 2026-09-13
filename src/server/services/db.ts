@@ -7,27 +7,14 @@ import { MongoClient, Db, ObjectId, Binary } from 'mongodb';
 import dotenv from 'dotenv';
 import fs from 'fs';
 import path from 'path';
+import { INDUSTRY_PRESET_PROFILES } from '../../types/industryIntelligence.js';
 
 dotenv.config();
 
 let mongoClient: MongoClient | null = null;
 let mongoDb: Db | null = null;
+// In-memory runtime configured MongoDB URI (never written unencrypted to disk)
 let runtimeMongoUri: string | null = null;
-
-const PERSISTENT_CONFIG_FILE = path.join(process.cwd(), '.mongo_runtime.json');
-
-// Load any runtime configured MongoDB URI from disk on startup
-try {
-  if (fs.existsSync(PERSISTENT_CONFIG_FILE)) {
-    const raw = fs.readFileSync(PERSISTENT_CONFIG_FILE, 'utf-8');
-    const parsed = JSON.parse(raw);
-    if (parsed.mongodbUri) {
-      runtimeMongoUri = parsed.mongodbUri;
-    }
-  }
-} catch (e) {
-  // Ignore filesystem cache error
-}
 
 // Transient in-memory store for dev fallback when MongoDB is not connected
 const inMemoryStore: Record<string, any[]> = {
@@ -311,10 +298,7 @@ export async function initDatabase(customUri?: string): Promise<void> {
     mongoDb = mongoClient.db();
     runtimeMongoUri = uri;
 
-    // Persist runtime URI to disk
-    try {
-      fs.writeFileSync(PERSISTENT_CONFIG_FILE, JSON.stringify({ mongodbUri: uri, updatedAt: new Date().toISOString() }), 'utf-8');
-    } catch {}
+    // Note: Runtime Mongo URI is kept securely in memory and never written to unencrypted disk files
 
     console.log(`[DB Service] Successfully connected to MongoDB Atlas database (DATA_MODE=${getDataMode()}).`);
 
@@ -504,8 +488,8 @@ export async function getCollectionDocs(
       const sort   = opts?.sort   ?? (DEFAULT_LIMITS[colName] ? { createdAt: -1 } : {});
 
       const query: any = {};
-      if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-        const isSpatialConfig = (colName === 'map_configurations' || colName === 'zones' || colName === 'projects' || colName === 'sites');
+      if (organizationId && organizationId !== 'ALL' && colName !== 'organizations' && colName !== 'settings') {
+        const isSpatialConfig = ['map_configurations', 'zones', 'geofences', 'projects', 'sites', 'floorplans', 'settings', 'organizations'].includes(colName);
         if (!isSpatialConfig) {
           if (organizationId === 'default' || organizationId === 'org_main' || organizationId === 'org_aperture_default') {
             query.$or = [
@@ -548,7 +532,7 @@ export async function getCollectionDocs(
   }
   const items = inMemoryStore[colName] || [];
   let result = items;
-  if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
+  if (organizationId && organizationId !== 'ALL' && colName !== 'organizations' && colName !== 'settings') {
     result = items.filter((item: any) => 
       (organizationId === 'default' || organizationId === 'org_main' || organizationId === 'org_aperture_default')
         ? (!item.organizationId || item.organizationId === 'default' || item.organizationId === 'org_main' || item.organizationId === 'org_aperture_default')
@@ -581,9 +565,8 @@ export async function getDocById(colName: string, id: string, organizationId?: s
       }
 
       let query: any = { $or: orClauses };
-      if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
-        const isSpatialConfig = (colName === 'map_configurations' || colName === 'zones' || colName === 'projects' || colName === 'sites');
-        if (!isSpatialConfig) {
+      const isGlobalOrSystemConfig = ['map_configurations', 'zones', 'geofences', 'projects', 'sites', 'floorplans', 'settings', 'organizations'].includes(colName);
+      if (organizationId && organizationId !== 'ALL' && !isGlobalOrSystemConfig) {
           if (DEFAULT_ORGS.includes(organizationId)) {
             query = {
               $and: [
@@ -604,7 +587,6 @@ export async function getDocById(colName: string, id: string, organizationId?: s
               ]
             };
           }
-        }
       }
 
       const doc = await mongoDb.collection(colName).findOne(query);
@@ -626,7 +608,7 @@ export async function getDocById(colName: string, id: string, organizationId?: s
     String(i.hardhatTagId || '').toLowerCase().trim() === idLower
   );
   if (!doc) return null;
-  if (organizationId && organizationId !== 'ALL' && colName !== 'organizations') {
+  if (organizationId && organizationId !== 'ALL' && colName !== 'organizations' && colName !== 'settings') {
     const docOrg = doc.organizationId;
     if (docOrg && docOrg !== organizationId) {
       const isBothDefault = DEFAULT_ORGS.includes(docOrg) && DEFAULT_ORGS.includes(organizationId);
@@ -686,10 +668,10 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
       }
 
       let matchFilter: any;
-      const isSpatialConfig = ['map_configurations', 'zones', 'geofences', 'projects', 'sites', 'floorplans'].includes(colName);
+      const isSpatialConfig = ['map_configurations', 'zones', 'geofences', 'projects', 'sites', 'floorplans', 'settings', 'organizations'].includes(colName);
       if (isSpatialConfig) {
         matchFilter = { $or: orClauses };
-      } else if (cleanDoc.organizationId && colName !== 'organizations') {
+      } else if (cleanDoc.organizationId && colName !== 'organizations' && colName !== 'settings') {
         if (DEFAULT_ORGS.includes(cleanDoc.organizationId)) {
           matchFilter = {
             $and: [
@@ -1363,8 +1345,47 @@ export async function wipeAllCollections(organizationId?: string): Promise<{ wip
  * Does NOT seed synthetic demo data — all data must exist in MongoDB already.
  */
 export async function bootstrapMapAndZoneDefinitions(): Promise<void> {
-  // Seeding disabled: only show real MongoDB data.
-  // Call seedAllDemoData(true) manually from admin if you want to seed empty collections.
+  try {
+    const existingZones = await getCollectionDocs('zones', undefined, 'default');
+    if (!existingZones || existingZones.length === 0) {
+      const DEFAULT_GRID_LAYOUT = [
+        { x: 6.5, y: 8.0, width: 23.5, height: 21.5 },
+        { x: 36.5, y: 8.0, width: 26.0, height: 21.5 },
+        { x: 69.0, y: 8.0, width: 24.5, height: 21.5 },
+        { x: 6.5, y: 38.0, width: 23.5, height: 21.5 },
+        { x: 36.5, y: 38.0, width: 26.0, height: 21.5 },
+        { x: 69.0, y: 38.0, width: 24.5, height: 21.5 },
+        { x: 6.5, y: 68.0, width: 23.5, height: 21.5 },
+        { x: 36.5, y: 68.0, width: 26.0, height: 21.5 },
+        { x: 69.0, y: 68.0, width: 24.5, height: 21.5 }
+      ];
+
+      const areas = INDUSTRY_PRESET_PROFILES.construction.functionalAreas || [];
+      const defaultZones = areas.map((area, idx) => {
+        const grid = DEFAULT_GRID_LAYOUT[idx] || DEFAULT_GRID_LAYOUT[0];
+        return {
+          id: area.id || `zone_${idx + 1}`,
+          zoneId: area.id || `zone_${idx + 1}`,
+          name: area.name,
+          x: grid.x,
+          y: grid.y,
+          width: grid.width,
+          height: grid.height,
+          category: (area.category || 'ZONE').toUpperCase(),
+          hazardLevel: area.hazardLevel || 'normal',
+          maxCapacity: area.maxOccupancy || (area.hazardLevel === 'critical' ? 4 : area.hazardLevel === 'warning' ? 8 : 20),
+          organizationId: 'default'
+        };
+      });
+
+      for (const z of defaultZones) {
+        await upsertDoc('zones', z, 'default');
+      }
+      console.log('[DB Service] Seeded default zone definitions into database.');
+    }
+  } catch (err: any) {
+    console.warn('[DB Service] Zone bootstrap skipped:', err?.message || err);
+  }
 }
 
 /**
@@ -1577,7 +1598,7 @@ export async function purgeAllDemoAndTestData(): Promise<{ deletedCounts: Record
       'Sarah Jenkins', 'David Wilson', 'WebSocket Tester', 'MQTT Tester'
     ];
 
-    const tagFilter = {
+    const tagFilter: any = {
       $or: [
         { id: { $in: fakeIds } },
         { _id: { $in: fakeIds } },

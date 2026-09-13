@@ -30,13 +30,16 @@ const CATEGORY_CONFIG: Record<AlertCategory, { icon: React.ElementType; color: s
   Visitor: { icon: UserX, color: 'text-violet-600', bg: 'bg-violet-50 dark:bg-violet-950/40', border: 'border-violet-200 dark:border-violet-800' },
   Maintenance: { icon: Wrench, color: 'text-orange-600', bg: 'bg-orange-50 dark:bg-orange-950/40', border: 'border-orange-200 dark:border-orange-800' },
   Weather: { icon: CloudLightning, color: 'text-cyan-600', bg: 'bg-cyan-50 dark:bg-cyan-950/40', border: 'border-cyan-200 dark:border-cyan-800' },
-  System: { icon: Cpu, color: 'text-slate-700 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-800', border: 'border-slate-300 dark:border-slate-700' }
+  System: { icon: Cpu, color: 'text-slate-700 dark:text-slate-300', bg: 'bg-slate-100 dark:bg-slate-800', border: 'border-slate-300 dark:border-slate-700' },
+  Operational: { icon: Activity, color: 'text-sky-600', bg: 'bg-sky-50 dark:bg-sky-950/40', border: 'border-sky-200 dark:border-sky-800' },
+  Compliance: { icon: ShieldCheck, color: 'text-teal-600', bg: 'bg-teal-50 dark:bg-teal-950/40', border: 'border-teal-200 dark:border-teal-800' },
+  Asset: { icon: Layers, color: 'text-purple-600', bg: 'bg-purple-50 dark:bg-purple-950/40', border: 'border-purple-200 dark:border-purple-800' }
 };
 
 const CATEGORIES_LIST: AlertCategory[] = [
   'Emergency', 'Safety', 'Security', 'Equipment', 
   'Reader', 'Worker', 'Visitor', 'Maintenance', 
-  'Weather', 'System'
+  'Weather', 'System', 'Operational', 'Compliance', 'Asset'
 ];
 
 const DEFAULT_OFFICERS = [
@@ -399,6 +402,14 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
   const officersList = useMemo(() => getOfficersForIndustry(intelligenceProfile, activeIndustry), [intelligenceProfile, activeIndustry]);
   const aiRulesCatalog = useMemo(() => getAiRulesCatalogForIndustry(activeIndustry, intelligenceProfile), [activeIndustry, intelligenceProfile]);
   const primaryZone = intelligenceProfile?.functionalAreas?.[0]?.name || `${zoneLabel} 1`;
+
+  // Dynamic Categories list based on active industry preset
+  const activeCategoriesList = useMemo(() => {
+    if (config?.defaultAlertCategories && config.defaultAlertCategories.length > 0) {
+      return config.defaultAlertCategories as AlertCategory[];
+    }
+    return CATEGORIES_LIST;
+  }, [config?.defaultAlertCategories]);
 
   // Filters & State
   const [selectedCategory, setSelectedCategory] = useState<AlertCategory | 'All'>('All');
@@ -1428,11 +1439,11 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
 
   // Chart Data for Analytics Tab
   const categoryChartData = useMemo(() => {
-    return CATEGORIES_LIST.map(cat => ({
+    return activeCategoriesList.map(cat => ({
       name: cat,
       count: alertList.filter(a => a.category === cat).length
     })).filter(c => c.count > 0);
-  }, [alertList]);
+  }, [activeCategoriesList, alertList]);
 
   const priorityPieData = useMemo(() => {
     const counts = { Critical: 0, High: 0, Medium: 0, Low: 0 };
@@ -1871,8 +1882,13 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
               🔵 Information ({metrics.infoCount})
             </button>
 
-            {CATEGORIES_LIST.map(cat => {
-              const cfg = CATEGORY_CONFIG[cat];
+            {activeCategoriesList.map(cat => {
+              const cfg = CATEGORY_CONFIG[cat] || {
+                icon: Activity,
+                color: 'text-sky-600',
+                bg: 'bg-sky-50 dark:bg-sky-950/40',
+                border: 'border-sky-200 dark:border-sky-800'
+              };
               const Icon = cfg.icon;
               const count = alertList.filter(a => a.category === cat).length;
 
@@ -2744,7 +2760,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                     onChange={e => setNewAlert({ ...newAlert, category: e.target.value as any })}
                     className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold"
                   >
-                    {CATEGORIES_LIST.map(c => <option key={c} value={c}>{c}</option>)}
+                    {activeCategoriesList.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
 
@@ -2870,7 +2886,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                     className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold"
                   >
                     <option value="All">All Categories</option>
-                    {CATEGORIES_LIST.map(c => <option key={c} value={c}>{c}</option>)}
+                    {activeCategoriesList.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
 

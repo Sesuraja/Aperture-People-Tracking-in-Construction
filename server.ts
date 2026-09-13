@@ -44,28 +44,75 @@ async function startServer() {
   app.use(express.json({ limit: '10mb' }));
   app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-  // Middleware - Inbound Request Logging
+  // Helper to deep-redact sensitive fields from logs
+  function sanitizeRequestBody(body: any): any {
+    if (!body || typeof body !== 'object') return body;
+    if (Array.isArray(body)) return body.map(sanitizeRequestBody);
+    const sensitivePattern = /password|token|secret|apikey|authorization|credential|mongodburi|privkey/i;
+    const sanitized: Record<string, any> = {};
+    for (const [key, value] of Object.entries(body)) {
+      if (sensitivePattern.test(key)) {
+        sanitized[key] = '[REDACTED]';
+      } else if (typeof value === 'object' && value !== null) {
+        sanitized[key] = sanitizeRequestBody(value);
+      } else {
+        sanitized[key] = value;
+      }
+    }
+    return sanitized;
+  }
+
+  // Middleware - Inbound Request Logging (with sensitive data redaction)
   app.use((req, res, next) => {
     if (req.method === 'POST' || req.method === 'PUT') {
       console.log(`[INBOUND REQUEST] ${req.method} ${req.url} from IP: ${req.ip} | User-Agent: ${req.headers['user-agent'] || 'none'}`);
       if (req.body && Object.keys(req.body).length > 0) {
-        const bodyStr = JSON.stringify(req.body) || '';
+        const cleanBody = sanitizeRequestBody(req.body);
+        const bodyStr = JSON.stringify(cleanBody) || '';
         console.log(`[INBOUND BODY]`, bodyStr.slice(0, 300));
       }
     }
     next();
   });
 
-  // CORS restriction
-  const configuredOrigins = process.env.CORS_ORIGINS
-    ? process.env.CORS_ORIGINS.split(',').map(s => s.trim())
-    : [];
+  // CORS restriction - fail-closed in production and strict local origin in development
+  const configuredOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  if (process.env.APP_URL) {
+    try {
+      const appUrlOrigin = new URL(process.env.APP_URL).origin;
+      if (!configuredOrigins.includes(appUrlOrigin)) {
+        configuredOrigins.push(appUrlOrigin);
+      }
+    } catch {}
+  }
+
+  const isProduction = process.env.NODE_ENV === 'production';
 
   app.use(cors({
     origin: (origin, callback) => {
-      if (!origin || configuredOrigins.length === 0 || configuredOrigins.includes(origin) || process.env.NODE_ENV !== 'production') {
+      // Allow non-browser server-to-server or webhook calls (no Origin header)
+      if (!origin) {
         return callback(null, true);
       }
+
+      // Explicitly allowed origins configured via CORS_ORIGINS or APP_URL
+      if (configuredOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      // In development mode, strictly allow local dev origins (localhost / 127.0.0.1)
+      if (!isProduction) {
+        const isLocalDev = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+        if (isLocalDev) {
+          return callback(null, true);
+        }
+      }
+
+      console.warn(`[CORS Blocked] Origin not allowed: ${origin}`);
       return callback(new Error('Not allowed by CORS restrictions'));
     },
     credentials: true
@@ -83,6 +130,10 @@ async function startServer() {
   app.use('/api', rfidRouter); // Register alias routes like /api/GetTagsInRealtime
   app.use('/api', aiRouter);
   app.use('/api/data', dataRouter);
+  app.use('/api/zones', (req, res, next) => {
+    req.url = '/zones' + (req.url === '/' ? '' : req.url);
+    dataRouter(req, res, next);
+  });
   app.use('/api/events', eventsRouter);
   app.use('/api/mongodb', mongodbRouter);
   app.use('/api/connections', connectionsRouter);

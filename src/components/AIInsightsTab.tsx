@@ -111,7 +111,7 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
   } = useTerminology();
 
   const activeIndustry = intelligenceProfile?.industry || config?.industryId || 'construction';
-  const activeSubIndustry = intelligenceProfile?.subIndustry || config?.name || 'Operations Intelligence';
+  const activeSubIndustry = intelligenceProfile?.subIndustry || config?.subIndustry || config?.industryName || 'Operations Intelligence';
   const complianceFramework = intelligenceProfile?.complianceFramework || 'OSHA / ISO 45001 Telemetry Standards';
 
   // Live workforce registry from MongoDB registered_people

@@ -240,7 +240,7 @@ export async function fetchTagsInRealtime(customHost?: string): Promise<any[]> {
 
     if (validTags.length === 0) {
       // If hardware scanner queue is temporarily empty, check MongoDB live_tags for verified real telemetry tags
-      const liveDocs = await getCollectionDocs('live_tags', 'default').catch(() => []);
+      const liveDocs = await getCollectionDocs('live_tags', undefined, 'default').catch(() => []);
       const realLiveDocs = (liveDocs || []).filter((t: any) => isRealTelemetryTag(t.TagID || t.tagId || t.id));
       if (realLiveDocs.length > 0) {
         return realLiveDocs.map((t: any) => ({
@@ -462,18 +462,18 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
     };
     await upsertDoc('devices', deviceDoc, orgId).catch(() => {});
 
-    // 4. Auto-generate Attendance timecard in 'attendance_logs' (EDT Real-Time Standard)
+    // 4. Auto-generate Attendance timecard in 'attendance_logs' (UTC Real-Time Standard)
     let enterDate = new Date(item.enter);
     if (typeof item.enter === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(item.enter) && !item.enter.endsWith('Z')) {
       const utcDate = new Date(item.enter.replace(' ', 'T') + 'Z');
       if (!isNaN(utcDate.getTime())) enterDate = utcDate;
     }
     const timeStr = !isNaN(enterDate.getTime()) 
-      ? enterDate.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' }) + ' EDT' 
-      : '08:00 AM EDT';
+      ? enterDate.toLocaleTimeString('en-US', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' }) + ' UTC' 
+      : '08:00 AM UTC';
     const dateStr = !isNaN(enterDate.getTime()) 
-      ? enterDate.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }) 
-      : new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+      ? enterDate.toLocaleDateString('en-CA', { timeZone: 'UTC' }) 
+      : new Date().toLocaleDateString('en-CA', { timeZone: 'UTC' });
 
     const attDoc = {
       id: `att_${tid}`,
@@ -524,6 +524,7 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
       role: workerRole,
       status: 'Active',
       updatedAt: nowIso,
+      createdAt: nowIso,
       expireAt: tenDaysLater
     };
     await upsertDoc('live_tags', liveTagDoc, orgId).catch(() => {});
@@ -639,6 +640,22 @@ export async function syncPeopleTrackingData(options?: {
         realtimeTags = await fetchTagsInRealtime(host);
         if (realtimeTags.length > 0) {
           await bulkWriteRealtimeTags(realtimeTags, orgId).catch(() => {});
+          const nowIso = new Date().toISOString();
+          const tenDaysLater = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+          for (const tag of realtimeTags) {
+            const tid = tag.TagID || tag.tagId || tag.id;
+            await upsertDoc('live_tags', {
+              ...tag,
+              id: tid,
+              _id: tid,
+              TagID: tid,
+              tagId: tid,
+              organizationId: orgId,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+              expireAt: tenDaysLater
+            }, orgId).catch(() => {});
+          }
         }
       } catch (e: any) {
         console.warn('[PeopleTrackingAPI] Real-time tags fetch warning:', e.message);

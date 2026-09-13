@@ -12,6 +12,7 @@ import {
 } from './aiEngine.js';
 import { broadcastWebSocketEvent } from './websocket.js';
 import { broadcastSseEvent } from './sse.js';
+import { getTenantIntelligenceProfile } from './industryIntelligenceEngine.js';
 
 const recentAlertsCooldown = new Map<string, number>();
 const recentTagLocationHistory = new Map<string, { location: string; timestamp: number }>();
@@ -255,18 +256,18 @@ export async function processTelemetryWithAI(
       await upsertDoc('people', personDoc, orgId);
     }
 
-    // 3c. Persist to attendance_logs (so Attendance tab displays live on-site workforce telemetry in EDT)
+    // 3c. Persist to attendance_logs (so Attendance tab displays live on-site workforce telemetry in UTC)
     let enterDate = new Date(item.timestamp || now);
     if (typeof item.timestamp === 'string' && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(item.timestamp) && !item.timestamp.endsWith('Z')) {
       const utcDate = new Date(item.timestamp.replace(' ', 'T') + 'Z');
       if (!isNaN(utcDate.getTime())) enterDate = utcDate;
     }
     const timeStr = !isNaN(enterDate.getTime())
-      ? enterDate.toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit' }) + ' EDT'
-      : '08:00 AM EDT';
+      ? enterDate.toLocaleTimeString('en-US', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit' }) + ' UTC'
+      : '08:00 AM UTC';
     const dateStr = !isNaN(enterDate.getTime())
-      ? enterDate.toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
-      : now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' });
+      ? enterDate.toLocaleDateString('en-CA', { timeZone: 'UTC' })
+      : now.toLocaleDateString('en-CA', { timeZone: 'UTC' });
     const attendanceDoc = {
       id: `att_${tagId}`,
       personId: tagId,
@@ -330,6 +331,9 @@ export async function processTelemetryWithAI(
   }
 
   // 5. Persist Generated Incidents to MongoDB & Broadcast
+  const tenantProfile = await getTenantIntelligenceProfile(organizationId);
+  const defaultCategory = tenantProfile?.incidentCategories?.[0]?.category || 'Site Safety Breach';
+
   for (const incident of analysisResult.incidents) {
     const incDoc = {
       ...incident,
@@ -342,10 +346,10 @@ export async function processTelemetryWithAI(
     // Also persist with normalized enterprise structure for IncidentsTab
     const enterpriseIncDoc = {
       id: incident.id,
-      title: incident.title || 'Live Telemetry Incident',
-      category: incident.category || 'Exclusion Zone Breach',
+      title: incident.title || `${tenantProfile.terminology.siteLabel || 'Live'} Telemetry Incident`,
+      category: incident.category || defaultCategory,
       severity: incident.severity || 'Medium',
-      workflowStatus: incident.status === 'Closed' ? 'Closed' : 'Open',
+      workflowStatus: incident.status === 'Resolved' ? 'Closed' : incident.status === 'Investigating' ? 'Investigation' : 'Open',
       locationZone: incident.locationZone || 'Site Perimeter',
       reportedBy: 'GAO RFID Live AI Telemetry',
       assignedOfficer: 'Operations Duty Lead',

@@ -35,1597 +35,16 @@ module.exports = __toCommonJS(server_exports);
 var import_dotenv2 = __toESM(require("dotenv"), 1);
 var import_express12 = __toESM(require("express"), 1);
 var import_http = __toESM(require("http"), 1);
-var import_path2 = __toESM(require("path"), 1);
+var import_path = __toESM(require("path"), 1);
 var import_cors = __toESM(require("cors"), 1);
 var import_helmet = __toESM(require("helmet"), 1);
-var import_fs2 = __toESM(require("fs"), 1);
+var import_fs = __toESM(require("fs"), 1);
 var import_vite = require("vite");
 
 // src/server/services/db.ts
 var import_dns = __toESM(require("dns"), 1);
 var import_mongodb = require("mongodb");
 var import_dotenv = __toESM(require("dotenv"), 1);
-var import_fs = __toESM(require("fs"), 1);
-var import_path = __toESM(require("path"), 1);
-
-// src/server/services/dataPolicy.ts
-var import_crypto = __toESM(require("crypto"), 1);
-function isProductionDataMode() {
-  const mode = (process.env.DATA_MODE || "production").trim().toLowerCase();
-  return mode !== "demo";
-}
-function isDemoDataMode() {
-  const mode = (process.env.DATA_MODE || "").trim().toLowerCase();
-  return mode === "demo";
-}
-function getDataMode() {
-  return isDemoDataMode() ? "demo" : "production";
-}
-function validateTelemetrySource(source) {
-  const s = String(source || "").trim().toLowerCase();
-  const isSynthetic = s.includes("demo") || s.includes("simulation") || s.includes("simulator") || s.includes("mock") || s.includes("fake") || s.includes("synthetic") || s.includes("dummy") || s.includes("sample");
-  if (isSynthetic) {
-    if (isProductionDataMode()) {
-      console.warn(`[INGEST] rejected: synthetic data rejected in production mode (DATA_MODE=${getDataMode()}, source="${source}")`);
-      return {
-        valid: false,
-        normalizedSource: s,
-        error: `[DEMO] Synthetic/demo data generation is disabled in production mode (DATA_MODE=${getDataMode()})`
-      };
-    }
-  }
-  return {
-    valid: true,
-    normalizedSource: source || "rfid_hardware"
-  };
-}
-function isRealTelemetryTag(tagId) {
-  if (!tagId || typeof tagId !== "string") return false;
-  const tid = tagId.trim();
-  if (!tid) return false;
-  const testPrefixes = [
-    "test_",
-    "batch-",
-    "uhf-real-",
-    "tag_diag",
-    "diag_",
-    "tag_hist_",
-    "tag_rt_",
-    "tag_raw_",
-    "tag_api_worker_",
-    "tag_123",
-    "w-101",
-    "worker-1",
-    "worker-2",
-    "worker-3"
-  ];
-  const tidLower = tid.toLowerCase();
-  for (const prefix of testPrefixes) {
-    if (tidLower.startsWith(prefix) || tidLower === prefix) {
-      return false;
-    }
-  }
-  return true;
-}
-function generateEventHash(tagId, timestamp, location, readerId, orgId = "default", externalEventId) {
-  if (externalEventId && String(externalEventId).trim()) {
-    return String(externalEventId).trim();
-  }
-  let tsStr = "";
-  if (timestamp instanceof Date) {
-    tsStr = timestamp.toISOString();
-  } else if (typeof timestamp === "number") {
-    tsStr = new Date(timestamp).toISOString();
-  } else {
-    tsStr = String(timestamp || "").trim();
-  }
-  const rawKey = `${String(tagId).trim().toUpperCase()}|${tsStr}|${String(location).trim().toUpperCase()}|${String(readerId || "").trim().toUpperCase()}|${String(orgId).trim()}`;
-  return import_crypto.default.createHash("sha256").update(rawKey).digest("hex").substring(0, 16);
-}
-
-// src/server/services/db.ts
-try {
-  import_dns.default.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
-} catch {
-}
-import_dotenv.default.config();
-var mongoClient = null;
-var mongoDb = null;
-var runtimeMongoUri = null;
-var PERSISTENT_CONFIG_FILE = import_path.default.join(process.cwd(), ".mongo_runtime.json");
-try {
-  if (import_fs.default.existsSync(PERSISTENT_CONFIG_FILE)) {
-    const raw = import_fs.default.readFileSync(PERSISTENT_CONFIG_FILE, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (parsed.mongodbUri) {
-      runtimeMongoUri = parsed.mongodbUri;
-    }
-  }
-} catch (e) {
-}
-var inMemoryStore = {
-  organizations: [],
-  users: [],
-  permissions: [],
-  role_permissions: [],
-  registered_people: [],
-  devices: [],
-  hardware_readers: [],
-  hardware_tag_mappings: [],
-  third_party_apis: [],
-  visitors: [],
-  visitor_security_list: [],
-  visitor_access_tokens: [],
-  visitor_passes: [],
-  visitor_checkin_logs: [],
-  visitor_access_logs: [],
-  evacuation_status: [],
-  attendance_logs: [],
-  leave_requests: [],
-  shift_schedules: [],
-  alerts: [],
-  alerts_enterprise: [],
-  alert_rules: [],
-  alert_dispatch_logs: [],
-  emergency_broadcasts: [],
-  live_tags: [],
-  real_time_tags: [],
-  rfid_realtime_events: [],
-  tag_history: [],
-  audit_logs: [],
-  settings: [],
-  incidents_enterprise: [],
-  zones: [],
-  map_configurations: [],
-  geofences: [],
-  reader_zone_mappings: [],
-  people: [],
-  ai_insights: [],
-  incidents: [],
-  playback_history: []
-};
-function sanitizeMongoUri(rawUri) {
-  if (!rawUri || typeof rawUri !== "string") return "";
-  let uri = rawUri.trim();
-  if (uri.startsWith('"') && uri.endsWith('"') || uri.startsWith("'") && uri.endsWith("'")) {
-    uri = uri.slice(1, -1).trim();
-  }
-  return uri;
-}
-function getMongoUri() {
-  const uri = runtimeMongoUri || process.env.MONGODB_URI || "";
-  return sanitizeMongoUri(uri);
-}
-var collectionReadCache = /* @__PURE__ */ new Map();
-var COLLECTION_CACHE_TTL_MS = 4e3;
-function invalidateCollectionCache(colName) {
-  if (colName) {
-    for (const key of Array.from(collectionReadCache.keys())) {
-      if (key === colName || key.startsWith(`${colName}:`)) {
-        collectionReadCache.delete(key);
-      }
-    }
-  } else {
-    collectionReadCache.clear();
-  }
-}
-function convertImagesToBinary(doc) {
-  if (!doc || typeof doc !== "object") return doc;
-  const out = { ...doc };
-  const imageFieldKeys = ["floorplanUrl", "floorplanData", "imageData", "url", "avatar", "image"];
-  for (const key of imageFieldKeys) {
-    const val = out[key];
-    if (typeof val === "string" && val.startsWith("data:image/")) {
-      const match = val.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
-      if (match) {
-        const mimeType = match[1] === "svg+xml" ? "image/svg+xml" : `image/${match[1]}`;
-        const base64Data = match[2];
-        try {
-          const buffer = Buffer.from(base64Data, "base64");
-          if (buffer.length <= 15 * 1024 * 1024) {
-            out.imageBinary = new import_mongodb.Binary(buffer);
-            out.floorplanBinary = new import_mongodb.Binary(buffer);
-            out.contentType = mimeType;
-            out.imageSize = buffer.length;
-            out.isBinary = true;
-            out.storedAs = "bson_binary";
-          }
-        } catch (e) {
-          console.warn(`[DB Service] Failed to convert image to binary for field ${key}:`, e.message);
-        }
-      }
-    }
-  }
-  return out;
-}
-function serializeBinaryImages(doc) {
-  if (!doc || typeof doc !== "object") return doc;
-  const out = { ...doc };
-  const binaryField = out.imageBinary || out.floorplanBinary || out.binaryData;
-  if (binaryField) {
-    try {
-      let buffer = null;
-      if (Buffer.isBuffer(binaryField)) {
-        buffer = binaryField;
-      } else if (binaryField && typeof binaryField.buffer === "object" && binaryField.buffer) {
-        buffer = Buffer.from(binaryField.buffer);
-      } else if (binaryField && typeof binaryField.value === "function") {
-        buffer = Buffer.from(binaryField.value());
-      }
-      if (buffer && buffer.length > 0) {
-        const mimeType = out.contentType || "image/webp";
-        const dataUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
-        if (!out.floorplanUrl || out.floorplanUrl.startsWith("data:") === false) {
-          out.floorplanUrl = dataUrl;
-        }
-        if (!out.url || out.url.startsWith("data:") === false) {
-          out.url = dataUrl;
-        }
-        out.imageSize = buffer.length;
-        out.contentType = mimeType;
-        out.isBinary = true;
-      }
-    } catch (e) {
-      console.warn("[DB Service] Error serializing BSON binary image:", e.message);
-    }
-  }
-  return out;
-}
-function offloadBase64Images(doc) {
-  return doc;
-}
-var DATA_RETENTION_COLLECTIONS = [
-  "alerts",
-  "incidents",
-  "ai_insights",
-  "analytics_metrics",
-  "analytics_reports",
-  "real_time_tags",
-  "live_tags",
-  "rfid_realtime_events",
-  "tag_history",
-  "playback_history",
-  "webhook_logs",
-  "audit_logs",
-  "daily_reports",
-  "notifications",
-  "system_events"
-];
-var indexesInitialized = false;
-var cleanupsInitialized = false;
-async function initDatabaseIndexes() {
-  if (!mongoDb) return;
-  if (indexesInitialized) return;
-  indexesInitialized = true;
-  const indexSpecs = [
-    { col: "rfid_realtime_events", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
-    { col: "tag_history", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
-    { col: "real_time_tags", spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
-    { col: "live_tags", spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
-    { col: "hardware_readers", spec: { readerId: 1, organizationId: 1 }, options: { unique: true, background: true } },
-    { col: "ai_insights", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
-    { col: "incidents", spec: { id: 1, organizationId: 1 }, options: { background: true } },
-    { col: "alerts", spec: { id: 1, organizationId: 1 }, options: { background: true } },
-    { col: "analytics_metrics", spec: { id: 1, organizationId: 1 }, options: { background: true } }
-  ];
-  for (const { col, spec, options } of indexSpecs) {
-    try {
-      await mongoDb.collection(col).createIndex(spec, options);
-    } catch (err) {
-      console.warn(`[DB Service] Index initialization note for ${col}:`, err.message);
-    }
-  }
-  const TEN_DAYS_SECONDS = 10 * 24 * 60 * 60;
-  for (const col of DATA_RETENTION_COLLECTIONS) {
-    try {
-      await mongoDb.collection(col).createIndex({ expireAt: 1 }, { expireAfterSeconds: 0, background: true });
-    } catch (err) {
-      console.warn(`[DB Service] TTL index note (expireAt) for ${col}:`, err.message);
-    }
-    try {
-      await mongoDb.collection(col).createIndex({ createdAt: 1 }, { expireAfterSeconds: TEN_DAYS_SECONDS, background: true });
-    } catch (err) {
-      console.warn(`[DB Service] TTL index note (createdAt) for ${col}:`, err.message);
-    }
-  }
-  const coreCollections = [
-    "rfid_realtime_events",
-    "tag_history",
-    "real_time_tags",
-    "live_tags",
-    "hardware_readers",
-    "ai_insights",
-    "zones",
-    "map_configurations",
-    "registered_people",
-    "people",
-    "assets",
-    "vehicles",
-    "cameras",
-    "sensors",
-    "infrastructure",
-    "alerts",
-    "devices",
-    "visitors",
-    "settings",
-    "projects",
-    "floorplans",
-    "attendance_logs",
-    "audit_logs",
-    "visitor_access_logs",
-    "visitor_security_list",
-    "visitor_access_tokens"
-  ];
-  for (const col of coreCollections) {
-    try {
-      await mongoDb.collection(col).createIndex({ organizationId: 1 }, { background: true });
-      await mongoDb.collection(col).createIndex({ id: 1 }, { background: true });
-      await mongoDb.collection(col).createIndex({ organizationId: 1, createdAt: -1 }, { background: true });
-    } catch {
-    }
-  }
-  console.log("[DB Service] MongoDB deduplication, uniqueness, and 10-day retention TTL indexes initialized.");
-}
-async function initDatabase(customUri) {
-  const rawUri = customUri || getMongoUri();
-  const uri = sanitizeMongoUri(rawUri);
-  if (!uri) {
-    console.warn("[DB Service] MONGODB_URI not set in environment or settings. Operating with transient in-memory storage.");
-    return;
-  }
-  try {
-    if (mongoClient) {
-      try {
-        await mongoClient.close();
-      } catch {
-      }
-      mongoClient = null;
-      mongoDb = null;
-    }
-    mongoClient = new import_mongodb.MongoClient(uri, {
-      serverSelectionTimeoutMS: 15e3,
-      connectTimeoutMS: 15e3,
-      socketTimeoutMS: 45e3,
-      maxPoolSize: 50,
-      minPoolSize: 2,
-      maxIdleTimeMS: 6e4,
-      retryWrites: true,
-      retryReads: true
-    });
-    await mongoClient.connect();
-    await mongoClient.db().admin().ping();
-    mongoDb = mongoClient.db();
-    runtimeMongoUri = uri;
-    try {
-      import_fs.default.writeFileSync(PERSISTENT_CONFIG_FILE, JSON.stringify({ mongodbUri: uri, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }), "utf-8");
-    } catch {
-    }
-    console.log(`[DB Service] Successfully connected to MongoDB Atlas database (DATA_MODE=${getDataMode()}).`);
-    await initDatabaseIndexes();
-    if (!cleanupsInitialized) {
-      cleanupsInitialized = true;
-      await pruneDuplicateAlerts();
-      await purgeLegacySampleWorkers();
-    }
-  } catch (err) {
-    console.error("[DB Service] Failed to connect to MongoDB:", err.message);
-    console.warn("[DB Service] Operating with in-memory storage fallback.");
-    mongoClient = null;
-    mongoDb = null;
-  } finally {
-    await bootstrapMapAndZoneDefinitions();
-  }
-}
-function isMongoConnected() {
-  return mongoDb !== null;
-}
-var cachedMongoStats = null;
-var STATS_CACHE_TTL_MS = 3e4;
-async function getMongoStats(forceRefresh = false) {
-  if (!forceRefresh && cachedMongoStats && Date.now() - cachedMongoStats.cachedAt < STATS_CACHE_TTL_MS) {
-    return cachedMongoStats.data;
-  }
-  const uri = getMongoUri();
-  let connected = isMongoConnected();
-  let collectionsCount = 0;
-  let totalRecords = 0;
-  let collectionsBreakdown = {};
-  let lastError = null;
-  if (!connected && uri) {
-    try {
-      await initDatabase(uri);
-      connected = isMongoConnected();
-    } catch (err) {
-      lastError = err.message;
-    }
-  }
-  if (connected && mongoDb) {
-    try {
-      const cols = await mongoDb.listCollections().toArray();
-      collectionsCount = cols.length;
-      await Promise.all(cols.map(async (col) => {
-        try {
-          const count = await mongoDb.collection(col.name).estimatedDocumentCount();
-          collectionsBreakdown[col.name] = count;
-        } catch {
-          try {
-            const count = await mongoDb.collection(col.name).countDocuments();
-            collectionsBreakdown[col.name] = count;
-          } catch {
-          }
-        }
-      }));
-      totalRecords = Object.values(collectionsBreakdown).reduce((a, b) => a + b, 0);
-    } catch (err) {
-      lastError = err.message;
-      try {
-        await initDatabase(uri);
-      } catch {
-      }
-    }
-  } else {
-    for (const [key, items] of Object.entries(inMemoryStore)) {
-      if (items.length > 0) {
-        collectionsBreakdown[key] = items.length;
-        totalRecords += items.length;
-      }
-    }
-    collectionsCount = Object.keys(collectionsBreakdown).length;
-    if (!lastError) {
-      lastError = "MongoDB is not connected (operating with in-memory fallback)";
-    }
-  }
-  const maskedUri = uri ? uri.replace(/\/\/[^:]+:[^@]+@/, "//***:***@") : "";
-  const result = {
-    connected,
-    connectionString: maskedUri,
-    engine: connected ? "MongoDB Atlas / Cluster" : "In-Memory Fallback",
-    collectionsCount,
-    totalRecords,
-    collectionsBreakdown,
-    lastError
-  };
-  if (connected) {
-    cachedMongoStats = { data: result, cachedAt: Date.now() };
-  }
-  return result;
-}
-async function testMongoConnection(uriInput) {
-  const uri = sanitizeMongoUri(uriInput);
-  if (!uri) {
-    return { success: false, error: "MongoDB connection string cannot be empty" };
-  }
-  let tempClient = null;
-  const startTime = Date.now();
-  try {
-    tempClient = new import_mongodb.MongoClient(uri, {
-      serverSelectionTimeoutMS: 6e3,
-      connectTimeoutMS: 6e3
-    });
-    await tempClient.connect();
-    await tempClient.db().admin().ping();
-    const latencyMs = Date.now() - startTime;
-    await tempClient.close();
-    return { success: true, latencyMs };
-  } catch (err) {
-    if (tempClient) {
-      try {
-        await tempClient.close();
-      } catch {
-      }
-    }
-    return { success: false, error: err.message || "Failed to connect to MongoDB instance. Check credentials, network access, or IP whitelist." };
-  }
-}
-async function reconnectDatabase(newUriInput) {
-  const newUri = sanitizeMongoUri(newUriInput);
-  try {
-    const testResult = await testMongoConnection(newUri);
-    if (!testResult.success) {
-      return { success: false, error: testResult.error || "Connection test failed with provided URI" };
-    }
-    await initDatabase(newUri);
-    if (isMongoConnected()) {
-      return { success: true, latencyMs: testResult.latencyMs };
-    } else {
-      return { success: false, error: "Could not initialize MongoDB session with provided URI" };
-    }
-  } catch (err) {
-    return { success: false, error: err.message || "Failed to reconnect to MongoDB" };
-  }
-}
-async function getCollectionDocs(colName, opts, organizationId) {
-  const cacheKey = `${colName}:${organizationId || "all"}:${opts?.limit || 0}:${JSON.stringify(opts?.sort || {})}`;
-  const cached = collectionReadCache.get(cacheKey);
-  if (cached && Date.now() - cached.cachedAt < COLLECTION_CACHE_TTL_MS) {
-    return [...cached.docs];
-  }
-  if (mongoDb) {
-    try {
-      const DEFAULT_LIMITS = {
-        ai_insights: 500,
-        audit_logs: 1e3,
-        incidents: 2e3,
-        incidents_enterprise: 500,
-        rfid_realtime_events: 500,
-        tag_history: 500
-      };
-      const limit = opts?.limit ?? DEFAULT_LIMITS[colName] ?? 0;
-      const sort = opts?.sort ?? (DEFAULT_LIMITS[colName] ? { createdAt: -1 } : {});
-      const query = {};
-      if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-        const isSpatialConfig = colName === "map_configurations" || colName === "zones" || colName === "projects" || colName === "sites";
-        if (!isSpatialConfig) {
-          if (organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default") {
-            query.$or = [
-              { organizationId: "default" },
-              { organizationId: "org_main" },
-              { organizationId: "org_aperture_default" },
-              { organizationId: { $exists: false } },
-              { organizationId: null },
-              { organizationId: "" }
-            ];
-          } else {
-            query.organizationId = organizationId;
-          }
-        }
-      }
-      let cursor = mongoDb.collection(colName).find(query);
-      if (Object.keys(sort).length) cursor = cursor.sort(sort);
-      if (limit > 0) cursor = cursor.limit(limit);
-      const rawDocs = await cursor.toArray();
-      const docs = rawDocs.map((doc) => {
-        const { _id, ...rest } = doc;
-        const out = { id: doc.id || (_id ? _id.toString() : void 0), ...rest };
-        if (colName === "live_tags" || colName === "real_time_tags" || colName === "rfid_realtime_events") {
-          if (out.TagID !== void 0 && out.tagId !== void 0) {
-            out.TagID = out.TagID || out.tagId;
-            delete out.tagId;
-          }
-        }
-        return serializeBinaryImages(out);
-      });
-      collectionReadCache.set(cacheKey, { docs, cachedAt: Date.now() });
-      return docs;
-    } catch (err) {
-      console.error(`[DB Service] Error fetching docs for ${colName}:`, err);
-    }
-  }
-  const items = inMemoryStore[colName] || [];
-  let result = items;
-  if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-    result = items.filter(
-      (item) => organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default" ? !item.organizationId || item.organizationId === "default" || item.organizationId === "org_main" || item.organizationId === "org_aperture_default" : item.organizationId === organizationId
-    );
-  }
-  const serialized = result.map((item) => serializeBinaryImages(item));
-  collectionReadCache.set(cacheKey, { docs: serialized, cachedAt: Date.now() });
-  return serialized;
-}
-var DEFAULT_ORGS = ["default", "org_main", "org_aperture_default"];
-async function getDocById(colName, id, organizationId) {
-  if (mongoDb) {
-    try {
-      const idStr = String(id || "").trim();
-      const orClauses = [
-        { id: idStr },
-        { id: idStr.toUpperCase() },
-        { id: idStr.toLowerCase() },
-        { hardhatTagId: idStr },
-        { hardhatTagId: idStr.toUpperCase() },
-        { hardhatTagId: idStr.toLowerCase() }
-      ];
-      if (import_mongodb.ObjectId.isValid(idStr) && idStr.length === 24) {
-        try {
-          orClauses.push({ _id: new import_mongodb.ObjectId(idStr) });
-        } catch {
-        }
-      }
-      let query = { $or: orClauses };
-      if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-        const isSpatialConfig = colName === "map_configurations" || colName === "zones" || colName === "projects" || colName === "sites";
-        if (!isSpatialConfig) {
-          if (DEFAULT_ORGS.includes(organizationId)) {
-            query = {
-              $and: [
-                { $or: orClauses },
-                {
-                  $or: [
-                    { organizationId: { $in: [...DEFAULT_ORGS, null, ""] } },
-                    { organizationId: { $exists: false } }
-                  ]
-                }
-              ]
-            };
-          } else {
-            query = {
-              $and: [
-                { $or: orClauses },
-                { organizationId }
-              ]
-            };
-          }
-        }
-      }
-      const doc2 = await mongoDb.collection(colName).findOne(query);
-      if (doc2) {
-        const { _id, ...rest } = doc2;
-        const out = { id: doc2.id || (_id ? _id.toString() : idStr), ...rest };
-        return serializeBinaryImages(out);
-      }
-      return null;
-    } catch (err) {
-      console.error(`[DB Service] Error fetching doc ${id} in ${colName}:`, err);
-    }
-  }
-  const items = inMemoryStore[colName] || [];
-  const idLower = String(id || "").toLowerCase().trim();
-  const doc = items.find(
-    (i) => i.id === id || String(i.id || "").toLowerCase().trim() === idLower || String(i.hardhatTagId || "").toLowerCase().trim() === idLower
-  );
-  if (!doc) return null;
-  if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-    const docOrg = doc.organizationId;
-    if (docOrg && docOrg !== organizationId) {
-      const isBothDefault = DEFAULT_ORGS.includes(docOrg) && DEFAULT_ORGS.includes(organizationId);
-      if (!isBothDefault) return null;
-    }
-  }
-  return serializeBinaryImages(doc);
-}
-async function upsertDoc(colName, doc, organizationId) {
-  invalidateCollectionCache(colName);
-  const binaryReady = convertImagesToBinary(doc);
-  const processedDoc = offloadBase64Images(binaryReady);
-  if (!processedDoc.id) {
-    processedDoc.id = `${colName}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
-  }
-  const cleanDoc = { ...processedDoc };
-  delete cleanDoc._id;
-  if (colName === "organizations") {
-    cleanDoc.organizationId = cleanDoc.id;
-  } else if (organizationId) {
-    cleanDoc.organizationId = organizationId;
-  }
-  if (DATA_RETENTION_COLLECTIONS.includes(colName)) {
-    const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1e3;
-    const now = /* @__PURE__ */ new Date();
-    if (!cleanDoc.createdAt || !(cleanDoc.createdAt instanceof Date)) {
-      const parsed = cleanDoc.createdAt ? new Date(cleanDoc.createdAt) : now;
-      cleanDoc.createdAt = isNaN(parsed.getTime()) ? now : parsed;
-    }
-    if (!cleanDoc.expireAt || !(cleanDoc.expireAt instanceof Date)) {
-      cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + TEN_DAYS_MS);
-    }
-  }
-  if (mongoDb) {
-    try {
-      const idStr = String(cleanDoc.id || "").trim();
-      const orClauses = [
-        { id: idStr },
-        { id: idStr.toUpperCase() },
-        { id: idStr.toLowerCase() },
-        { hardhatTagId: idStr },
-        { hardhatTagId: idStr.toUpperCase() },
-        { hardhatTagId: idStr.toLowerCase() }
-      ];
-      if (import_mongodb.ObjectId.isValid(idStr) && idStr.length === 24) {
-        try {
-          orClauses.push({ _id: new import_mongodb.ObjectId(idStr) });
-        } catch {
-        }
-      }
-      let matchFilter;
-      if (cleanDoc.organizationId && colName !== "organizations") {
-        if (DEFAULT_ORGS.includes(cleanDoc.organizationId)) {
-          matchFilter = {
-            $and: [
-              { $or: orClauses },
-              {
-                $or: [
-                  { organizationId: { $in: [...DEFAULT_ORGS, null, ""] } },
-                  { organizationId: { $exists: false } }
-                ]
-              }
-            ]
-          };
-        } else {
-          matchFilter = {
-            $and: [
-              { $or: orClauses },
-              { organizationId: cleanDoc.organizationId }
-            ]
-          };
-        }
-      } else {
-        matchFilter = { $or: orClauses };
-      }
-      const existingInDb = await mongoDb.collection(colName).findOne(matchFilter);
-      if (existingInDb) {
-        if (existingInDb.organizationId) {
-          cleanDoc.organizationId = existingInDb.organizationId;
-        }
-        await mongoDb.collection(colName).updateOne(
-          { _id: existingInDb._id },
-          { $set: cleanDoc }
-        );
-      } else {
-        const insertFilter = { id: cleanDoc.id };
-        if (cleanDoc.organizationId && colName !== "organizations") {
-          insertFilter.organizationId = cleanDoc.organizationId;
-        }
-        await mongoDb.collection(colName).updateOne(
-          insertFilter,
-          { $set: cleanDoc },
-          { upsert: true }
-        );
-      }
-      return cleanDoc;
-    } catch (err) {
-      console.error(`[DB Service] Error upserting doc in ${colName}:`, err);
-    }
-  }
-  if (!inMemoryStore[colName]) {
-    inMemoryStore[colName] = [];
-  }
-  const idLower = String(cleanDoc.id || "").toLowerCase().trim();
-  const idx = inMemoryStore[colName].findIndex((item) => {
-    const sameId = item.id === cleanDoc.id || String(item.id || "").toLowerCase().trim() === idLower;
-    if (colName !== "organizations" && cleanDoc.organizationId) {
-      return sameId && item.organizationId === cleanDoc.organizationId;
-    }
-    return sameId;
-  });
-  if (idx >= 0) {
-    inMemoryStore[colName][idx] = cleanDoc;
-  } else {
-    inMemoryStore[colName].push(cleanDoc);
-  }
-  return cleanDoc;
-}
-async function deleteDocById(colName, id, organizationId) {
-  invalidateCollectionCache(colName);
-  if (mongoDb) {
-    try {
-      const idStr = String(id || "").trim();
-      const idLower = idStr.toLowerCase();
-      const idUpper = idStr.toUpperCase();
-      const orClauses = [
-        { id: idStr },
-        { id: idLower },
-        { id: idUpper },
-        { _id: idStr },
-        { readerId: idStr },
-        { readerId: idLower },
-        { readerId: idUpper },
-        { serialno: idStr },
-        { serialno: idLower },
-        { serialno: idUpper },
-        { customcode: idStr },
-        { customcode: idLower },
-        { customcode: idUpper },
-        { macAddress: idStr },
-        { macAddress: idLower },
-        { macAddress: idUpper },
-        { mac: idStr },
-        { mac: idLower },
-        { mac: idUpper },
-        { ipAddress: idStr },
-        { ip: idStr },
-        { hardhatTagId: idStr },
-        { hardhatTagId: idUpper },
-        { hardhatTagId: idLower },
-        { tagId: idStr },
-        { tagId: idUpper },
-        { tagId: idLower },
-        { TagID: idStr },
-        { TagID: idUpper },
-        { TagID: idLower },
-        { epc: idStr },
-        { epc: idUpper },
-        { epc: idLower },
-        { badgeId: idStr },
-        { workerId: idStr },
-        { entityId: idStr }
-      ];
-      if (import_mongodb.ObjectId.isValid(idStr) && idStr.length === 24) {
-        try {
-          orClauses.push({ _id: new import_mongodb.ObjectId(idStr) });
-        } catch {
-        }
-      }
-      const filter = { $or: orClauses };
-      if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-        if (DEFAULT_ORGS.includes(organizationId)) {
-          filter.organizationId = { $in: [...DEFAULT_ORGS, null, ""] };
-        } else {
-          filter.organizationId = organizationId;
-        }
-      }
-      const result = await mongoDb.collection(colName).deleteMany(filter);
-      return (result.deletedCount || 0) > 0;
-    } catch (err) {
-      console.error(`[DB Service] Error deleting doc ${id} in ${colName}:`, err);
-    }
-  }
-  if (inMemoryStore[colName]) {
-    const initLen = inMemoryStore[colName].length;
-    const idLower = String(id || "").toLowerCase().trim();
-    inMemoryStore[colName] = inMemoryStore[colName].filter((item) => {
-      const itemFields = [
-        item.id,
-        item._id,
-        item.readerId,
-        item.serialno,
-        item.customcode,
-        item.macAddress,
-        item.mac,
-        item.ipAddress,
-        item.ip,
-        item.hardhatTagId,
-        item.tagId,
-        item.TagID,
-        item.epc,
-        item.badgeId,
-        item.workerId,
-        item.entityId
-      ].filter(Boolean).map((v) => String(v).toLowerCase().trim());
-      const matchesId = itemFields.includes(idLower);
-      if (!matchesId) return true;
-      if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
-        const itemOrg = item.organizationId;
-        if (itemOrg && itemOrg !== organizationId) return true;
-      }
-      return false;
-    });
-    return inMemoryStore[colName].length < initLen;
-  }
-  return false;
-}
-async function deleteDocsByFilter(colName, predicate, organizationId) {
-  const docs = await getCollectionDocs(colName, void 0, organizationId);
-  const toDelete = docs.filter(predicate);
-  let count = 0;
-  for (const doc of toDelete) {
-    const deleted = await deleteDocById(colName, doc.id, organizationId);
-    if (deleted) count++;
-  }
-  return count;
-}
-async function logAuditEvent(event) {
-  const orgId = event.organizationId || "default";
-  const auditDoc = {
-    id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-    userId: event.userId || "system",
-    userEmail: event.userEmail || "system",
-    organizationId: orgId,
-    action: event.action,
-    resource: event.resource,
-    details: event.details || {},
-    ip: event.ip || "unknown"
-  };
-  await upsertDoc("audit_logs", auditDoc, orgId);
-}
-async function getAuditLogs(limitCount = 100, organizationId) {
-  const logs = await getCollectionDocs("audit_logs", void 0, organizationId);
-  return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, limitCount);
-}
-async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol", organizationId = "default") {
-  if (!Array.isArray(rawEvents) || rawEvents.length === 0) {
-    return { insertedCount: 0, modifiedCount: 0, totalProcessed: 0 };
-  }
-  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-  let insertedCount = 0;
-  let modifiedCount = 0;
-  const normalizedDocs = rawEvents.map((raw) => {
-    const tagId = String(raw.TagID || raw.tagId || raw.epc || raw.EPC || raw.id || "");
-    if (!tagId) return null;
-    const location = String(raw.Location || raw.location || raw.LocationName || raw.zone || raw.Zone || "Zone1");
-    const rawTime = raw.Timestamp || raw.timestamp || raw.EnterTime || raw.time || nowIso;
-    const d = new Date(rawTime);
-    const validDate = isNaN(d.getTime()) ? /* @__PURE__ */ new Date() : d;
-    const YYYY = validDate.getUTCFullYear();
-    const MM = String(validDate.getUTCMonth() + 1).padStart(2, "0");
-    const DD = String(validDate.getUTCDate()).padStart(2, "0");
-    const hh = String(validDate.getUTCHours()).padStart(2, "0");
-    const mm = String(validDate.getUTCMinutes()).padStart(2, "0");
-    const ss = String(validDate.getUTCSeconds()).padStart(2, "0");
-    const fff = String(validDate.getUTCMilliseconds()).padStart(3, "0");
-    const timestampMs = `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}.${fff}`;
-    const orgId = raw.organizationId || organizationId;
-    const readerId = raw.readerId || raw.ReaderID || "APERTURE-READER-01";
-    const eventHash = raw.externalEventId || raw.eventId || generateEventHash(tagId, timestampMs, location, readerId, orgId);
-    const docId = `evt_${tagId}_${eventHash}`;
-    const tenDaysLater = new Date(validDate.getTime() + 10 * 24 * 60 * 60 * 1e3);
-    return {
-      id: docId,
-      organizationId: orgId,
-      TagID: tagId,
-      Timestamp: timestampMs,
-      Location: location,
-      FirstName: raw.FirstName || raw.firstName || "",
-      LastName: raw.LastName || raw.lastName || "",
-      protocol: raw.protocol || protocol,
-      rssi: raw.rssi !== void 0 ? Number(raw.rssi) : -60,
-      readerId,
-      antennaPort: raw.antennaPort || raw.antennaId || 1,
-      receivedAt: nowIso,
-      createdAt: validDate,
-      expireAt: tenDaysLater
-    };
-  }).filter(Boolean);
-  if (normalizedDocs.length === 0) {
-    return { insertedCount: 0, modifiedCount: 0, totalProcessed: 0 };
-  }
-  console.log(`[INGEST] source=${protocol} batchCount=${normalizedDocs.length} org=${organizationId}`);
-  if (mongoDb) {
-    try {
-      const operations = normalizedDocs.map((doc) => ({
-        updateOne: {
-          filter: { id: doc.id, organizationId: doc.organizationId },
-          update: { $set: doc },
-          upsert: true
-        }
-      }));
-      const result = await mongoDb.collection("rfid_realtime_events").bulkWrite(operations, { ordered: false });
-      insertedCount = result.upsertedCount || 0;
-      modifiedCount = result.modifiedCount || 0;
-      await bulkWriteRealtimeTags(normalizedDocs, organizationId);
-      invalidateCollectionCache("rfid_realtime_events");
-      invalidateCollectionCache("real_time_tags");
-      invalidateCollectionCache("live_tags");
-      return { insertedCount, modifiedCount, totalProcessed: rawEvents.length };
-    } catch (err) {
-      console.error("[DB Service] Error in bulkWriteRfidRealtimeEvents to MongoDB:", err);
-    }
-  }
-  for (const doc of normalizedDocs) {
-    await upsertDoc("rfid_realtime_events", doc, doc.organizationId);
-    await upsertDoc("real_time_tags", doc, doc.organizationId);
-    await upsertDoc("live_tags", doc, doc.organizationId);
-    insertedCount++;
-  }
-  invalidateCollectionCache("rfid_realtime_events");
-  invalidateCollectionCache("real_time_tags");
-  invalidateCollectionCache("live_tags");
-  return { insertedCount, modifiedCount: 0, totalProcessed: rawEvents.length };
-}
-async function bulkWriteRealtimeTags(tags, organizationId = "default") {
-  if (!Array.isArray(tags) || tags.length === 0) {
-    return { insertedCount: 0, updatedCount: 0, totalProcessed: 0 };
-  }
-  let insertedCount = 0;
-  let updatedCount = 0;
-  const normalizedTags = tags.map((rawTag) => {
-    const tagId = rawTag.TagID || rawTag.tagId || rawTag.epc || `TAG_${Date.now()}`;
-    const orgId = rawTag.organizationId || organizationId;
-    const now = /* @__PURE__ */ new Date();
-    const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
-    const fullName = rawTag.name || rawTag.workerName || rawTag.personName || `${rawTag.FirstName || ""} ${rawTag.LastName || ""}`.trim() || "";
-    const parts = fullName ? fullName.split(" ") : [];
-    const firstName = rawTag.FirstName || parts[0] || "";
-    const lastName = rawTag.LastName || parts.slice(1).join(" ") || "";
-    return {
-      id: tagId,
-      organizationId: orgId,
-      TagID: tagId,
-      Timestamp: rawTag.Timestamp || (/* @__PURE__ */ new Date()).toISOString(),
-      Location: rawTag.Location || rawTag.LocationName || rawTag.zone || "Zone1",
-      FirstName: firstName,
-      LastName: lastName,
-      name: fullName || `${firstName} ${lastName}`.trim(),
-      role: rawTag.role || rawTag.tradeCompany || "Field Personnel",
-      rssi: rawTag.rssi !== void 0 ? Number(rawTag.rssi) : -60,
-      status: rawTag.status || "Active",
-      lastSyncAt: (/* @__PURE__ */ new Date()).toISOString(),
-      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
-      createdAt: now,
-      expireAt: tenDaysLater
-    };
-  });
-  if (mongoDb) {
-    try {
-      const operations = normalizedTags.map((docToUpsert) => ({
-        updateOne: {
-          filter: { TagID: docToUpsert.TagID, organizationId: docToUpsert.organizationId },
-          update: { $set: docToUpsert },
-          upsert: true
-        }
-      }));
-      const result = await mongoDb.collection("real_time_tags").bulkWrite(operations, { ordered: false });
-      insertedCount = result.upsertedCount || 0;
-      updatedCount = result.modifiedCount || 0;
-      for (const t of normalizedTags) {
-        await mongoDb.collection("live_tags").updateOne(
-          { TagID: t.TagID, organizationId: t.organizationId },
-          { $set: t },
-          { upsert: true }
-        ).catch(() => {
-        });
-      }
-      setImmediate(() => savePlaybackSnapshot(normalizedTags, organizationId).catch(() => {
-      }));
-      return { insertedCount, updatedCount, totalProcessed: tags.length };
-    } catch (err) {
-      console.error("[DB Service] Error during bulkWriteRealtimeTags to MongoDB:", err);
-    }
-  }
-  for (const cleanDoc of normalizedTags) {
-    await upsertDoc("real_time_tags", cleanDoc, cleanDoc.organizationId);
-    await upsertDoc("live_tags", cleanDoc, cleanDoc.organizationId);
-    updatedCount++;
-  }
-  return { insertedCount: tags.length, updatedCount, totalProcessed: tags.length };
-}
-async function bulkUpsertDocs(colName, docs, organizationId = "default") {
-  if (!Array.isArray(docs) || docs.length === 0) {
-    return { count: 0, success: true };
-  }
-  invalidateCollectionCache(colName);
-  const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1e3;
-  const now = /* @__PURE__ */ new Date();
-  const preparedDocs = docs.map((doc, idx) => {
-    const docId = String(doc.id || doc._id || `${colName}_${now.getTime()}_${idx}`);
-    const cleanDoc = { ...doc, id: docId, organizationId: doc.organizationId || organizationId };
-    delete cleanDoc._id;
-    if (DATA_RETENTION_COLLECTIONS.includes(colName)) {
-      if (!cleanDoc.createdAt || !(cleanDoc.createdAt instanceof Date)) {
-        const parsed = cleanDoc.createdAt ? new Date(cleanDoc.createdAt) : now;
-        cleanDoc.createdAt = isNaN(parsed.getTime()) ? now : parsed;
-      }
-      if (!cleanDoc.expireAt || !(cleanDoc.expireAt instanceof Date)) {
-        cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + TEN_DAYS_MS);
-      }
-    }
-    return cleanDoc;
-  });
-  if (mongoDb) {
-    try {
-      const operations = preparedDocs.map((doc) => ({
-        updateOne: {
-          filter: { id: doc.id, ...colName !== "organizations" ? { organizationId: doc.organizationId } : {} },
-          update: { $set: doc },
-          upsert: true
-        }
-      }));
-      await mongoDb.collection(colName).bulkWrite(operations, { ordered: false });
-      return { count: preparedDocs.length, success: true };
-    } catch (err) {
-      console.error(`[DB Service] Error during bulkUpsertDocs into ${colName}:`, err.message);
-    }
-  }
-  for (const doc of preparedDocs) {
-    await upsertDoc(colName, doc, doc.organizationId);
-  }
-  return { count: preparedDocs.length, success: true };
-}
-async function savePlaybackSnapshot(tags, organizationId = "default") {
-  if (!tags || tags.length === 0) return;
-  const now = /* @__PURE__ */ new Date();
-  const expireAt = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
-  const dateStr = now.toISOString().split("T")[0];
-  const snapId = `snap_${organizationId}_${now.getTime()}`;
-  const snapshot = {
-    id: snapId,
-    organizationId,
-    timestamp: now.toISOString(),
-    date: dateStr,
-    expireAt,
-    tags: tags.map((t) => ({
-      tagId: t.TagID || t.tagId || t.id,
-      name: t.name || t.workerName || t.personName || `${t.FirstName || ""} ${t.LastName || ""}`.trim() || "Unknown",
-      location: t.Location || t.LocationName || t.zone || "Unknown",
-      role: t.role || "Personnel",
-      rssi: t.rssi,
-      status: t.status || "Active",
-      readerId: t.readerId
-    }))
-  };
-  if (mongoDb) {
-    try {
-      await mongoDb.collection("playback_history").insertOne({ ...snapshot, _id: void 0 });
-    } catch (err) {
-      if (!String(err?.message).includes("duplicate")) {
-        console.error("[DB Service] playback_history snapshot error:", err.message);
-      }
-    }
-    return;
-  }
-  inMemoryStore["playback_history"].push(snapshot);
-  if (inMemoryStore["playback_history"].length > 2e3) {
-    inMemoryStore["playback_history"].shift();
-  }
-}
-async function getPlaybackFrames(date, organizationId = "default") {
-  if (!date) return [];
-  const orgFilter = organizationId === "default" || organizationId === "org_main" ? { $in: ["default", "org_main", "demo", null, ""] } : organizationId;
-  if (mongoDb) {
-    try {
-      const docs = await mongoDb.collection("playback_history").find({ date, organizationId: orgFilter }).sort({ timestamp: 1 }).limit(500).toArray();
-      return docs.map((d) => ({ ...d, _id: void 0 }));
-    } catch (err) {
-      console.error("[DB Service] getPlaybackFrames error:", err);
-      return [];
-    }
-  }
-  return inMemoryStore["playback_history"].filter((s) => s.date === date && (s.organizationId === organizationId || s.organizationId === "default" || !s.organizationId)).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-}
-async function cleanupStaleRealTimeTags(maxAgeMinutes = 60) {
-  const cutoffTime = new Date(Date.now() - maxAgeMinutes * 60 * 1e3);
-  let cleanedCount = 0;
-  console.log(`[DB Service] Running stale real-time tags cleanup (Threshold: ${maxAgeMinutes} mins / Cutoff: ${cutoffTime.toISOString()})...`);
-  if (mongoDb) {
-    try {
-      const filter = {
-        $or: [
-          { Timestamp: { $lt: cutoffTime.toISOString() } },
-          { lastSyncAt: { $lt: cutoffTime.toISOString() } }
-        ]
-      };
-      const result = await mongoDb.collection("real_time_tags").deleteMany(filter);
-      cleanedCount = result.deletedCount || 0;
-      const remainingCount = await mongoDb.collection("real_time_tags").countDocuments();
-      console.log(`[DB Service] Cleaned up ${cleanedCount} stale real-time tags from MongoDB. Remaining: ${remainingCount}`);
-      return { cleanedCount, remainingCount };
-    } catch (err) {
-      console.error("[DB Service] Error cleaning up stale real-time tags in MongoDB:", err);
-    }
-  }
-  if (inMemoryStore["real_time_tags"]) {
-    const initialLen = inMemoryStore["real_time_tags"].length;
-    inMemoryStore["real_time_tags"] = inMemoryStore["real_time_tags"].filter((doc) => {
-      const ts = new Date(doc.Timestamp || doc.lastSyncAt || doc.timestamp || Date.now());
-      return !isNaN(ts.getTime()) && ts.getTime() >= cutoffTime.getTime();
-    });
-    cleanedCount = initialLen - inMemoryStore["real_time_tags"].length;
-  }
-  return { cleanedCount, remainingCount: inMemoryStore["real_time_tags"]?.length || 0 };
-}
-var DEFAULT_MAP_CONFIG = { id: "site-main", siteId: "site-main", name: "Main Site", updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
-async function wipeAllCollections(organizationId) {
-  const allCollections = [
-    "organizations",
-    "users",
-    "permissions",
-    "role_permissions",
-    "registered_people",
-    "people",
-    "devices",
-    "hardware_readers",
-    "hardware_tag_mappings",
-    "third_party_apis",
-    "visitors",
-    "visitor_security_list",
-    "visitor_access_tokens",
-    "visitor_access_logs",
-    "attendance_logs",
-    "leave_requests",
-    "shift_schedules",
-    "alerts",
-    "alerts_enterprise",
-    "alert_rules",
-    "alert_dispatch_logs",
-    "emergency_broadcasts",
-    "live_tags",
-    "real_time_tags",
-    "rfid_realtime_events",
-    "tag_history",
-    "audit_logs",
-    "settings",
-    "playback_history",
-    "incidents_enterprise",
-    "incidents",
-    "zones",
-    "map_configurations",
-    "geofences",
-    "reader_zone_mappings",
-    "ai_insights",
-    "ai_rca_reports",
-    "ai_hazard_predictions",
-    "ai_copilot_chats",
-    "assets",
-    "vehicles",
-    "cameras",
-    "sensors",
-    "maintenance_nodes",
-    "work_orders",
-    "technicians",
-    "schedules",
-    "compliance_frameworks",
-    "retention_policies",
-    "compliance_reports",
-    "analytics_reports",
-    "analytics_metrics",
-    "quick_notes",
-    "notifications",
-    "system_events",
-    "daily_reports",
-    "site_configurations",
-    "shift_assignments",
-    "training_records",
-    "ppe_records"
-  ];
-  const wipedCollections = {};
-  let totalDeleted = 0;
-  if (mongoDb) {
-    for (const colName of allCollections) {
-      try {
-        const filter = organizationId ? { organizationId } : {};
-        const result = await mongoDb.collection(colName).deleteMany(filter);
-        const count = result.deletedCount || 0;
-        if (count > 0) {
-          wipedCollections[colName] = count;
-          totalDeleted += count;
-        }
-      } catch {
-      }
-    }
-  } else {
-    for (const colName of allCollections) {
-      if (inMemoryStore[colName]) {
-        const count = inMemoryStore[colName].length;
-        inMemoryStore[colName] = [];
-        if (count > 0) {
-          wipedCollections[colName] = count;
-          totalDeleted += count;
-        }
-      }
-    }
-  }
-  console.log(`[DB Service] wipeAllCollections: Deleted ${totalDeleted} documents across ${Object.keys(wipedCollections).length} collections.`);
-  return { wipedCollections, totalDeleted };
-}
-async function bootstrapMapAndZoneDefinitions() {
-}
-var cleanupTimer = null;
-function startRealTimeTagsCleanupJob(intervalMinutes = 15, maxAgeMinutes = 60) {
-  if (cleanupTimer) return;
-  console.log(`[DB Service] Starting periodic real-time tags background cleanup job (Interval: ${intervalMinutes}m, MaxAge: ${maxAgeMinutes}m)`);
-  cleanupStaleRealTimeTags(maxAgeMinutes).catch((err) => console.error("[DB Service] Cleanup job initial run error:", err));
-  cleanupTimer = setInterval(() => {
-    cleanupStaleRealTimeTags(maxAgeMinutes).catch((err) => console.error("[DB Service] Cleanup job periodic run error:", err));
-  }, intervalMinutes * 60 * 1e3);
-}
-async function cleanupExpiredRetentionData(retentionDays = 10) {
-  const thresholdDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1e3);
-  const now = /* @__PURE__ */ new Date();
-  let totalDeleted = 0;
-  const details = {};
-  if (mongoDb) {
-    for (const col of DATA_RETENTION_COLLECTIONS) {
-      try {
-        const res = await mongoDb.collection(col).deleteMany({
-          $or: [
-            { expireAt: { $lte: now } },
-            { createdAt: { $lte: thresholdDate } }
-          ]
-        });
-        const deleted = res.deletedCount || 0;
-        details[col] = deleted;
-        totalDeleted += deleted;
-        if (deleted > 0) {
-          invalidateCollectionCache(col);
-        }
-      } catch (err) {
-        console.warn(`[DB Service] Retention cleanup error for ${col}:`, err.message);
-      }
-    }
-  }
-  for (const col of DATA_RETENTION_COLLECTIONS) {
-    if (inMemoryStore[col]) {
-      const initial = inMemoryStore[col].length;
-      inMemoryStore[col] = inMemoryStore[col].filter((item) => {
-        if (item.expireAt && new Date(item.expireAt).getTime() <= now.getTime()) return false;
-        if (item.createdAt && new Date(item.createdAt).getTime() <= thresholdDate.getTime()) return false;
-        return true;
-      });
-      const removed = initial - inMemoryStore[col].length;
-      details[col] = (details[col] || 0) + removed;
-      totalDeleted += removed;
-    }
-  }
-  console.log(`[DB Service] 10-day retention cleanup finished: purged ${totalDeleted} documents across ${DATA_RETENTION_COLLECTIONS.length} collections.`);
-  return {
-    deletedCount: totalDeleted,
-    collectionsScanned: DATA_RETENTION_COLLECTIONS.length,
-    details
-  };
-}
-var retentionCleanupTimer = null;
-function startDataRetentionCleanupJob(retentionDays = 10, intervalMinutes = 60) {
-  if (retentionCleanupTimer) clearInterval(retentionCleanupTimer);
-  setTimeout(() => {
-    cleanupExpiredRetentionData(retentionDays).catch(() => {
-    });
-  }, 1e4);
-  retentionCleanupTimer = setInterval(() => {
-    cleanupExpiredRetentionData(retentionDays).catch(() => {
-    });
-  }, intervalMinutes * 60 * 1e3);
-  console.log(`[DB Service] Automated 10-day MongoDB data retention cleanup job started (interval: ${intervalMinutes}m).`);
-}
-async function getDataRetentionStatus(retentionDays = 10) {
-  const collectionsStatus = {};
-  if (mongoDb) {
-    for (const col of DATA_RETENTION_COLLECTIONS) {
-      try {
-        const count = await mongoDb.collection(col).countDocuments();
-        const oldest = await mongoDb.collection(col).find().sort({ createdAt: 1 }).limit(1).toArray();
-        const indexes = await mongoDb.collection(col).indexes();
-        const hasTtl = indexes.some(
-          (idx) => idx.key?.expireAt !== void 0 || idx.key?.createdAt !== void 0 && idx.expireAfterSeconds !== void 0
-        );
-        collectionsStatus[col] = {
-          totalDocs: count,
-          oldestDocDate: oldest[0]?.createdAt ? new Date(oldest[0].createdAt).toISOString() : null,
-          ttlIndexActive: hasTtl
-        };
-      } catch {
-        collectionsStatus[col] = { totalDocs: 0, oldestDocDate: null, ttlIndexActive: false };
-      }
-    }
-  } else {
-    for (const col of DATA_RETENTION_COLLECTIONS) {
-      const items = inMemoryStore[col] || [];
-      collectionsStatus[col] = {
-        totalDocs: items.length,
-        oldestDocDate: items[0]?.createdAt ? new Date(items[0].createdAt).toISOString() : null,
-        ttlIndexActive: true
-      };
-    }
-  }
-  return {
-    retentionPolicyDays: retentionDays,
-    retentionSeconds: retentionDays * 86400,
-    policyEnforced: true,
-    engine: mongoDb ? "MongoDB Atlas TTL Indexes + Scheduled Background Purge" : "In-Memory Fallback Retention",
-    collections: collectionsStatus
-  };
-}
-async function pruneDuplicateAlerts() {
-  if (!mongoDb) return 0;
-  try {
-    const alertsCol = mongoDb.collection("alerts");
-    const allAlerts = await alertsCol.find().sort({ timestamp: -1, createdAt: -1 }).toArray();
-    if (allAlerts.length <= 50) return 0;
-    const seenKeys = /* @__PURE__ */ new Set();
-    const toKeep = [];
-    const toDeleteIds = [];
-    for (const a of allAlerts) {
-      const key = `${a.tagId || "tag"}_${(a.title || a.message || "alert").trim().toLowerCase()}`;
-      if (!seenKeys.has(key)) {
-        seenKeys.add(key);
-        toKeep.push(a);
-      } else {
-        toDeleteIds.push(a._id);
-      }
-    }
-    if (toDeleteIds.length > 0) {
-      const chunkSize = 1e3;
-      for (let i = 0; i < toDeleteIds.length; i += chunkSize) {
-        const chunk = toDeleteIds.slice(i, i + chunkSize);
-        await alertsCol.deleteMany({ _id: { $in: chunk } });
-      }
-      console.log(`[DB Service] Pruned ${toDeleteIds.length} duplicate alerts from MongoDB. Retained ${toKeep.length} unique active alerts.`);
-      invalidateCollectionCache("alerts");
-    }
-    return toDeleteIds.length;
-  } catch (err) {
-    console.warn("[DB Service] Alert pruning note:", err.message);
-    return 0;
-  }
-}
-async function purgeAllDemoAndTestData() {
-  const deletedCounts = {};
-  if (!mongoDb) return { deletedCounts };
-  try {
-    const fakeIds = [
-      "TAG_123",
-      "W-101",
-      "worker-1",
-      "worker-2",
-      "worker-3",
-      "TEST_AUTH_CHECK",
-      "TEST_DEVICE_INGEST",
-      "UHF-REAL-001",
-      "UHF-REAL-002",
-      "TAG_API_WORKER_99",
-      "BATCH-001",
-      "BATCH-002",
-      "TEST_WS_TAG_991",
-      "TEST_MQTT_TAG_992",
-      "TEST_BULK_TAG_993",
-      "TAG_DIAG_WS_MQTT",
-      "DIAG_MQTT_PING_01",
-      "TAG_HAZARD_01",
-      "TAG_SAFE_02"
-    ];
-    const fakeTagRegex = /^(TEST_|BATCH-|UHF-REAL-|TAG_DIAG|DIAG_|TAG_HIST_|TAG_RT_|TAG_RAW_|TAG_API_|TAG_HAZARD_|TAG_SAFE_)/i;
-    const fakeOrgRegex = /^(safety_org_|ai_workflow_org_|test_|demo$)/i;
-    const fakeNames = [
-      "Staff User",
-      "John Miller",
-      "Marcus Vance",
-      "Alice Smith",
-      "Sarah Jenkins",
-      "David Wilson",
-      "WebSocket Tester",
-      "MQTT Tester"
-    ];
-    const tagFilter = {
-      $or: [
-        { id: { $in: fakeIds } },
-        { _id: { $in: fakeIds } },
-        { tagId: { $in: fakeIds } },
-        { TagID: { $in: fakeIds } },
-        { hardhatTagId: { $in: fakeIds } },
-        { id: { $regex: fakeTagRegex } },
-        { tagId: { $regex: fakeTagRegex } },
-        { TagID: { $regex: fakeTagRegex } },
-        { hardhatTagId: { $regex: fakeTagRegex } },
-        { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: "demo" },
-        { name: { $in: fakeNames } },
-        { personName: { $in: fakeNames } }
-      ]
-    };
-    const trackingCols = [
-      "people",
-      "registered_people",
-      "attendance_logs",
-      "real_time_tags",
-      "live_tags",
-      "tag_history",
-      "rfid_realtime_events",
-      "devices"
-    ];
-    for (const col of trackingCols) {
-      const res = await mongoDb.collection(col).deleteMany(tagFilter);
-      deletedCounts[col] = res.deletedCount || 0;
-    }
-    const incidentAndAlertFilter = {
-      $or: [
-        { tagId: { $in: fakeIds } },
-        { tagId: { $regex: fakeTagRegex } },
-        { TagID: { $in: fakeIds } },
-        { TagID: { $regex: fakeTagRegex } },
-        { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: "demo" },
-        { personName: { $in: fakeNames } }
-      ]
-    };
-    const aiCols = ["alerts", "alerts_enterprise", "incidents", "incidents_enterprise", "ai_insights", "ai_recommendations"];
-    for (const col of aiCols) {
-      const res = await mongoDb.collection(col).deleteMany(incidentAndAlertFilter);
-      deletedCounts[col] = res.deletedCount || 0;
-    }
-    const playbackRes = await mongoDb.collection("playback_history").deleteMany({
-      $or: [
-        { "tags.tagId": { $in: fakeIds } },
-        { "tags.TagID": { $in: fakeIds } },
-        { "tags.tagId": { $regex: fakeTagRegex } },
-        { "tags.TagID": { $regex: fakeTagRegex } },
-        { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: "demo" }
-      ]
-    });
-    deletedCounts["playback_history"] = playbackRes.deletedCount || 0;
-    const orgRes = await mongoDb.collection("organizations").deleteMany({
-      $or: [
-        { id: { $regex: fakeOrgRegex } },
-        { id: "demo" },
-        { organizationId: "demo" }
-      ]
-    });
-    deletedCounts["organizations"] = orgRes.deletedCount || 0;
-    const userRes = await mongoDb.collection("users").deleteMany({
-      $or: [
-        { id: { $in: ["usr_viewer", "usr_admin", "demo_user"] } },
-        { email: { $in: ["viewer@example.com", "admin@gaostaff.com", "demo@aperture.io", "forged_admin@gaostaff.com"] } },
-        { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: "demo" }
-      ]
-    });
-    deletedCounts["users"] = userRes.deletedCount || 0;
-    const thirdPartyRes = await mongoDb.collection("third_party_apis").deleteMany({
-      $or: [
-        { id: "failing_api_conn" },
-        { endpointUrl: /localhost:59999/i },
-        { name: /Non Existent/i }
-      ]
-    });
-    deletedCounts["third_party_apis"] = thirdPartyRes.deletedCount || 0;
-    await mongoDb.collection("people").updateMany(
-      { lastName: "Doe Testing" },
-      { $set: { lastName: "", name: "John" } }
-    );
-    await mongoDb.collection("registered_people").updateMany(
-      { lastName: "Doe Testing" },
-      { $set: { lastName: "", name: "John" } }
-    );
-    await mongoDb.collection("incidents").updateMany(
-      { personName: "John Doe Testing" },
-      { $set: { personName: "John" } }
-    );
-    await mongoDb.collection("alerts").updateMany(
-      { personName: "John Doe Testing" },
-      { $set: { personName: "John" } }
-    );
-    invalidateCollectionCache();
-    console.log("[DB Service] Purged all demo, test, and dummy records from MongoDB Atlas:", deletedCounts);
-  } catch (err) {
-    console.warn("[DB Service] Note on purgeAllDemoAndTestData:", err.message);
-  }
-  return { deletedCounts };
-}
-async function purgeLegacySampleWorkers() {
-  await purgeAllDemoAndTestData();
-}
-
-// src/server/routes/connections.ts
-var import_express = require("express");
-
-// src/server/services/connectionsService.ts
-function buildHeaders(config) {
-  const headers = {
-    "Accept": "application/json",
-    "User-Agent": "GAO-PeopleTracking-Gateway/2.0"
-  };
-  if (config.method === "POST") {
-    headers["Content-Type"] = "application/json";
-  }
-  if (config.authType === "apiKey" && config.apiKey) {
-    const headerName = config.apiKeyHeader || "X-API-Key";
-    if (config.apiKeyLocation === "header" || !config.apiKeyLocation) {
-      headers[headerName] = config.apiKey.trim();
-    }
-  } else if (config.authType === "bearer" && config.bearerToken) {
-    headers["Authorization"] = `Bearer ${config.bearerToken.trim()}`;
-  } else if (config.authType === "basic" && config.basicUsername) {
-    const creds = Buffer.from(`${config.basicUsername}:${config.basicPassword || ""}`).toString("base64");
-    headers["Authorization"] = `Basic ${creds}`;
-  }
-  if (config.customHeaders && typeof config.customHeaders === "object") {
-    for (const [key, value] of Object.entries(config.customHeaders)) {
-      if (key && value) headers[key] = String(value);
-    }
-  }
-  return headers;
-}
-function buildUrl(config) {
-  let url = config.endpointUrl.trim();
-  if (config.authType === "apiKey" && config.apiKey && config.apiKeyLocation === "query") {
-    const separator = url.includes("?") ? "&" : "?";
-    const paramName = config.apiKeyHeader || "apiKey";
-    url = `${url}${separator}${encodeURIComponent(paramName)}=${encodeURIComponent(config.apiKey.trim())}`;
-  }
-  return url;
-}
-async function getAllConnections() {
-  const list = await getCollectionDocs("third_party_apis");
-  return list.filter((c) => {
-    if (!c || !c.id) return false;
-    const lowerId = c.id.toLowerCase();
-    const lowerName = (c.name || "").toLowerCase();
-    const lowerUrl = (c.endpointUrl || "").toLowerCase();
-    return !lowerId.includes("mock") && !lowerId.includes("demo") && !lowerId.includes("simulat") && !lowerName.includes("mock") && !lowerName.includes("demo") && !lowerName.includes("simulat") && !lowerUrl.includes("mock") && !lowerUrl.includes("example.com");
-  });
-}
-async function getConnectionById(id) {
-  const list = await getAllConnections();
-  return list.find((c) => c.id === id) || null;
-}
-async function saveConnection(config) {
-  await upsertDoc("third_party_apis", config);
-}
-async function deleteConnection(id) {
-  await deleteDocById("third_party_apis", id);
-}
-
-// src/server/services/aiEngine.ts
-var import_genai = require("@google/genai");
-var import_zod2 = require("zod");
 
 // src/types/industryIntelligence.ts
 var import_zod = require("zod");
@@ -2070,6 +489,1617 @@ var INDUSTRY_PRESET_PROFILES = {
   }
 };
 
+// src/server/services/dataPolicy.ts
+var import_crypto = __toESM(require("crypto"), 1);
+function isProductionDataMode() {
+  const mode = (process.env.DATA_MODE || "production").trim().toLowerCase();
+  return mode !== "demo";
+}
+function isDemoDataMode() {
+  const mode = (process.env.DATA_MODE || "").trim().toLowerCase();
+  return mode === "demo";
+}
+function getDataMode() {
+  return isDemoDataMode() ? "demo" : "production";
+}
+function validateTelemetrySource(source) {
+  const s = String(source || "").trim().toLowerCase();
+  const isSynthetic = s.includes("demo") || s.includes("simulation") || s.includes("simulator") || s.includes("mock") || s.includes("fake") || s.includes("synthetic") || s.includes("dummy") || s.includes("sample");
+  if (isSynthetic) {
+    if (isProductionDataMode()) {
+      console.warn(`[INGEST] rejected: synthetic data rejected in production mode (DATA_MODE=${getDataMode()}, source="${source}")`);
+      return {
+        valid: false,
+        normalizedSource: s,
+        error: `[DEMO] Synthetic/demo data generation is disabled in production mode (DATA_MODE=${getDataMode()})`
+      };
+    }
+  }
+  return {
+    valid: true,
+    normalizedSource: source || "rfid_hardware"
+  };
+}
+function isRealTelemetryTag(tagId) {
+  if (!tagId || typeof tagId !== "string") return false;
+  const tid = tagId.trim();
+  if (!tid) return false;
+  const testPrefixes = [
+    "test_",
+    "batch-",
+    "uhf-real-",
+    "tag_diag",
+    "diag_",
+    "tag_hist_",
+    "tag_rt_",
+    "tag_raw_",
+    "tag_api_worker_",
+    "tag_123",
+    "w-101",
+    "worker-1",
+    "worker-2",
+    "worker-3"
+  ];
+  const tidLower = tid.toLowerCase();
+  for (const prefix of testPrefixes) {
+    if (tidLower.startsWith(prefix) || tidLower === prefix) {
+      return false;
+    }
+  }
+  return true;
+}
+function generateEventHash(tagId, timestamp, location, readerId, orgId = "default", externalEventId) {
+  if (externalEventId && String(externalEventId).trim()) {
+    return String(externalEventId).trim();
+  }
+  let tsStr = "";
+  if (timestamp instanceof Date) {
+    tsStr = timestamp.toISOString();
+  } else if (typeof timestamp === "number") {
+    tsStr = new Date(timestamp).toISOString();
+  } else {
+    tsStr = String(timestamp || "").trim();
+  }
+  const rawKey = `${String(tagId).trim().toUpperCase()}|${tsStr}|${String(location).trim().toUpperCase()}|${String(readerId || "").trim().toUpperCase()}|${String(orgId).trim()}`;
+  return import_crypto.default.createHash("sha256").update(rawKey).digest("hex").substring(0, 16);
+}
+
+// src/server/services/db.ts
+try {
+  import_dns.default.setServers(["8.8.8.8", "1.1.1.1", "8.8.4.4"]);
+} catch {
+}
+import_dotenv.default.config();
+var mongoClient = null;
+var mongoDb = null;
+var runtimeMongoUri = null;
+var inMemoryStore = {
+  organizations: [],
+  users: [],
+  permissions: [],
+  role_permissions: [],
+  registered_people: [],
+  devices: [],
+  hardware_readers: [],
+  hardware_tag_mappings: [],
+  third_party_apis: [],
+  visitors: [],
+  visitor_security_list: [],
+  visitor_access_tokens: [],
+  visitor_passes: [],
+  visitor_checkin_logs: [],
+  visitor_access_logs: [],
+  evacuation_status: [],
+  attendance_logs: [],
+  leave_requests: [],
+  shift_schedules: [],
+  alerts: [],
+  alerts_enterprise: [],
+  alert_rules: [],
+  alert_dispatch_logs: [],
+  emergency_broadcasts: [],
+  live_tags: [],
+  real_time_tags: [],
+  rfid_realtime_events: [],
+  tag_history: [],
+  audit_logs: [],
+  settings: [],
+  incidents_enterprise: [],
+  zones: [],
+  map_configurations: [],
+  geofences: [],
+  reader_zone_mappings: [],
+  people: [],
+  ai_insights: [],
+  incidents: [],
+  playback_history: []
+};
+function sanitizeMongoUri(rawUri) {
+  if (!rawUri || typeof rawUri !== "string") return "";
+  let uri = rawUri.trim();
+  if (uri.startsWith('"') && uri.endsWith('"') || uri.startsWith("'") && uri.endsWith("'")) {
+    uri = uri.slice(1, -1).trim();
+  }
+  return uri;
+}
+function getMongoUri() {
+  const uri = runtimeMongoUri || process.env.MONGODB_URI || "";
+  return sanitizeMongoUri(uri);
+}
+var collectionReadCache = /* @__PURE__ */ new Map();
+var COLLECTION_CACHE_TTL_MS = 4e3;
+function invalidateCollectionCache(colName) {
+  if (colName) {
+    for (const key of Array.from(collectionReadCache.keys())) {
+      if (key === colName || key.startsWith(`${colName}:`)) {
+        collectionReadCache.delete(key);
+      }
+    }
+  } else {
+    collectionReadCache.clear();
+  }
+}
+function convertImagesToBinary(doc) {
+  if (!doc || typeof doc !== "object") return doc;
+  const out = { ...doc };
+  const imageFieldKeys = ["floorplanUrl", "floorplanData", "imageData", "url", "avatar", "image"];
+  for (const key of imageFieldKeys) {
+    const val = out[key];
+    if (typeof val === "string" && val.startsWith("data:image/")) {
+      const match = val.match(/^data:image\/([a-zA-Z0-9+.-]+);base64,(.+)$/);
+      if (match) {
+        const mimeType = match[1] === "svg+xml" ? "image/svg+xml" : `image/${match[1]}`;
+        const base64Data = match[2];
+        try {
+          const buffer = Buffer.from(base64Data, "base64");
+          if (buffer.length <= 15 * 1024 * 1024) {
+            out.imageBinary = new import_mongodb.Binary(buffer);
+            out.floorplanBinary = new import_mongodb.Binary(buffer);
+            out.contentType = mimeType;
+            out.imageSize = buffer.length;
+            out.isBinary = true;
+            out.storedAs = "bson_binary";
+          }
+        } catch (e) {
+          console.warn(`[DB Service] Failed to convert image to binary for field ${key}:`, e.message);
+        }
+      }
+    }
+  }
+  return out;
+}
+function serializeBinaryImages(doc) {
+  if (!doc || typeof doc !== "object") return doc;
+  const out = { ...doc };
+  const binaryField = out.imageBinary || out.floorplanBinary || out.binaryData;
+  if (binaryField) {
+    try {
+      let buffer = null;
+      if (Buffer.isBuffer(binaryField)) {
+        buffer = binaryField;
+      } else if (binaryField && typeof binaryField.buffer === "object" && binaryField.buffer) {
+        buffer = Buffer.from(binaryField.buffer);
+      } else if (binaryField && typeof binaryField.value === "function") {
+        buffer = Buffer.from(binaryField.value());
+      }
+      if (buffer && buffer.length > 0) {
+        const mimeType = out.contentType || "image/webp";
+        const dataUrl = `data:${mimeType};base64,${buffer.toString("base64")}`;
+        if (!out.floorplanUrl || out.floorplanUrl.startsWith("data:") === false) {
+          out.floorplanUrl = dataUrl;
+        }
+        if (!out.url || out.url.startsWith("data:") === false) {
+          out.url = dataUrl;
+        }
+        out.imageSize = buffer.length;
+        out.contentType = mimeType;
+        out.isBinary = true;
+      }
+    } catch (e) {
+      console.warn("[DB Service] Error serializing BSON binary image:", e.message);
+    }
+  }
+  return out;
+}
+function offloadBase64Images(doc) {
+  return doc;
+}
+var DATA_RETENTION_COLLECTIONS = [
+  "alerts",
+  "incidents",
+  "ai_insights",
+  "analytics_metrics",
+  "analytics_reports",
+  "real_time_tags",
+  "live_tags",
+  "rfid_realtime_events",
+  "tag_history",
+  "playback_history",
+  "webhook_logs",
+  "audit_logs",
+  "daily_reports",
+  "notifications",
+  "system_events"
+];
+var indexesInitialized = false;
+var cleanupsInitialized = false;
+async function initDatabaseIndexes() {
+  if (!mongoDb) return;
+  if (indexesInitialized) return;
+  indexesInitialized = true;
+  const indexSpecs = [
+    { col: "rfid_realtime_events", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "tag_history", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "real_time_tags", spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "live_tags", spec: { TagID: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "hardware_readers", spec: { readerId: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "ai_insights", spec: { id: 1, organizationId: 1 }, options: { unique: true, background: true } },
+    { col: "incidents", spec: { id: 1, organizationId: 1 }, options: { background: true } },
+    { col: "alerts", spec: { id: 1, organizationId: 1 }, options: { background: true } },
+    { col: "analytics_metrics", spec: { id: 1, organizationId: 1 }, options: { background: true } }
+  ];
+  for (const { col, spec, options } of indexSpecs) {
+    try {
+      await mongoDb.collection(col).createIndex(spec, options);
+    } catch (err) {
+      console.warn(`[DB Service] Index initialization note for ${col}:`, err.message);
+    }
+  }
+  const TEN_DAYS_SECONDS = 10 * 24 * 60 * 60;
+  for (const col of DATA_RETENTION_COLLECTIONS) {
+    try {
+      await mongoDb.collection(col).createIndex({ expireAt: 1 }, { expireAfterSeconds: 0, background: true });
+    } catch (err) {
+      console.warn(`[DB Service] TTL index note (expireAt) for ${col}:`, err.message);
+    }
+    try {
+      await mongoDb.collection(col).createIndex({ createdAt: 1 }, { expireAfterSeconds: TEN_DAYS_SECONDS, background: true });
+    } catch (err) {
+      console.warn(`[DB Service] TTL index note (createdAt) for ${col}:`, err.message);
+    }
+  }
+  const coreCollections = [
+    "rfid_realtime_events",
+    "tag_history",
+    "real_time_tags",
+    "live_tags",
+    "hardware_readers",
+    "ai_insights",
+    "zones",
+    "map_configurations",
+    "registered_people",
+    "people",
+    "assets",
+    "vehicles",
+    "cameras",
+    "sensors",
+    "infrastructure",
+    "alerts",
+    "devices",
+    "visitors",
+    "settings",
+    "projects",
+    "floorplans",
+    "attendance_logs",
+    "audit_logs",
+    "visitor_access_logs",
+    "visitor_security_list",
+    "visitor_access_tokens"
+  ];
+  for (const col of coreCollections) {
+    try {
+      await mongoDb.collection(col).createIndex({ organizationId: 1 }, { background: true });
+      await mongoDb.collection(col).createIndex({ id: 1 }, { background: true });
+      await mongoDb.collection(col).createIndex({ organizationId: 1, createdAt: -1 }, { background: true });
+    } catch {
+    }
+  }
+  console.log("[DB Service] MongoDB deduplication, uniqueness, and 10-day retention TTL indexes initialized.");
+}
+async function initDatabase(customUri) {
+  const rawUri = customUri || getMongoUri();
+  const uri = sanitizeMongoUri(rawUri);
+  if (!uri) {
+    console.warn("[DB Service] MONGODB_URI not set in environment or settings. Operating with transient in-memory storage.");
+    return;
+  }
+  try {
+    if (mongoClient) {
+      try {
+        await mongoClient.close();
+      } catch {
+      }
+      mongoClient = null;
+      mongoDb = null;
+    }
+    mongoClient = new import_mongodb.MongoClient(uri, {
+      serverSelectionTimeoutMS: 15e3,
+      connectTimeoutMS: 15e3,
+      socketTimeoutMS: 45e3,
+      maxPoolSize: 50,
+      minPoolSize: 2,
+      maxIdleTimeMS: 6e4,
+      retryWrites: true,
+      retryReads: true
+    });
+    await mongoClient.connect();
+    await mongoClient.db().admin().ping();
+    mongoDb = mongoClient.db();
+    runtimeMongoUri = uri;
+    console.log(`[DB Service] Successfully connected to MongoDB Atlas database (DATA_MODE=${getDataMode()}).`);
+    await initDatabaseIndexes();
+    if (!cleanupsInitialized) {
+      cleanupsInitialized = true;
+      await pruneDuplicateAlerts();
+      await purgeLegacySampleWorkers();
+    }
+  } catch (err) {
+    console.error("[DB Service] Failed to connect to MongoDB:", err.message);
+    console.warn("[DB Service] Operating with in-memory storage fallback.");
+    mongoClient = null;
+    mongoDb = null;
+  } finally {
+    await bootstrapMapAndZoneDefinitions();
+  }
+}
+function isMongoConnected() {
+  return mongoDb !== null;
+}
+var cachedMongoStats = null;
+var STATS_CACHE_TTL_MS = 3e4;
+async function getMongoStats(forceRefresh = false) {
+  if (!forceRefresh && cachedMongoStats && Date.now() - cachedMongoStats.cachedAt < STATS_CACHE_TTL_MS) {
+    return cachedMongoStats.data;
+  }
+  const uri = getMongoUri();
+  let connected = isMongoConnected();
+  let collectionsCount = 0;
+  let totalRecords = 0;
+  let collectionsBreakdown = {};
+  let lastError = null;
+  if (!connected && uri) {
+    try {
+      await initDatabase(uri);
+      connected = isMongoConnected();
+    } catch (err) {
+      lastError = err.message;
+    }
+  }
+  if (connected && mongoDb) {
+    try {
+      const cols = await mongoDb.listCollections().toArray();
+      collectionsCount = cols.length;
+      await Promise.all(cols.map(async (col) => {
+        try {
+          const count = await mongoDb.collection(col.name).estimatedDocumentCount();
+          collectionsBreakdown[col.name] = count;
+        } catch {
+          try {
+            const count = await mongoDb.collection(col.name).countDocuments();
+            collectionsBreakdown[col.name] = count;
+          } catch {
+          }
+        }
+      }));
+      totalRecords = Object.values(collectionsBreakdown).reduce((a, b) => a + b, 0);
+    } catch (err) {
+      lastError = err.message;
+      try {
+        await initDatabase(uri);
+      } catch {
+      }
+    }
+  } else {
+    for (const [key, items] of Object.entries(inMemoryStore)) {
+      if (items.length > 0) {
+        collectionsBreakdown[key] = items.length;
+        totalRecords += items.length;
+      }
+    }
+    collectionsCount = Object.keys(collectionsBreakdown).length;
+    if (!lastError) {
+      lastError = "MongoDB is not connected (operating with in-memory fallback)";
+    }
+  }
+  const maskedUri = uri ? uri.replace(/\/\/[^:]+:[^@]+@/, "//***:***@") : "";
+  const result = {
+    connected,
+    connectionString: maskedUri,
+    engine: connected ? "MongoDB Atlas / Cluster" : "In-Memory Fallback",
+    collectionsCount,
+    totalRecords,
+    collectionsBreakdown,
+    lastError
+  };
+  if (connected) {
+    cachedMongoStats = { data: result, cachedAt: Date.now() };
+  }
+  return result;
+}
+async function testMongoConnection(uriInput) {
+  const uri = sanitizeMongoUri(uriInput);
+  if (!uri) {
+    return { success: false, error: "MongoDB connection string cannot be empty" };
+  }
+  let tempClient = null;
+  const startTime = Date.now();
+  try {
+    tempClient = new import_mongodb.MongoClient(uri, {
+      serverSelectionTimeoutMS: 6e3,
+      connectTimeoutMS: 6e3
+    });
+    await tempClient.connect();
+    await tempClient.db().admin().ping();
+    const latencyMs = Date.now() - startTime;
+    await tempClient.close();
+    return { success: true, latencyMs };
+  } catch (err) {
+    if (tempClient) {
+      try {
+        await tempClient.close();
+      } catch {
+      }
+    }
+    return { success: false, error: err.message || "Failed to connect to MongoDB instance. Check credentials, network access, or IP whitelist." };
+  }
+}
+async function reconnectDatabase(newUriInput) {
+  const newUri = sanitizeMongoUri(newUriInput);
+  try {
+    const testResult = await testMongoConnection(newUri);
+    if (!testResult.success) {
+      return { success: false, error: testResult.error || "Connection test failed with provided URI" };
+    }
+    await initDatabase(newUri);
+    if (isMongoConnected()) {
+      return { success: true, latencyMs: testResult.latencyMs };
+    } else {
+      return { success: false, error: "Could not initialize MongoDB session with provided URI" };
+    }
+  } catch (err) {
+    return { success: false, error: err.message || "Failed to reconnect to MongoDB" };
+  }
+}
+async function getCollectionDocs(colName, opts, organizationId) {
+  const cacheKey = `${colName}:${organizationId || "all"}:${opts?.limit || 0}:${JSON.stringify(opts?.sort || {})}`;
+  const cached = collectionReadCache.get(cacheKey);
+  if (cached && Date.now() - cached.cachedAt < COLLECTION_CACHE_TTL_MS) {
+    return [...cached.docs];
+  }
+  if (mongoDb) {
+    try {
+      const DEFAULT_LIMITS = {
+        ai_insights: 500,
+        audit_logs: 1e3,
+        incidents: 2e3,
+        incidents_enterprise: 500,
+        rfid_realtime_events: 500,
+        tag_history: 500
+      };
+      const limit = opts?.limit ?? DEFAULT_LIMITS[colName] ?? 0;
+      const sort = opts?.sort ?? (DEFAULT_LIMITS[colName] ? { createdAt: -1 } : {});
+      const query = {};
+      if (organizationId && organizationId !== "ALL" && colName !== "organizations" && colName !== "settings") {
+        const isSpatialConfig = ["map_configurations", "zones", "geofences", "projects", "sites", "floorplans", "settings", "organizations"].includes(colName);
+        if (!isSpatialConfig) {
+          if (organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default") {
+            query.$or = [
+              { organizationId: "default" },
+              { organizationId: "org_main" },
+              { organizationId: "org_aperture_default" },
+              { organizationId: { $exists: false } },
+              { organizationId: null },
+              { organizationId: "" }
+            ];
+          } else {
+            query.organizationId = organizationId;
+          }
+        }
+      }
+      let cursor = mongoDb.collection(colName).find(query);
+      if (Object.keys(sort).length) cursor = cursor.sort(sort);
+      if (limit > 0) cursor = cursor.limit(limit);
+      const rawDocs = await cursor.toArray();
+      const docs = rawDocs.map((doc) => {
+        const { _id, ...rest } = doc;
+        const out = { id: doc.id || (_id ? _id.toString() : void 0), ...rest };
+        if (colName === "live_tags" || colName === "real_time_tags" || colName === "rfid_realtime_events") {
+          if (out.TagID !== void 0 && out.tagId !== void 0) {
+            out.TagID = out.TagID || out.tagId;
+            delete out.tagId;
+          }
+        }
+        return serializeBinaryImages(out);
+      });
+      collectionReadCache.set(cacheKey, { docs, cachedAt: Date.now() });
+      return docs;
+    } catch (err) {
+      console.error(`[DB Service] Error fetching docs for ${colName}:`, err);
+    }
+  }
+  const items = inMemoryStore[colName] || [];
+  let result = items;
+  if (organizationId && organizationId !== "ALL" && colName !== "organizations" && colName !== "settings") {
+    result = items.filter(
+      (item) => organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default" ? !item.organizationId || item.organizationId === "default" || item.organizationId === "org_main" || item.organizationId === "org_aperture_default" : item.organizationId === organizationId
+    );
+  }
+  const serialized = result.map((item) => serializeBinaryImages(item));
+  collectionReadCache.set(cacheKey, { docs: serialized, cachedAt: Date.now() });
+  return serialized;
+}
+var DEFAULT_ORGS = ["default", "org_main", "org_aperture_default"];
+async function getDocById(colName, id, organizationId) {
+  if (mongoDb) {
+    try {
+      const idStr = String(id || "").trim();
+      const orClauses = [
+        { id: idStr },
+        { id: idStr.toUpperCase() },
+        { id: idStr.toLowerCase() },
+        { hardhatTagId: idStr },
+        { hardhatTagId: idStr.toUpperCase() },
+        { hardhatTagId: idStr.toLowerCase() }
+      ];
+      if (import_mongodb.ObjectId.isValid(idStr) && idStr.length === 24) {
+        try {
+          orClauses.push({ _id: new import_mongodb.ObjectId(idStr) });
+        } catch {
+        }
+      }
+      let query = { $or: orClauses };
+      const isGlobalOrSystemConfig = ["map_configurations", "zones", "geofences", "projects", "sites", "floorplans", "settings", "organizations"].includes(colName);
+      if (organizationId && organizationId !== "ALL" && !isGlobalOrSystemConfig) {
+        if (DEFAULT_ORGS.includes(organizationId)) {
+          query = {
+            $and: [
+              { $or: orClauses },
+              {
+                $or: [
+                  { organizationId: { $in: [...DEFAULT_ORGS, null, ""] } },
+                  { organizationId: { $exists: false } }
+                ]
+              }
+            ]
+          };
+        } else {
+          query = {
+            $and: [
+              { $or: orClauses },
+              { organizationId }
+            ]
+          };
+        }
+      }
+      const doc2 = await mongoDb.collection(colName).findOne(query);
+      if (doc2) {
+        const { _id, ...rest } = doc2;
+        const out = { id: doc2.id || (_id ? _id.toString() : idStr), ...rest };
+        return serializeBinaryImages(out);
+      }
+      return null;
+    } catch (err) {
+      console.error(`[DB Service] Error fetching doc ${id} in ${colName}:`, err);
+    }
+  }
+  const items = inMemoryStore[colName] || [];
+  const idLower = String(id || "").toLowerCase().trim();
+  const doc = items.find(
+    (i) => i.id === id || String(i.id || "").toLowerCase().trim() === idLower || String(i.hardhatTagId || "").toLowerCase().trim() === idLower
+  );
+  if (!doc) return null;
+  if (organizationId && organizationId !== "ALL" && colName !== "organizations" && colName !== "settings") {
+    const docOrg = doc.organizationId;
+    if (docOrg && docOrg !== organizationId) {
+      const isBothDefault = DEFAULT_ORGS.includes(docOrg) && DEFAULT_ORGS.includes(organizationId);
+      if (!isBothDefault) return null;
+    }
+  }
+  return serializeBinaryImages(doc);
+}
+async function upsertDoc(colName, doc, organizationId) {
+  invalidateCollectionCache(colName);
+  const binaryReady = convertImagesToBinary(doc);
+  const processedDoc = offloadBase64Images(binaryReady);
+  if (!processedDoc.id) {
+    processedDoc.id = `${colName}_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`;
+  }
+  const cleanDoc = { ...processedDoc };
+  delete cleanDoc._id;
+  if (colName === "organizations") {
+    cleanDoc.organizationId = cleanDoc.id;
+  } else if (organizationId) {
+    cleanDoc.organizationId = organizationId;
+  }
+  if (DATA_RETENTION_COLLECTIONS.includes(colName)) {
+    const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1e3;
+    const now = /* @__PURE__ */ new Date();
+    if (!cleanDoc.createdAt || !(cleanDoc.createdAt instanceof Date)) {
+      const parsed = cleanDoc.createdAt ? new Date(cleanDoc.createdAt) : now;
+      cleanDoc.createdAt = isNaN(parsed.getTime()) ? now : parsed;
+    }
+    if (!cleanDoc.expireAt || !(cleanDoc.expireAt instanceof Date)) {
+      cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + TEN_DAYS_MS);
+    }
+  }
+  if (mongoDb) {
+    try {
+      const idStr = String(cleanDoc.id || "").trim();
+      const orClauses = [
+        { id: idStr },
+        { id: idStr.toUpperCase() },
+        { id: idStr.toLowerCase() },
+        { hardhatTagId: idStr },
+        { hardhatTagId: idStr.toUpperCase() },
+        { hardhatTagId: idStr.toLowerCase() }
+      ];
+      if (import_mongodb.ObjectId.isValid(idStr) && idStr.length === 24) {
+        try {
+          orClauses.push({ _id: new import_mongodb.ObjectId(idStr) });
+        } catch {
+        }
+      }
+      let matchFilter;
+      const isSpatialConfig = ["map_configurations", "zones", "geofences", "projects", "sites", "floorplans", "settings", "organizations"].includes(colName);
+      if (isSpatialConfig) {
+        matchFilter = { $or: orClauses };
+      } else if (cleanDoc.organizationId && colName !== "organizations" && colName !== "settings") {
+        if (DEFAULT_ORGS.includes(cleanDoc.organizationId)) {
+          matchFilter = {
+            $and: [
+              { $or: orClauses },
+              {
+                $or: [
+                  { organizationId: { $in: [...DEFAULT_ORGS, null, ""] } },
+                  { organizationId: { $exists: false } }
+                ]
+              }
+            ]
+          };
+        } else {
+          matchFilter = {
+            $and: [
+              { $or: orClauses },
+              { organizationId: cleanDoc.organizationId }
+            ]
+          };
+        }
+      } else {
+        matchFilter = { $or: orClauses };
+      }
+      const existingInDb = await mongoDb.collection(colName).findOne(matchFilter);
+      if (existingInDb) {
+        if (existingInDb.organizationId) {
+          cleanDoc.organizationId = existingInDb.organizationId;
+        }
+        await mongoDb.collection(colName).updateOne(
+          { _id: existingInDb._id },
+          { $set: cleanDoc }
+        );
+      } else {
+        const insertFilter = { id: cleanDoc.id };
+        if (cleanDoc.organizationId && colName !== "organizations") {
+          insertFilter.organizationId = cleanDoc.organizationId;
+        }
+        await mongoDb.collection(colName).updateOne(
+          insertFilter,
+          { $set: cleanDoc },
+          { upsert: true }
+        );
+      }
+      return cleanDoc;
+    } catch (err) {
+      console.error(`[DB Service] Error upserting doc in ${colName}:`, err);
+    }
+  }
+  if (!inMemoryStore[colName]) {
+    inMemoryStore[colName] = [];
+  }
+  const idLower = String(cleanDoc.id || "").toLowerCase().trim();
+  const idx = inMemoryStore[colName].findIndex((item) => {
+    const sameId = item.id === cleanDoc.id || String(item.id || "").toLowerCase().trim() === idLower;
+    if (colName !== "organizations" && cleanDoc.organizationId) {
+      return sameId && item.organizationId === cleanDoc.organizationId;
+    }
+    return sameId;
+  });
+  if (idx >= 0) {
+    inMemoryStore[colName][idx] = cleanDoc;
+  } else {
+    inMemoryStore[colName].push(cleanDoc);
+  }
+  return cleanDoc;
+}
+async function deleteDocById(colName, id, organizationId) {
+  invalidateCollectionCache(colName);
+  if (mongoDb) {
+    try {
+      const idStr = String(id || "").trim();
+      const idLower = idStr.toLowerCase();
+      const idUpper = idStr.toUpperCase();
+      const orClauses = [
+        { id: idStr },
+        { id: idLower },
+        { id: idUpper },
+        { _id: idStr },
+        { readerId: idStr },
+        { readerId: idLower },
+        { readerId: idUpper },
+        { serialno: idStr },
+        { serialno: idLower },
+        { serialno: idUpper },
+        { customcode: idStr },
+        { customcode: idLower },
+        { customcode: idUpper },
+        { macAddress: idStr },
+        { macAddress: idLower },
+        { macAddress: idUpper },
+        { mac: idStr },
+        { mac: idLower },
+        { mac: idUpper },
+        { ipAddress: idStr },
+        { ip: idStr },
+        { hardhatTagId: idStr },
+        { hardhatTagId: idUpper },
+        { hardhatTagId: idLower },
+        { tagId: idStr },
+        { tagId: idUpper },
+        { tagId: idLower },
+        { TagID: idStr },
+        { TagID: idUpper },
+        { TagID: idLower },
+        { epc: idStr },
+        { epc: idUpper },
+        { epc: idLower },
+        { badgeId: idStr },
+        { workerId: idStr },
+        { entityId: idStr }
+      ];
+      if (import_mongodb.ObjectId.isValid(idStr) && idStr.length === 24) {
+        try {
+          orClauses.push({ _id: new import_mongodb.ObjectId(idStr) });
+        } catch {
+        }
+      }
+      const filter = { $or: orClauses };
+      if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
+        const isSpatialConfig = ["map_configurations", "zones", "geofences", "projects", "sites", "floorplans"].includes(colName);
+        if (!isSpatialConfig) {
+          if (DEFAULT_ORGS.includes(organizationId)) {
+            filter.organizationId = { $in: [...DEFAULT_ORGS, null, ""] };
+          } else {
+            filter.organizationId = organizationId;
+          }
+        }
+      }
+      const result = await mongoDb.collection(colName).deleteMany(filter);
+      return (result.deletedCount || 0) > 0;
+    } catch (err) {
+      console.error(`[DB Service] Error deleting doc ${id} in ${colName}:`, err);
+    }
+  }
+  if (inMemoryStore[colName]) {
+    const initLen = inMemoryStore[colName].length;
+    const idLower = String(id || "").toLowerCase().trim();
+    inMemoryStore[colName] = inMemoryStore[colName].filter((item) => {
+      const itemFields = [
+        item.id,
+        item._id,
+        item.readerId,
+        item.serialno,
+        item.customcode,
+        item.macAddress,
+        item.mac,
+        item.ipAddress,
+        item.ip,
+        item.hardhatTagId,
+        item.tagId,
+        item.TagID,
+        item.epc,
+        item.badgeId,
+        item.workerId,
+        item.entityId
+      ].filter(Boolean).map((v) => String(v).toLowerCase().trim());
+      const matchesId = itemFields.includes(idLower);
+      if (!matchesId) return true;
+      if (organizationId && organizationId !== "ALL" && colName !== "organizations") {
+        const itemOrg = item.organizationId;
+        if (itemOrg && itemOrg !== organizationId) return true;
+      }
+      return false;
+    });
+    return inMemoryStore[colName].length < initLen;
+  }
+  return false;
+}
+async function deleteDocsByFilter(colName, predicate, organizationId) {
+  const docs = await getCollectionDocs(colName, void 0, organizationId);
+  const toDelete = docs.filter(predicate);
+  let count = 0;
+  for (const doc of toDelete) {
+    const deleted = await deleteDocById(colName, doc.id, organizationId);
+    if (deleted) count++;
+  }
+  return count;
+}
+async function logAuditEvent(event) {
+  const orgId = event.organizationId || "default";
+  const auditDoc = {
+    id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+    timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+    userId: event.userId || "system",
+    userEmail: event.userEmail || "system",
+    organizationId: orgId,
+    action: event.action,
+    resource: event.resource,
+    details: event.details || {},
+    ip: event.ip || "unknown"
+  };
+  await upsertDoc("audit_logs", auditDoc, orgId);
+}
+async function getAuditLogs(limitCount = 100, organizationId) {
+  const logs = await getCollectionDocs("audit_logs", void 0, organizationId);
+  return logs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, limitCount);
+}
+async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol", organizationId = "default") {
+  if (!Array.isArray(rawEvents) || rawEvents.length === 0) {
+    return { insertedCount: 0, modifiedCount: 0, totalProcessed: 0 };
+  }
+  const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+  let insertedCount = 0;
+  let modifiedCount = 0;
+  const normalizedDocs = rawEvents.map((raw) => {
+    const tagId = String(raw.TagID || raw.tagId || raw.epc || raw.EPC || raw.id || "");
+    if (!tagId) return null;
+    const location = String(raw.Location || raw.location || raw.LocationName || raw.zone || raw.Zone || "Zone1");
+    const rawTime = raw.Timestamp || raw.timestamp || raw.EnterTime || raw.time || nowIso;
+    const d = new Date(rawTime);
+    const validDate = isNaN(d.getTime()) ? /* @__PURE__ */ new Date() : d;
+    const YYYY = validDate.getUTCFullYear();
+    const MM = String(validDate.getUTCMonth() + 1).padStart(2, "0");
+    const DD = String(validDate.getUTCDate()).padStart(2, "0");
+    const hh = String(validDate.getUTCHours()).padStart(2, "0");
+    const mm = String(validDate.getUTCMinutes()).padStart(2, "0");
+    const ss = String(validDate.getUTCSeconds()).padStart(2, "0");
+    const fff = String(validDate.getUTCMilliseconds()).padStart(3, "0");
+    const timestampMs = `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}.${fff}`;
+    const orgId = raw.organizationId || organizationId;
+    const readerId = raw.readerId || raw.ReaderID || "APERTURE-READER-01";
+    const eventHash = raw.externalEventId || raw.eventId || generateEventHash(tagId, timestampMs, location, readerId, orgId);
+    const docId = `evt_${tagId}_${eventHash}`;
+    const tenDaysLater = new Date(validDate.getTime() + 10 * 24 * 60 * 60 * 1e3);
+    return {
+      id: docId,
+      organizationId: orgId,
+      TagID: tagId,
+      Timestamp: timestampMs,
+      Location: location,
+      FirstName: raw.FirstName || raw.firstName || "",
+      LastName: raw.LastName || raw.lastName || "",
+      protocol: raw.protocol || protocol,
+      rssi: raw.rssi !== void 0 ? Number(raw.rssi) : -60,
+      readerId,
+      antennaPort: raw.antennaPort || raw.antennaId || 1,
+      receivedAt: nowIso,
+      createdAt: validDate,
+      expireAt: tenDaysLater
+    };
+  }).filter(Boolean);
+  if (normalizedDocs.length === 0) {
+    return { insertedCount: 0, modifiedCount: 0, totalProcessed: 0 };
+  }
+  console.log(`[INGEST] source=${protocol} batchCount=${normalizedDocs.length} org=${organizationId}`);
+  if (mongoDb) {
+    try {
+      const operations = normalizedDocs.map((doc) => ({
+        updateOne: {
+          filter: { id: doc.id, organizationId: doc.organizationId },
+          update: { $set: doc },
+          upsert: true
+        }
+      }));
+      const result = await mongoDb.collection("rfid_realtime_events").bulkWrite(operations, { ordered: false });
+      insertedCount = result.upsertedCount || 0;
+      modifiedCount = result.modifiedCount || 0;
+      await bulkWriteRealtimeTags(normalizedDocs, organizationId);
+      invalidateCollectionCache("rfid_realtime_events");
+      invalidateCollectionCache("real_time_tags");
+      invalidateCollectionCache("live_tags");
+      return { insertedCount, modifiedCount, totalProcessed: rawEvents.length };
+    } catch (err) {
+      console.error("[DB Service] Error in bulkWriteRfidRealtimeEvents to MongoDB:", err);
+    }
+  }
+  for (const doc of normalizedDocs) {
+    await upsertDoc("rfid_realtime_events", doc, doc.organizationId);
+    await upsertDoc("real_time_tags", doc, doc.organizationId);
+    await upsertDoc("live_tags", doc, doc.organizationId);
+    insertedCount++;
+  }
+  invalidateCollectionCache("rfid_realtime_events");
+  invalidateCollectionCache("real_time_tags");
+  invalidateCollectionCache("live_tags");
+  return { insertedCount, modifiedCount: 0, totalProcessed: rawEvents.length };
+}
+async function bulkWriteRealtimeTags(tags, organizationId = "default") {
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return { insertedCount: 0, updatedCount: 0, totalProcessed: 0 };
+  }
+  let insertedCount = 0;
+  let updatedCount = 0;
+  const normalizedTags = tags.map((rawTag) => {
+    const tagId = rawTag.TagID || rawTag.tagId || rawTag.epc || `TAG_${Date.now()}`;
+    const orgId = rawTag.organizationId || organizationId;
+    const now = /* @__PURE__ */ new Date();
+    const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
+    const fullName = rawTag.name || rawTag.workerName || rawTag.personName || `${rawTag.FirstName || ""} ${rawTag.LastName || ""}`.trim() || "";
+    const parts = fullName ? fullName.split(" ") : [];
+    const firstName = rawTag.FirstName || parts[0] || "";
+    const lastName = rawTag.LastName || parts.slice(1).join(" ") || "";
+    return {
+      id: tagId,
+      organizationId: orgId,
+      TagID: tagId,
+      Timestamp: rawTag.Timestamp || (/* @__PURE__ */ new Date()).toISOString(),
+      Location: rawTag.Location || rawTag.LocationName || rawTag.zone || "Zone1",
+      FirstName: firstName,
+      LastName: lastName,
+      name: fullName || `${firstName} ${lastName}`.trim(),
+      role: rawTag.role || rawTag.tradeCompany || "Field Personnel",
+      rssi: rawTag.rssi !== void 0 ? Number(rawTag.rssi) : -60,
+      status: rawTag.status || "Active",
+      lastSyncAt: (/* @__PURE__ */ new Date()).toISOString(),
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      createdAt: now,
+      expireAt: tenDaysLater
+    };
+  });
+  if (mongoDb) {
+    try {
+      const operations = normalizedTags.map((docToUpsert) => ({
+        updateOne: {
+          filter: { TagID: docToUpsert.TagID, organizationId: docToUpsert.organizationId },
+          update: { $set: docToUpsert },
+          upsert: true
+        }
+      }));
+      const result = await mongoDb.collection("real_time_tags").bulkWrite(operations, { ordered: false });
+      insertedCount = result.upsertedCount || 0;
+      updatedCount = result.modifiedCount || 0;
+      for (const t of normalizedTags) {
+        await mongoDb.collection("live_tags").updateOne(
+          { TagID: t.TagID, organizationId: t.organizationId },
+          { $set: t },
+          { upsert: true }
+        ).catch(() => {
+        });
+      }
+      setImmediate(() => savePlaybackSnapshot(normalizedTags, organizationId).catch(() => {
+      }));
+      return { insertedCount, updatedCount, totalProcessed: tags.length };
+    } catch (err) {
+      console.error("[DB Service] Error during bulkWriteRealtimeTags to MongoDB:", err);
+    }
+  }
+  for (const cleanDoc of normalizedTags) {
+    await upsertDoc("real_time_tags", cleanDoc, cleanDoc.organizationId);
+    await upsertDoc("live_tags", cleanDoc, cleanDoc.organizationId);
+    updatedCount++;
+  }
+  return { insertedCount: tags.length, updatedCount, totalProcessed: tags.length };
+}
+async function bulkUpsertDocs(colName, docs, organizationId = "default") {
+  if (!Array.isArray(docs) || docs.length === 0) {
+    return { count: 0, success: true };
+  }
+  invalidateCollectionCache(colName);
+  const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1e3;
+  const now = /* @__PURE__ */ new Date();
+  const preparedDocs = docs.map((doc, idx) => {
+    const docId = String(doc.id || doc._id || `${colName}_${now.getTime()}_${idx}`);
+    const cleanDoc = { ...doc, id: docId, organizationId: doc.organizationId || organizationId };
+    delete cleanDoc._id;
+    if (DATA_RETENTION_COLLECTIONS.includes(colName)) {
+      if (!cleanDoc.createdAt || !(cleanDoc.createdAt instanceof Date)) {
+        const parsed = cleanDoc.createdAt ? new Date(cleanDoc.createdAt) : now;
+        cleanDoc.createdAt = isNaN(parsed.getTime()) ? now : parsed;
+      }
+      if (!cleanDoc.expireAt || !(cleanDoc.expireAt instanceof Date)) {
+        cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + TEN_DAYS_MS);
+      }
+    }
+    return cleanDoc;
+  });
+  if (mongoDb) {
+    try {
+      const operations = preparedDocs.map((doc) => ({
+        updateOne: {
+          filter: { id: doc.id, ...colName !== "organizations" ? { organizationId: doc.organizationId } : {} },
+          update: { $set: doc },
+          upsert: true
+        }
+      }));
+      await mongoDb.collection(colName).bulkWrite(operations, { ordered: false });
+      return { count: preparedDocs.length, success: true };
+    } catch (err) {
+      console.error(`[DB Service] Error during bulkUpsertDocs into ${colName}:`, err.message);
+    }
+  }
+  for (const doc of preparedDocs) {
+    await upsertDoc(colName, doc, doc.organizationId);
+  }
+  return { count: preparedDocs.length, success: true };
+}
+async function savePlaybackSnapshot(tags, organizationId = "default") {
+  if (!tags || tags.length === 0) return;
+  const now = /* @__PURE__ */ new Date();
+  const expireAt = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
+  const dateStr = now.toISOString().split("T")[0];
+  const snapId = `snap_${organizationId}_${now.getTime()}`;
+  const snapshot = {
+    id: snapId,
+    organizationId,
+    timestamp: now.toISOString(),
+    date: dateStr,
+    expireAt,
+    tags: tags.map((t) => ({
+      tagId: t.TagID || t.tagId || t.id,
+      name: t.name || t.workerName || t.personName || `${t.FirstName || ""} ${t.LastName || ""}`.trim() || "Unknown",
+      location: t.Location || t.LocationName || t.zone || "Unknown",
+      role: t.role || "Personnel",
+      rssi: t.rssi,
+      status: t.status || "Active",
+      readerId: t.readerId
+    }))
+  };
+  if (mongoDb) {
+    try {
+      await mongoDb.collection("playback_history").insertOne({ ...snapshot, _id: void 0 });
+    } catch (err) {
+      if (!String(err?.message).includes("duplicate")) {
+        console.error("[DB Service] playback_history snapshot error:", err.message);
+      }
+    }
+    return;
+  }
+  inMemoryStore["playback_history"].push(snapshot);
+  if (inMemoryStore["playback_history"].length > 2e3) {
+    inMemoryStore["playback_history"].shift();
+  }
+}
+async function getPlaybackFrames(date, organizationId = "default") {
+  if (!date) return [];
+  const orgFilter = organizationId === "default" || organizationId === "org_main" ? { $in: ["default", "org_main", "demo", null, ""] } : organizationId;
+  if (mongoDb) {
+    try {
+      const docs = await mongoDb.collection("playback_history").find({ date, organizationId: orgFilter }).sort({ timestamp: 1 }).limit(500).toArray();
+      return docs.map((d) => ({ ...d, _id: void 0 }));
+    } catch (err) {
+      console.error("[DB Service] getPlaybackFrames error:", err);
+      return [];
+    }
+  }
+  return inMemoryStore["playback_history"].filter((s) => s.date === date && (s.organizationId === organizationId || s.organizationId === "default" || !s.organizationId)).sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+async function cleanupStaleRealTimeTags(maxAgeMinutes = 60) {
+  const cutoffTime = new Date(Date.now() - maxAgeMinutes * 60 * 1e3);
+  let cleanedCount = 0;
+  console.log(`[DB Service] Running stale real-time tags cleanup (Threshold: ${maxAgeMinutes} mins / Cutoff: ${cutoffTime.toISOString()})...`);
+  if (mongoDb) {
+    try {
+      const filter = {
+        $or: [
+          { Timestamp: { $lt: cutoffTime.toISOString() } },
+          { lastSyncAt: { $lt: cutoffTime.toISOString() } }
+        ]
+      };
+      const result = await mongoDb.collection("real_time_tags").deleteMany(filter);
+      cleanedCount = result.deletedCount || 0;
+      const remainingCount = await mongoDb.collection("real_time_tags").countDocuments();
+      console.log(`[DB Service] Cleaned up ${cleanedCount} stale real-time tags from MongoDB. Remaining: ${remainingCount}`);
+      return { cleanedCount, remainingCount };
+    } catch (err) {
+      console.error("[DB Service] Error cleaning up stale real-time tags in MongoDB:", err);
+    }
+  }
+  if (inMemoryStore["real_time_tags"]) {
+    const initialLen = inMemoryStore["real_time_tags"].length;
+    inMemoryStore["real_time_tags"] = inMemoryStore["real_time_tags"].filter((doc) => {
+      const ts = new Date(doc.Timestamp || doc.lastSyncAt || doc.timestamp || Date.now());
+      return !isNaN(ts.getTime()) && ts.getTime() >= cutoffTime.getTime();
+    });
+    cleanedCount = initialLen - inMemoryStore["real_time_tags"].length;
+  }
+  return { cleanedCount, remainingCount: inMemoryStore["real_time_tags"]?.length || 0 };
+}
+var DEFAULT_MAP_CONFIG = { id: "site-main", siteId: "site-main", name: "Main Site", updatedAt: (/* @__PURE__ */ new Date()).toISOString() };
+async function wipeAllCollections(organizationId) {
+  const allCollections = [
+    "organizations",
+    "users",
+    "permissions",
+    "role_permissions",
+    "registered_people",
+    "people",
+    "devices",
+    "hardware_readers",
+    "hardware_tag_mappings",
+    "third_party_apis",
+    "visitors",
+    "visitor_security_list",
+    "visitor_access_tokens",
+    "visitor_access_logs",
+    "attendance_logs",
+    "leave_requests",
+    "shift_schedules",
+    "alerts",
+    "alerts_enterprise",
+    "alert_rules",
+    "alert_dispatch_logs",
+    "emergency_broadcasts",
+    "live_tags",
+    "real_time_tags",
+    "rfid_realtime_events",
+    "tag_history",
+    "audit_logs",
+    "settings",
+    "playback_history",
+    "incidents_enterprise",
+    "incidents",
+    "zones",
+    "map_configurations",
+    "geofences",
+    "reader_zone_mappings",
+    "ai_insights",
+    "ai_rca_reports",
+    "ai_hazard_predictions",
+    "ai_copilot_chats",
+    "assets",
+    "vehicles",
+    "cameras",
+    "sensors",
+    "maintenance_nodes",
+    "work_orders",
+    "technicians",
+    "schedules",
+    "compliance_frameworks",
+    "retention_policies",
+    "compliance_reports",
+    "analytics_reports",
+    "analytics_metrics",
+    "quick_notes",
+    "notifications",
+    "system_events",
+    "daily_reports",
+    "site_configurations",
+    "shift_assignments",
+    "training_records",
+    "ppe_records"
+  ];
+  const wipedCollections = {};
+  let totalDeleted = 0;
+  if (mongoDb) {
+    for (const colName of allCollections) {
+      try {
+        const filter = organizationId ? { organizationId } : {};
+        const result = await mongoDb.collection(colName).deleteMany(filter);
+        const count = result.deletedCount || 0;
+        if (count > 0) {
+          wipedCollections[colName] = count;
+          totalDeleted += count;
+        }
+      } catch {
+      }
+    }
+  } else {
+    for (const colName of allCollections) {
+      if (inMemoryStore[colName]) {
+        const count = inMemoryStore[colName].length;
+        inMemoryStore[colName] = [];
+        if (count > 0) {
+          wipedCollections[colName] = count;
+          totalDeleted += count;
+        }
+      }
+    }
+  }
+  console.log(`[DB Service] wipeAllCollections: Deleted ${totalDeleted} documents across ${Object.keys(wipedCollections).length} collections.`);
+  return { wipedCollections, totalDeleted };
+}
+async function bootstrapMapAndZoneDefinitions() {
+  try {
+    const existingZones = await getCollectionDocs("zones", void 0, "default");
+    if (!existingZones || existingZones.length === 0) {
+      const DEFAULT_GRID_LAYOUT = [
+        { x: 6.5, y: 8, width: 23.5, height: 21.5 },
+        { x: 36.5, y: 8, width: 26, height: 21.5 },
+        { x: 69, y: 8, width: 24.5, height: 21.5 },
+        { x: 6.5, y: 38, width: 23.5, height: 21.5 },
+        { x: 36.5, y: 38, width: 26, height: 21.5 },
+        { x: 69, y: 38, width: 24.5, height: 21.5 },
+        { x: 6.5, y: 68, width: 23.5, height: 21.5 },
+        { x: 36.5, y: 68, width: 26, height: 21.5 },
+        { x: 69, y: 68, width: 24.5, height: 21.5 }
+      ];
+      const areas = INDUSTRY_PRESET_PROFILES.construction.functionalAreas || [];
+      const defaultZones = areas.map((area, idx) => {
+        const grid = DEFAULT_GRID_LAYOUT[idx] || DEFAULT_GRID_LAYOUT[0];
+        return {
+          id: area.id || `zone_${idx + 1}`,
+          zoneId: area.id || `zone_${idx + 1}`,
+          name: area.name,
+          x: grid.x,
+          y: grid.y,
+          width: grid.width,
+          height: grid.height,
+          category: (area.category || "ZONE").toUpperCase(),
+          hazardLevel: area.hazardLevel || "normal",
+          maxCapacity: area.maxOccupancy || (area.hazardLevel === "critical" ? 4 : area.hazardLevel === "warning" ? 8 : 20),
+          organizationId: "default"
+        };
+      });
+      for (const z7 of defaultZones) {
+        await upsertDoc("zones", z7, "default");
+      }
+      console.log("[DB Service] Seeded default zone definitions into database.");
+    }
+  } catch (err) {
+    console.warn("[DB Service] Zone bootstrap skipped:", err?.message || err);
+  }
+}
+var cleanupTimer = null;
+function startRealTimeTagsCleanupJob(intervalMinutes = 15, maxAgeMinutes = 60) {
+  if (cleanupTimer) return;
+  console.log(`[DB Service] Starting periodic real-time tags background cleanup job (Interval: ${intervalMinutes}m, MaxAge: ${maxAgeMinutes}m)`);
+  cleanupStaleRealTimeTags(maxAgeMinutes).catch((err) => console.error("[DB Service] Cleanup job initial run error:", err));
+  cleanupTimer = setInterval(() => {
+    cleanupStaleRealTimeTags(maxAgeMinutes).catch((err) => console.error("[DB Service] Cleanup job periodic run error:", err));
+  }, intervalMinutes * 60 * 1e3);
+}
+async function cleanupExpiredRetentionData(retentionDays = 10) {
+  const thresholdDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1e3);
+  const now = /* @__PURE__ */ new Date();
+  let totalDeleted = 0;
+  const details = {};
+  if (mongoDb) {
+    for (const col of DATA_RETENTION_COLLECTIONS) {
+      try {
+        const res = await mongoDb.collection(col).deleteMany({
+          $or: [
+            { expireAt: { $lte: now } },
+            { createdAt: { $lte: thresholdDate } }
+          ]
+        });
+        const deleted = res.deletedCount || 0;
+        details[col] = deleted;
+        totalDeleted += deleted;
+        if (deleted > 0) {
+          invalidateCollectionCache(col);
+        }
+      } catch (err) {
+        console.warn(`[DB Service] Retention cleanup error for ${col}:`, err.message);
+      }
+    }
+  }
+  for (const col of DATA_RETENTION_COLLECTIONS) {
+    if (inMemoryStore[col]) {
+      const initial = inMemoryStore[col].length;
+      inMemoryStore[col] = inMemoryStore[col].filter((item) => {
+        if (item.expireAt && new Date(item.expireAt).getTime() <= now.getTime()) return false;
+        if (item.createdAt && new Date(item.createdAt).getTime() <= thresholdDate.getTime()) return false;
+        return true;
+      });
+      const removed = initial - inMemoryStore[col].length;
+      details[col] = (details[col] || 0) + removed;
+      totalDeleted += removed;
+    }
+  }
+  console.log(`[DB Service] 10-day retention cleanup finished: purged ${totalDeleted} documents across ${DATA_RETENTION_COLLECTIONS.length} collections.`);
+  return {
+    deletedCount: totalDeleted,
+    collectionsScanned: DATA_RETENTION_COLLECTIONS.length,
+    details
+  };
+}
+var retentionCleanupTimer = null;
+function startDataRetentionCleanupJob(retentionDays = 10, intervalMinutes = 60) {
+  if (retentionCleanupTimer) clearInterval(retentionCleanupTimer);
+  setTimeout(() => {
+    cleanupExpiredRetentionData(retentionDays).catch(() => {
+    });
+  }, 1e4);
+  retentionCleanupTimer = setInterval(() => {
+    cleanupExpiredRetentionData(retentionDays).catch(() => {
+    });
+  }, intervalMinutes * 60 * 1e3);
+  console.log(`[DB Service] Automated 10-day MongoDB data retention cleanup job started (interval: ${intervalMinutes}m).`);
+}
+async function getDataRetentionStatus(retentionDays = 10) {
+  const collectionsStatus = {};
+  if (mongoDb) {
+    for (const col of DATA_RETENTION_COLLECTIONS) {
+      try {
+        const count = await mongoDb.collection(col).countDocuments();
+        const oldest = await mongoDb.collection(col).find().sort({ createdAt: 1 }).limit(1).toArray();
+        const indexes = await mongoDb.collection(col).indexes();
+        const hasTtl = indexes.some(
+          (idx) => idx.key?.expireAt !== void 0 || idx.key?.createdAt !== void 0 && idx.expireAfterSeconds !== void 0
+        );
+        collectionsStatus[col] = {
+          totalDocs: count,
+          oldestDocDate: oldest[0]?.createdAt ? new Date(oldest[0].createdAt).toISOString() : null,
+          ttlIndexActive: hasTtl
+        };
+      } catch {
+        collectionsStatus[col] = { totalDocs: 0, oldestDocDate: null, ttlIndexActive: false };
+      }
+    }
+  } else {
+    for (const col of DATA_RETENTION_COLLECTIONS) {
+      const items = inMemoryStore[col] || [];
+      collectionsStatus[col] = {
+        totalDocs: items.length,
+        oldestDocDate: items[0]?.createdAt ? new Date(items[0].createdAt).toISOString() : null,
+        ttlIndexActive: true
+      };
+    }
+  }
+  return {
+    retentionPolicyDays: retentionDays,
+    retentionSeconds: retentionDays * 86400,
+    policyEnforced: true,
+    engine: mongoDb ? "MongoDB Atlas TTL Indexes + Scheduled Background Purge" : "In-Memory Fallback Retention",
+    collections: collectionsStatus
+  };
+}
+async function pruneDuplicateAlerts() {
+  if (!mongoDb) return 0;
+  try {
+    const alertsCol = mongoDb.collection("alerts");
+    const allAlerts = await alertsCol.find().sort({ timestamp: -1, createdAt: -1 }).toArray();
+    if (allAlerts.length <= 50) return 0;
+    const seenKeys = /* @__PURE__ */ new Set();
+    const toKeep = [];
+    const toDeleteIds = [];
+    for (const a of allAlerts) {
+      const key = `${a.tagId || "tag"}_${(a.title || a.message || "alert").trim().toLowerCase()}`;
+      if (!seenKeys.has(key)) {
+        seenKeys.add(key);
+        toKeep.push(a);
+      } else {
+        toDeleteIds.push(a._id);
+      }
+    }
+    if (toDeleteIds.length > 0) {
+      const chunkSize = 1e3;
+      for (let i = 0; i < toDeleteIds.length; i += chunkSize) {
+        const chunk = toDeleteIds.slice(i, i + chunkSize);
+        await alertsCol.deleteMany({ _id: { $in: chunk } });
+      }
+      console.log(`[DB Service] Pruned ${toDeleteIds.length} duplicate alerts from MongoDB. Retained ${toKeep.length} unique active alerts.`);
+      invalidateCollectionCache("alerts");
+    }
+    return toDeleteIds.length;
+  } catch (err) {
+    console.warn("[DB Service] Alert pruning note:", err.message);
+    return 0;
+  }
+}
+async function purgeAllDemoAndTestData() {
+  const deletedCounts = {};
+  if (!mongoDb) return { deletedCounts };
+  try {
+    const fakeIds = [
+      "TAG_123",
+      "W-101",
+      "worker-1",
+      "worker-2",
+      "worker-3",
+      "TEST_AUTH_CHECK",
+      "TEST_DEVICE_INGEST",
+      "UHF-REAL-001",
+      "UHF-REAL-002",
+      "TAG_API_WORKER_99",
+      "BATCH-001",
+      "BATCH-002",
+      "TEST_WS_TAG_991",
+      "TEST_MQTT_TAG_992",
+      "TEST_BULK_TAG_993",
+      "TAG_DIAG_WS_MQTT",
+      "DIAG_MQTT_PING_01",
+      "TAG_HAZARD_01",
+      "TAG_SAFE_02"
+    ];
+    const fakeTagRegex = /^(TEST_|BATCH-|UHF-REAL-|TAG_DIAG|DIAG_|TAG_HIST_|TAG_RT_|TAG_RAW_|TAG_API_|TAG_HAZARD_|TAG_SAFE_|att_TEST_|att_BATCH-|att_UHF-REAL-|att_TAG_)/i;
+    const fakeOrgRegex = /^(safety_org_|ai_workflow_org_|test_|demo$)/i;
+    const fakeNames = [
+      "Staff User",
+      "John Miller",
+      "Marcus Vance",
+      "Alice Smith",
+      "Sarah Jenkins",
+      "David Wilson",
+      "WebSocket Tester",
+      "MQTT Tester"
+    ];
+    const tagFilter = {
+      $or: [
+        { id: { $in: fakeIds } },
+        { _id: { $in: fakeIds } },
+        { tagId: { $in: fakeIds } },
+        { TagID: { $in: fakeIds } },
+        { hardhatTagId: { $in: fakeIds } },
+        { personId: { $in: fakeIds } },
+        { rfidTagId: { $in: fakeIds } },
+        { id: { $regex: fakeTagRegex } },
+        { tagId: { $regex: fakeTagRegex } },
+        { TagID: { $regex: fakeTagRegex } },
+        { hardhatTagId: { $regex: fakeTagRegex } },
+        { personId: { $regex: fakeTagRegex } },
+        { rfidTagId: { $regex: fakeTagRegex } },
+        { organizationId: { $regex: fakeOrgRegex } },
+        { organizationId: "demo" },
+        { name: { $in: fakeNames } },
+        { personName: { $in: fakeNames } }
+      ]
+    };
+    const trackingCols = [
+      "people",
+      "registered_people",
+      "attendance_logs",
+      "real_time_tags",
+      "live_tags",
+      "tag_history",
+      "rfid_realtime_events",
+      "devices"
+    ];
+    for (const col of trackingCols) {
+      const res = await mongoDb.collection(col).deleteMany(tagFilter);
+      deletedCounts[col] = res.deletedCount || 0;
+    }
+    const incidentAndAlertFilter = {
+      $or: [
+        { tagId: { $in: fakeIds } },
+        { tagId: { $regex: fakeTagRegex } },
+        { TagID: { $in: fakeIds } },
+        { TagID: { $regex: fakeTagRegex } },
+        { organizationId: { $regex: fakeOrgRegex } },
+        { organizationId: "demo" },
+        { personName: { $in: fakeNames } }
+      ]
+    };
+    const aiCols = ["alerts", "alerts_enterprise", "incidents", "incidents_enterprise", "ai_insights", "ai_recommendations"];
+    for (const col of aiCols) {
+      const res = await mongoDb.collection(col).deleteMany(incidentAndAlertFilter);
+      deletedCounts[col] = res.deletedCount || 0;
+    }
+    const playbackRes = await mongoDb.collection("playback_history").deleteMany({
+      $or: [
+        { "tags.tagId": { $in: fakeIds } },
+        { "tags.TagID": { $in: fakeIds } },
+        { "tags.tagId": { $regex: fakeTagRegex } },
+        { "tags.TagID": { $regex: fakeTagRegex } },
+        { organizationId: { $regex: fakeOrgRegex } },
+        { organizationId: "demo" }
+      ]
+    });
+    deletedCounts["playback_history"] = playbackRes.deletedCount || 0;
+    const orgRes = await mongoDb.collection("organizations").deleteMany({
+      $or: [
+        { id: { $regex: fakeOrgRegex } },
+        { id: "demo" },
+        { organizationId: "demo" }
+      ]
+    });
+    deletedCounts["organizations"] = orgRes.deletedCount || 0;
+    const userRes = await mongoDb.collection("users").deleteMany({
+      $or: [
+        { id: { $in: ["usr_viewer", "usr_admin", "demo_user"] } },
+        { email: { $in: ["viewer@example.com", "admin@gaostaff.com", "demo@aperture.io", "forged_admin@gaostaff.com"] } },
+        { organizationId: { $regex: fakeOrgRegex } },
+        { organizationId: "demo" }
+      ]
+    });
+    deletedCounts["users"] = userRes.deletedCount || 0;
+    const thirdPartyRes = await mongoDb.collection("third_party_apis").deleteMany({
+      $or: [
+        { id: "failing_api_conn" },
+        { endpointUrl: /localhost:59999/i },
+        { name: /Non Existent/i }
+      ]
+    });
+    deletedCounts["third_party_apis"] = thirdPartyRes.deletedCount || 0;
+    await mongoDb.collection("people").updateMany(
+      { lastName: "Doe Testing" },
+      { $set: { lastName: "", name: "John" } }
+    );
+    await mongoDb.collection("registered_people").updateMany(
+      { lastName: "Doe Testing" },
+      { $set: { lastName: "", name: "John" } }
+    );
+    await mongoDb.collection("incidents").updateMany(
+      { personName: "John Doe Testing" },
+      { $set: { personName: "John" } }
+    );
+    await mongoDb.collection("alerts").updateMany(
+      { personName: "John Doe Testing" },
+      { $set: { personName: "John" } }
+    );
+    invalidateCollectionCache();
+    console.log("[DB Service] Purged all demo, test, and dummy records from MongoDB Atlas:", deletedCounts);
+  } catch (err) {
+    console.warn("[DB Service] Note on purgeAllDemoAndTestData:", err.message);
+  }
+  return { deletedCounts };
+}
+async function purgeLegacySampleWorkers() {
+  await purgeAllDemoAndTestData();
+}
+
+// src/server/routes/connections.ts
+var import_express = require("express");
+
+// src/server/services/connectionsService.ts
+function buildHeaders(config) {
+  const headers = {
+    "Accept": "application/json",
+    "User-Agent": "GAO-PeopleTracking-Gateway/2.0"
+  };
+  if (config.method === "POST") {
+    headers["Content-Type"] = "application/json";
+  }
+  if (config.authType === "apiKey" && config.apiKey) {
+    const headerName = config.apiKeyHeader || "X-API-Key";
+    if (config.apiKeyLocation === "header" || !config.apiKeyLocation) {
+      headers[headerName] = config.apiKey.trim();
+    }
+  } else if (config.authType === "bearer" && config.bearerToken) {
+    headers["Authorization"] = `Bearer ${config.bearerToken.trim()}`;
+  } else if (config.authType === "basic" && config.basicUsername) {
+    const creds = Buffer.from(`${config.basicUsername}:${config.basicPassword || ""}`).toString("base64");
+    headers["Authorization"] = `Basic ${creds}`;
+  }
+  if (config.customHeaders && typeof config.customHeaders === "object") {
+    for (const [key, value] of Object.entries(config.customHeaders)) {
+      if (key && value) headers[key] = String(value);
+    }
+  }
+  return headers;
+}
+function buildUrl(config) {
+  let url = config.endpointUrl.trim();
+  if (config.authType === "apiKey" && config.apiKey && config.apiKeyLocation === "query") {
+    const separator = url.includes("?") ? "&" : "?";
+    const paramName = config.apiKeyHeader || "apiKey";
+    url = `${url}${separator}${encodeURIComponent(paramName)}=${encodeURIComponent(config.apiKey.trim())}`;
+  }
+  return url;
+}
+async function getAllConnections() {
+  const list = await getCollectionDocs("third_party_apis");
+  return list.filter((c) => {
+    if (!c || !c.id) return false;
+    const lowerId = c.id.toLowerCase();
+    const lowerName = (c.name || "").toLowerCase();
+    const lowerUrl = (c.endpointUrl || "").toLowerCase();
+    return !lowerId.includes("mock") && !lowerId.includes("demo") && !lowerId.includes("simulat") && !lowerName.includes("mock") && !lowerName.includes("demo") && !lowerName.includes("simulat") && !lowerUrl.includes("mock") && !lowerUrl.includes("example.com");
+  });
+}
+async function getConnectionById(id) {
+  const list = await getAllConnections();
+  return list.find((c) => c.id === id) || null;
+}
+async function saveConnection(config) {
+  await upsertDoc("third_party_apis", config);
+}
+async function deleteConnection(id) {
+  await deleteDocById("third_party_apis", id);
+}
+
+// src/server/services/aiEngine.ts
+var import_genai = require("@google/genai");
+var import_zod2 = require("zod");
+
 // src/server/services/industryIntelligenceEngine.ts
 async function getTenantIntelligenceProfile(tenantId = "default") {
   const effectiveId = tenantId || "default";
@@ -2142,11 +2172,18 @@ function evaluateDeterministicRules(profile, input) {
   const { tagId, location, personName, role, entityType = "people", rssi, dwellMinutes = 0, currentOccupancy = 1 } = input;
   const nowIso = input.timestamp || (/* @__PURE__ */ new Date()).toISOString();
   const locLower = (location || "").toLowerCase();
-  const matchedArea = profile.functionalAreas.find((area) => {
+  let matchedArea = profile.functionalAreas.find((area) => {
     const areaNameLower = area.name.toLowerCase();
     const areaCodeLower = (area.code || "").toLowerCase();
     return locLower === areaNameLower || locLower.includes(areaNameLower) || areaNameLower.includes(locLower) || areaCodeLower && locLower.includes(areaCodeLower);
   });
+  if (!matchedArea && profile.functionalAreas.length > 0) {
+    if (/zone\s*1/i.test(locLower)) {
+      matchedArea = profile.functionalAreas[0];
+    } else if (/zone\s*2/i.test(locLower)) {
+      matchedArea = profile.functionalAreas[1] || profile.functionalAreas[0];
+    }
+  }
   let aiRiskScore = 12;
   let aiRiskLevel = "SAFE";
   let aiComplianceScore = 98;
@@ -2160,7 +2197,34 @@ function evaluateDeterministicRules(profile, input) {
   const isMeetingOrOffice = /meeting|conference|boardroom|suite|office|executive|room/i.test(location || "") || Boolean(matchedArea && /meeting|conference|office|restricted/i.test(matchedArea.name));
   if (matchedArea) {
     aiActivityInferred = `Operations in ${matchedArea.name}`;
-    if (matchedArea.hazardLevel === "critical") {
+    const isDwellBreach = Boolean(matchedArea.maxDwellMinutes && dwellMinutes > matchedArea.maxDwellMinutes);
+    if (isDwellBreach) {
+      aiRiskScore = matchedArea.hazardLevel === "critical" ? 95 : 75;
+      aiRiskLevel = matchedArea.hazardLevel === "critical" ? "CRITICAL" : "HIGH";
+      aiComplianceScore = 60;
+      aiActivityInferred = `Extended Dwell in ${matchedArea.name}`;
+      aiAnomaly = {
+        title: `Extended Dwell Duration in ${matchedArea.name}`,
+        description: `Personnel ${personName} has occupied ${matchedArea.name} for ${dwellMinutes} mins (maximum permitted safe threshold: ${matchedArea.maxDwellMinutes}m).`,
+        severity: matchedArea.hazardLevel === "critical" ? "CRITICAL" : "HIGH"
+      };
+      aiInsight = `Worker Welfare / Safety Alert: Overstay detected in ${matchedArea.name} (${dwellMinutes}m elapsed, safe threshold ${matchedArea.maxDwellMinutes}m). Immediate check on personnel welfare advised.`;
+      triggeredAlert = {
+        title: `Extended Dwell Duration in ${matchedArea.name}`,
+        category: "Safety",
+        priority: matchedArea.hazardLevel === "critical" ? "Critical" : "High",
+        description: `Safe dwell duration exceeded in ${matchedArea.name} (${dwellMinutes}m > ${matchedArea.maxDwellMinutes}m).`,
+        targetZone: matchedArea.name,
+        triggerSiren: matchedArea.hazardLevel === "critical"
+      };
+      triggeredIncident = {
+        title: `Extended Dwell Duration in ${matchedArea.name}`,
+        category: profile.incidentCategories[0]?.category || "Dwell Threshold Exceeded",
+        severity: matchedArea.hazardLevel === "critical" ? "Critical" : "High",
+        description: `Personnel ${personName} exceeded safe duration threshold in ${matchedArea.name}.`,
+        locationZone: matchedArea.name
+      };
+    } else if (matchedArea.hazardLevel === "critical") {
       const isRoleAuthorized = matchedArea.allowedRoles && matchedArea.allowedRoles.length > 0 ? matchedArea.allowedRoles.some((r) => (role || "").toLowerCase().includes(r.toLowerCase())) : false;
       if (!isRoleAuthorized && matchedArea.category === "hazardous") {
         aiRiskScore = 92;
@@ -2215,6 +2279,26 @@ function evaluateDeterministicRules(profile, input) {
       aiActivityInferred = `Monitored Work Area: ${matchedArea.name}`;
       aiInsight = `${matchedArea.name} telemetry verified. Standard operational protocols active.`;
     }
+    const effectiveMaxCap = matchedArea?.maxOccupancy || 6;
+    if (currentOccupancy > effectiveMaxCap && !triggeredAlert) {
+      aiRiskScore = Math.max(aiRiskScore, 85);
+      aiRiskLevel = "CRITICAL";
+      aiComplianceScore = Math.min(aiComplianceScore, 72);
+      aiAnomaly = {
+        title: `Capacity Limit Exceeded in ${matchedArea.name}`,
+        description: `Current occupancy in ${matchedArea.name} (${currentOccupancy} persons) exceeds safety limit of ${effectiveMaxCap}.`,
+        severity: "CRITICAL"
+      };
+      aiInsight = `Safety Overcrowding: Headcount in ${matchedArea.name} exceeded by ${currentOccupancy - effectiveMaxCap} people. Ventilation and emergency egress compromised.`;
+      triggeredAlert = {
+        title: `Capacity Limit Exceeded in ${matchedArea.name}`,
+        category: "Safety",
+        priority: "Critical",
+        description: `Room capacity exceeded in ${matchedArea.name} (${currentOccupancy}/${effectiveMaxCap} people).`,
+        targetZone: matchedArea.name,
+        triggerSiren: true
+      };
+    }
     if (isAfterHours && isMeetingOrOffice && !triggeredAlert) {
       aiRiskScore = Math.max(aiRiskScore, 90);
       aiRiskLevel = "CRITICAL";
@@ -2230,26 +2314,6 @@ function evaluateDeterministicRules(profile, input) {
         category: "Security",
         priority: "Critical",
         description: `Unauthorized after-hours entry into ${location} by ${personName} (${tagId}).`,
-        targetZone: location,
-        triggerSiren: true
-      };
-    }
-    const effectiveMaxCap = matchedArea?.maxOccupancy || 6;
-    if (currentOccupancy > effectiveMaxCap && !triggeredAlert) {
-      aiRiskScore = Math.max(aiRiskScore, 85);
-      aiRiskLevel = "CRITICAL";
-      aiComplianceScore = Math.min(aiComplianceScore, 72);
-      aiAnomaly = {
-        title: "Capacity exceeded",
-        description: `Current occupancy in ${location} (${currentOccupancy} persons) exceeds safety limit of ${effectiveMaxCap}.`,
-        severity: "CRITICAL"
-      };
-      aiInsight = `Safety Overcrowding: Headcount in ${location} exceeded by ${currentOccupancy - effectiveMaxCap} people. Ventilation and emergency egress compromised.`;
-      triggeredAlert = {
-        title: "Capacity exceeded",
-        category: "Safety",
-        priority: "Critical",
-        description: `Room capacity exceeded in ${location} (${currentOccupancy}/${effectiveMaxCap} people).`,
         targetZone: location,
         triggerSiren: true
       };
@@ -2505,6 +2569,15 @@ async function calculateIndustryKpis(profile, tenantId) {
   }
 }
 
+// src/constants/aiConfig.ts
+var DEFAULT_GEMINI_MODEL = typeof process !== "undefined" && process.env?.GEMINI_MODEL || "gemini-2.5-flash";
+var DEFAULT_GEMINI_FALLBACK_CANDIDATES = [
+  DEFAULT_GEMINI_MODEL,
+  "gemini-2.5-flash",
+  "gemini-1.5-flash",
+  "gemini-1.5-pro"
+];
+
 // src/server/services/aiEngine.ts
 var geminiCooldownUntil = 0;
 var chatgptCooldownUntil = 0;
@@ -2571,10 +2644,10 @@ function resolveActiveProvider() {
     return { provider: "claude", model: process.env.ANTHROPIC_MODEL || "claude-3-5-haiku-20241022" };
   }
   if (requested === "gemini" && geminiKey) {
-    return { provider: "gemini", model: process.env.GEMINI_MODEL || "gemini-2.5-flash" };
+    return { provider: "gemini", model: DEFAULT_GEMINI_MODEL };
   }
   if (geminiKey) {
-    return { provider: "gemini", model: process.env.GEMINI_MODEL || "gemini-2.5-flash" };
+    return { provider: "gemini", model: DEFAULT_GEMINI_MODEL };
   }
   if (openAiKey) {
     return { provider: "chatgpt", model: process.env.OPENAI_MODEL || "gpt-4o-mini" };
@@ -2607,7 +2680,7 @@ Return strictly valid JSON with this exact schema:
   "alert": { "category": string, "title": string, "message": string, "priority": "Critical" | "High" | "Medium" | "Low", "triggerSiren": boolean } | null,
   "incident": { "category": string, "title": string, "description": string, "severity": "Critical" | "High" | "Medium" | "Low" } | null
 }`;
-  const candidateModels = [model || "gemini-2.5-flash", "gemini-3.1-pro-preview"].filter((v, i, a) => a.indexOf(v) === i);
+  const candidateModels = [model || DEFAULT_GEMINI_MODEL, ...DEFAULT_GEMINI_FALLBACK_CANDIDATES].filter((v, i, a) => a.indexOf(v) === i);
   let lastError = null;
   for (const m of candidateModels) {
     try {
@@ -2616,13 +2689,13 @@ Return strictly valid JSON with this exact schema:
         contents: prompt,
         config: { responseMimeType: "application/json" }
       });
-      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Gemini API timeout")), 2500));
+      const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Gemini API timeout")), 12e3));
       const response = await Promise.race([responsePromise, timeoutPromise]);
       const parsed = parseCleanJsonResponse(response.text || "");
       return aiEngineDecisionSchema.parse(parsed);
     } catch (err) {
       lastError = err;
-      if (err.message && (err.message.includes("404") || err.message.includes("API_KEY_INVALID") || err.message.includes("401") || err.message.includes("403"))) {
+      if (err.message && (err.message.includes("404") || err.message.includes("API_KEY_INVALID") || err.message.includes("401") || err.message.includes("403") || err.message.includes("429") || err.message.includes("quota") || err.message.includes("RESOURCE_EXHAUSTED"))) {
         break;
       }
     }
@@ -2735,7 +2808,10 @@ async function analyzeTelemetryItemWithAI(item, orgId = "default", registeredPeo
     aiActivityInferred: deterministicEval.aiActivityInferred,
     aiAnomaly: deterministicEval.aiAnomaly,
     aiInsight: deterministicEval.aiInsight,
-    alert: deterministicEval.triggeredAlert,
+    alert: deterministicEval.triggeredAlert ? {
+      ...deterministicEval.triggeredAlert,
+      message: deterministicEval.triggeredAlert.description
+    } : null,
     incident: deterministicEval.triggeredIncident
   };
   const active = resolveActiveProvider();
@@ -2798,13 +2874,16 @@ async function analyzeTelemetryBatchWithAI(items, orgId = "default", registeredP
   let primaryEngineUsed = active.provider;
   let primaryModelUsed = active.model;
   const tenantProfile = await getTenantIntelligenceProfile(orgId);
+  const criticalAreaNames = (tenantProfile.functionalAreas || []).filter((f) => f.hazardLevel === "critical" || f.hazardLevel === "warning").map((f) => f.name.toLowerCase());
   for (let idx = 0; idx < items.length; idx++) {
     const item = items[idx];
     let decision;
     let aiEngineUsed = primaryEngineUsed;
     let modelUsed = primaryModelUsed;
     let fullName = item.fullName || "Personnel";
-    if (idx < 3 || item.location && /hazard|danger|crane|confined|trench|perimeter|restricted/i.test(item.location)) {
+    const locLower = (item.location || "").toLowerCase();
+    const isHighHazardArea = criticalAreaNames.some((name) => locLower.includes(name)) || /hazard|danger|restricted|critical|warning|vault|high-risk|perimeter/i.test(item.location || "");
+    if (idx < 3 || item.location && isHighHazardArea) {
       const itemRes = await analyzeTelemetryItemWithAI(item, orgId, registeredPeople);
       decision = itemRes.decision;
       aiEngineUsed = itemRes.aiEngineUsed;
@@ -2827,7 +2906,10 @@ async function analyzeTelemetryBatchWithAI(items, orgId = "default", registeredP
         aiActivityInferred: deterministicEval.aiActivityInferred,
         aiAnomaly: deterministicEval.aiAnomaly,
         aiInsight: deterministicEval.aiInsight,
-        alert: deterministicEval.triggeredAlert,
+        alert: deterministicEval.triggeredAlert ? {
+          ...deterministicEval.triggeredAlert,
+          message: deterministicEval.triggeredAlert.description
+        } : null,
         incident: deterministicEval.triggeredIncident
       };
     }
@@ -3219,8 +3301,13 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       await upsertDoc("registered_people", personDoc, orgId);
       await upsertDoc("people", personDoc, orgId);
     }
-    const enterDate = new Date(item.timestamp || now);
-    const timeStr = enterDate.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    let enterDate = new Date(item.timestamp || now);
+    if (typeof item.timestamp === "string" && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(item.timestamp) && !item.timestamp.endsWith("Z")) {
+      const utcDate = /* @__PURE__ */ new Date(item.timestamp.replace(" ", "T") + "Z");
+      if (!isNaN(utcDate.getTime())) enterDate = utcDate;
+    }
+    const timeStr = !isNaN(enterDate.getTime()) ? enterDate.toLocaleTimeString("en-US", { timeZone: "UTC", hour: "2-digit", minute: "2-digit" }) + " UTC" : "08:00 AM UTC";
+    const dateStr = !isNaN(enterDate.getTime()) ? enterDate.toLocaleDateString("en-CA", { timeZone: "UTC" }) : now.toLocaleDateString("en-CA", { timeZone: "UTC" });
     const attendanceDoc = {
       id: `att_${tagId}`,
       personId: tagId,
@@ -3244,7 +3331,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       hourlyRate: 35,
       punchType: "RFID_AUTO",
       gateLocation: item.location || "Main Site Access Turnstile",
-      date: enterDate.toISOString().split("T")[0],
+      date: dateStr,
       updatedAt: nowIso,
       organizationId: orgId,
       createdAt: now,
@@ -3275,6 +3362,8 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       broadcastSseEvent("alert_created", alertDoc, organizationId);
     }
   }
+  const tenantProfile = await getTenantIntelligenceProfile(organizationId);
+  const defaultCategory = tenantProfile?.incidentCategories?.[0]?.category || "Site Safety Breach";
   for (const incident of analysisResult.incidents) {
     const incDoc = {
       ...incident,
@@ -3285,10 +3374,10 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
     await upsertDoc("incidents", incDoc, organizationId);
     const enterpriseIncDoc = {
       id: incident.id,
-      title: incident.title || "Live Telemetry Incident",
-      category: incident.category || "Exclusion Zone Breach",
+      title: incident.title || `${tenantProfile.terminology.siteLabel || "Live"} Telemetry Incident`,
+      category: incident.category || defaultCategory,
       severity: incident.severity || "Medium",
-      workflowStatus: incident.status === "Closed" ? "Closed" : "Open",
+      workflowStatus: incident.status === "Resolved" ? "Closed" : incident.status === "Investigating" ? "Investigation" : "Open",
       locationZone: incident.locationZone || "Site Perimeter",
       reportedBy: "GAO RFID Live AI Telemetry",
       assignedOfficer: "Operations Duty Lead",
@@ -3358,122 +3447,6 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
     insights: analysisResult.insights,
     aiEngine: analysisResult.aiEngine
   };
-}
-
-// src/server/services/ingestionService.ts
-function mapRawItemToTelemetry(item, mapping) {
-  const tagIdKey = mapping?.tagIdField || "TagID";
-  const locKey = mapping?.locationField || "Location";
-  const timeKey = mapping?.timestampField || "Timestamp";
-  const nameKey = mapping?.nameField || "FirstName";
-  const rssiKey = mapping?.rssiField || "rssi";
-  const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.EPC || item.id || "";
-  const location = item[locKey] || item.Location || item.location || item.LocationName || item.zone || "Zone 1";
-  const timestamp = item[timeKey] || item.Timestamp || item.timestamp || item.EnterTime || (/* @__PURE__ */ new Date()).toISOString();
-  const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(" ")[0] || "";
-  const lastName = item.LastName || item.lastName || item.name?.split(" ").slice(1).join(" ") || "";
-  const rssi = item[rssiKey] !== void 0 ? Number(item[rssiKey]) : item.rssi || -60;
-  return {
-    ...item,
-    TagID: String(tagId),
-    tagId: String(tagId),
-    Location: String(location),
-    LocationName: String(location),
-    Timestamp: String(timestamp),
-    FirstName: String(firstName),
-    LastName: String(lastName),
-    rssi: Number(rssi)
-  };
-}
-async function ingestTelemetry(rawPayload, sourceName, connectionId) {
-  const startTime = Date.now();
-  let connection = null;
-  const sourceValidation = validateTelemetrySource(sourceName);
-  if (!sourceValidation.valid) {
-    return {
-      success: false,
-      recordsProcessed: 0,
-      aiAnalyzed: 0,
-      latencyMs: Date.now() - startTime,
-      error: sourceValidation.error
-    };
-  }
-  if (connectionId) {
-    connection = await getConnectionById(connectionId);
-  }
-  try {
-    let rawList = [];
-    if (Array.isArray(rawPayload)) {
-      rawList = rawPayload;
-    } else if (rawPayload && typeof rawPayload === "object") {
-      if (Array.isArray(rawPayload.data)) rawList = rawPayload.data;
-      else if (Array.isArray(rawPayload.tags)) rawList = rawPayload.tags;
-      else if (Array.isArray(rawPayload.records)) rawList = rawPayload.records;
-      else if (Array.isArray(rawPayload.items)) rawList = rawPayload.items;
-      else if (rawPayload.TagID || rawPayload.tagId || rawPayload.epc || rawPayload.id) rawList = [rawPayload];
-    }
-    if (rawList.length === 0) {
-      console.log(`[INGEST] source="${sourceName}" received empty or non-telemetry payload. Nothing written to MongoDB.`);
-      return {
-        success: true,
-        recordsProcessed: 0,
-        aiAnalyzed: 0,
-        latencyMs: Date.now() - startTime
-      };
-    }
-    const telemetryItems = rawList.map((item) => mapRawItemToTelemetry(item, connection?.dataMapping)).filter((item) => Boolean(item.TagID && item.TagID.trim() !== "") && isRealTelemetryTag(item.TagID));
-    if (telemetryItems.length === 0) {
-      console.warn(`[INGEST] rejected: no valid real external telemetry found from source="${sourceName}" (missing or test/dummy tag identifiers)`);
-      return {
-        success: true,
-        recordsProcessed: 0,
-        aiAnalyzed: 0,
-        latencyMs: Date.now() - startTime
-      };
-    }
-    console.log(`[INGEST] source="${sourceName}" records=${telemetryItems.length}`);
-    const aiResult = await processTelemetryWithAI(telemetryItems, sourceName);
-    const latencyMs = Date.now() - startTime;
-    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-    if (connection) {
-      const totalIngested = (connection.totalRecordsIngested || 0) + telemetryItems.length;
-      await saveConnection({
-        ...connection,
-        lastSyncAt: nowIso,
-        lastStatus: "SUCCESS",
-        lastError: null,
-        lastLatencyMs: latencyMs,
-        totalRecordsIngested: totalIngested,
-        updatedAt: nowIso
-      });
-    }
-    return {
-      success: true,
-      recordsProcessed: telemetryItems.length,
-      aiAnalyzed: aiResult.processedCount,
-      latencyMs
-    };
-  } catch (err) {
-    const latencyMs = Date.now() - startTime;
-    const errMsg = err.message || "Ingestion pipeline execution failure";
-    if (connection) {
-      await saveConnection({
-        ...connection,
-        lastSyncAt: (/* @__PURE__ */ new Date()).toISOString(),
-        lastStatus: "ERROR",
-        lastError: errMsg,
-        lastLatencyMs: latencyMs,
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      });
-    }
-    return {
-      success: false,
-      recordsProcessed: 0,
-      aiAnalyzed: 0,
-      latencyMs,
-      error: errMsg
-    };
-  }
 }
 
 // src/server/services/peopleTrackingApiService.ts
@@ -3621,7 +3594,7 @@ async function fetchTagsInRealtime(customHost) {
     const rawTags = Array.isArray(data) ? data : [];
     const validTags = rawTags.filter((tag) => tag && (tag.TagID || tag.tagId) && isRealTelemetryTag(tag.TagID || tag.tagId));
     if (validTags.length === 0) {
-      const liveDocs = await getCollectionDocs("live_tags", "default").catch(() => []);
+      const liveDocs = await getCollectionDocs("live_tags", void 0, "default").catch(() => []);
       const realLiveDocs = (liveDocs || []).filter((t) => isRealTelemetryTag(t.TagID || t.tagId || t.id));
       if (realLiveDocs.length > 0) {
         return realLiveDocs.map((t) => ({
@@ -3683,6 +3656,260 @@ async function fetchTagsInRealtime(customHost) {
     throw new Error(`Failed to fetch real-time tags from ${url}: ${errMsg}`);
   }
 }
+async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
+  if (!Array.isArray(items) || items.length === 0) return;
+  const validItems = items.filter((r) => r && (r.TagID || r.tagId) && isRealTelemetryTag(r.TagID || r.tagId));
+  if (validItems.length === 0) return;
+  const now = /* @__PURE__ */ new Date();
+  const nowIso = now.toISOString();
+  const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
+  const historyDocs = [];
+  const tagMap = /* @__PURE__ */ new Map();
+  const locationSet = /* @__PURE__ */ new Set();
+  for (const rec of validItems) {
+    const tid = String(rec.TagID || rec.tagId).trim();
+    const loc = String(rec.LocationName || rec.Location || rec.location || "Site Area").trim();
+    const enter = String(rec.EnterTime || rec.enterTime || rec.Timestamp || rec.timestamp || nowIso);
+    const leave = String(rec.LeaveTime || rec.leaveTime || "ACTIVE");
+    const fn = String(rec.FirstName || rec.firstName || "").trim();
+    const ln = String(rec.LastName || rec.lastName || "").trim();
+    const fullName = fn || ln ? `${fn} ${ln}`.trim() : rec.name || `Personnel ${tid.slice(-6).toUpperCase()}`;
+    if (loc) locationSet.add(loc);
+    const docId = `hist_${tid}_${enter.replace(/[: ]/g, "_")}`;
+    historyDocs.push({
+      id: docId,
+      _id: docId,
+      organizationId: orgId,
+      TagID: tid,
+      tagId: tid,
+      FirstName: fn,
+      LastName: ln,
+      name: fullName,
+      LocationName: loc,
+      Location: loc,
+      EnterTime: enter,
+      LeaveTime: leave,
+      EnterTimeStr: enter,
+      LeaveTimeStr: leave,
+      Duration: typeof rec.Duration === "number" ? rec.Duration : parseFloat(rec.Duration) || 0,
+      durationMins: typeof rec.durationMins === "number" ? rec.durationMins : typeof rec.Duration === "number" ? Math.round(rec.Duration * 60 * 10) / 10 : 10,
+      timestamp: enter,
+      createdAt: nowIso,
+      expireAt: tenDaysLater
+    });
+    if (!tagMap.has(tid) || new Date(enter).getTime() >= new Date(tagMap.get(tid).enter).getTime()) {
+      tagMap.set(tid, {
+        tid,
+        loc,
+        enter,
+        leave,
+        fn,
+        ln,
+        fullName,
+        duration: rec.Duration || 0
+      });
+    }
+  }
+  if (historyDocs.length > 0) {
+    await bulkUpsertDocs("tag_history", historyDocs, orgId).catch(() => {
+    });
+    await bulkUpsertDocs("history_records", historyDocs, orgId).catch(() => {
+    });
+    await bulkUpsertDocs("history", historyDocs, orgId).catch(() => {
+    });
+  }
+  const existingPeople = await getCollectionDocs("registered_people", void 0, orgId).catch(() => []);
+  const existingMap = /* @__PURE__ */ new Map();
+  existingPeople.forEach((p) => {
+    if (p.id) existingMap.set(String(p.id).toLowerCase(), p);
+    if (p.tagId) existingMap.set(String(p.tagId).toLowerCase(), p);
+    if (p.hardhatTagId) existingMap.set(String(p.hardhatTagId).toLowerCase(), p);
+  });
+  const existingZones = await getCollectionDocs("zones", void 0, orgId).catch(() => []);
+  const zoneNames = new Set(existingZones.map((z7) => (z7.name || z7.id || "").toLowerCase().replace(/[^a-z0-9]/g, "")));
+  for (const [tid, item] of tagMap.entries()) {
+    const existing = existingMap.get(tid.toLowerCase());
+    const workerName = item.fullName && !item.fullName.startsWith("Personnel ") ? item.fullName : existing?.name || item.fullName;
+    const workerRole = existing?.role || "Field Personnel";
+    const workerCompany = existing?.tradeCompany || existing?.company || "Field Team";
+    const personDoc = {
+      ...existing || {},
+      id: tid,
+      _id: tid,
+      tagId: tid,
+      hardhatTagId: tid,
+      organizationId: orgId,
+      firstName: item.fn || existing?.firstName || "",
+      lastName: item.ln || existing?.lastName || "",
+      name: workerName,
+      role: workerRole,
+      company: workerCompany,
+      tradeCompany: workerCompany,
+      currentZone: item.loc,
+      location: item.loc,
+      shiftStatus: existing?.shiftStatus || "ON_SITE",
+      presenceState: "ACTIVE",
+      safetyScore: existing?.safetyScore || 98,
+      ppeStatus: existing?.ppeStatus || "COMPLIANT",
+      trainingStatus: existing?.trainingStatus || "COMPLIANT",
+      status: "ACTIVE",
+      lastSeen: item.enter,
+      updatedAt: nowIso,
+      createdAt: existing?.createdAt || nowIso,
+      expireAt: tenDaysLater
+    };
+    await upsertDoc("registered_people", personDoc, orgId).catch(() => {
+    });
+    await upsertDoc("people", personDoc, orgId).catch(() => {
+    });
+    const deviceDoc = {
+      id: tid,
+      _id: tid,
+      deviceId: tid,
+      name: `${workerName}'s Tag`,
+      tagId: tid,
+      category: "TAG",
+      type: "UHF RFID Hardhat Tag",
+      status: "Active",
+      battery: 95,
+      rssi: -60,
+      location: item.loc,
+      currentZone: item.loc,
+      assignedWorker: workerName,
+      assignedWorkerId: tid,
+      lastSeen: item.enter,
+      organizationId: orgId,
+      updatedAt: nowIso,
+      createdAt: nowIso,
+      expireAt: tenDaysLater
+    };
+    await upsertDoc("devices", deviceDoc, orgId).catch(() => {
+    });
+    let enterDate = new Date(item.enter);
+    if (typeof item.enter === "string" && /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(item.enter) && !item.enter.endsWith("Z")) {
+      const utcDate = /* @__PURE__ */ new Date(item.enter.replace(" ", "T") + "Z");
+      if (!isNaN(utcDate.getTime())) enterDate = utcDate;
+    }
+    const timeStr = !isNaN(enterDate.getTime()) ? enterDate.toLocaleTimeString("en-US", { timeZone: "UTC", hour: "2-digit", minute: "2-digit" }) + " UTC" : "08:00 AM UTC";
+    const dateStr = !isNaN(enterDate.getTime()) ? enterDate.toLocaleDateString("en-CA", { timeZone: "UTC" }) : (/* @__PURE__ */ new Date()).toLocaleDateString("en-CA", { timeZone: "UTC" });
+    const attDoc = {
+      id: `att_${tid}`,
+      _id: `att_${tid}`,
+      personId: tid,
+      rfidTagId: tid,
+      name: workerName,
+      role: workerRole,
+      company: workerCompany,
+      department: existing?.department || "Operations",
+      siteZone: item.loc,
+      shift: "Day Shift (07:00-15:30)",
+      firstIn: timeStr,
+      lastOut: item.leave || "ACTIVE",
+      breakDurationMins: 0,
+      totalHoursStr: "Active On-Site",
+      totalMins: Math.round((parseFloat(item.duration) || 0.1) * 60) || 60,
+      overtimeHours: 0,
+      isLate: false,
+      isOvertime: false,
+      geoStatus: "IN_GEO_FENCE",
+      status: "PRESENT",
+      hourlyRate: 35,
+      punchType: "RFID_AUTO",
+      gateLocation: item.loc,
+      date: dateStr,
+      updatedAt: nowIso,
+      organizationId: orgId,
+      createdAt: nowIso,
+      expireAt: tenDaysLater
+    };
+    await upsertDoc("attendance_logs", attDoc, orgId).catch(() => {
+    });
+    const liveTagDoc = {
+      id: tid,
+      _id: tid,
+      TagID: tid,
+      tagId: tid,
+      organizationId: orgId,
+      Location: item.loc,
+      LocationName: item.loc,
+      Timestamp: item.enter,
+      timestamp: item.enter,
+      FirstName: item.fn,
+      LastName: item.ln,
+      name: workerName,
+      role: workerRole,
+      status: "Active",
+      updatedAt: nowIso,
+      createdAt: nowIso,
+      expireAt: tenDaysLater
+    };
+    await upsertDoc("live_tags", liveTagDoc, orgId).catch(() => {
+    });
+    await upsertDoc("real_time_tags", liveTagDoc, orgId).catch(() => {
+    });
+  }
+  for (const loc of locationSet) {
+    const clean = loc.replace(/[^a-zA-Z0-9]/g, "_").toUpperCase();
+    const readerId = `GAO-UHF-PORTAL-${clean}`;
+    const readerDoc = {
+      id: readerId,
+      _id: readerId,
+      readerId,
+      name: `Fixed UHF Portal (${loc})`,
+      category: "READER",
+      type: "UHF Fixed Portal",
+      status: "Online",
+      location: loc,
+      zoneId: loc,
+      organizationId: orgId,
+      lastSeen: nowIso,
+      updatedAt: nowIso,
+      createdAt: nowIso
+    };
+    await upsertDoc("hardware_readers", readerDoc, orgId).catch(() => {
+    });
+    await upsertDoc("devices", readerDoc, orgId).catch(() => {
+    });
+    const cleanLower = loc.toLowerCase().replace(/[^a-z0-9]/g, "");
+    if (!zoneNames.has(cleanLower)) {
+      zoneNames.add(cleanLower);
+      const zoneId = `zone_${cleanLower}`;
+      await upsertDoc("zones", {
+        id: zoneId,
+        _id: zoneId,
+        zoneId,
+        name: loc,
+        category: "OPERATIONAL",
+        hazardLevel: "normal",
+        capacity: 25,
+        siteId: "metro-tower",
+        x: 20,
+        y: 20,
+        width: 30,
+        height: 30,
+        organizationId: orgId,
+        updatedAt: nowIso
+      }, orgId).catch(() => {
+      });
+    }
+  }
+  const updatedCollections = [
+    "history_records",
+    "tag_history",
+    "history",
+    "registered_people",
+    "people",
+    "devices",
+    "hardware_readers",
+    "attendance_logs",
+    "zones",
+    "live_tags",
+    "real_time_tags"
+  ];
+  broadcastWebSocketEvent("tag_update_bulk", historyDocs.slice(0, 50), orgId);
+  broadcastWebSocketEvent("data_updated", { collections: updatedCollections }, orgId);
+  broadcastSseEvent("data_updated", { collections: updatedCollections }, orgId);
+}
 async function syncPeopleTrackingData(options) {
   const host = await getPeopleTrackingApiHost();
   const startTime = Date.now();
@@ -3706,6 +3933,23 @@ async function syncPeopleTrackingData(options) {
         if (realtimeTags.length > 0) {
           await bulkWriteRealtimeTags(realtimeTags, orgId).catch(() => {
           });
+          const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+          const tenDaysLater = new Date(Date.now() + 10 * 24 * 60 * 60 * 1e3);
+          for (const tag of realtimeTags) {
+            const tid = tag.TagID || tag.tagId || tag.id;
+            await upsertDoc("live_tags", {
+              ...tag,
+              id: tid,
+              _id: tid,
+              TagID: tid,
+              tagId: tid,
+              organizationId: orgId,
+              createdAt: nowIso,
+              updatedAt: nowIso,
+              expireAt: tenDaysLater
+            }, orgId).catch(() => {
+            });
+          }
         }
       } catch (e) {
         console.warn("[PeopleTrackingAPI] Real-time tags fetch warning:", e.message);
@@ -3714,38 +3958,15 @@ async function syncPeopleTrackingData(options) {
     if (doHistory) {
       try {
         historyRecords = await fetchHistoryRecords(0, historyTake, host);
-        if (historyRecords.length > 0) {
-          const docsToPersist = historyRecords.map((rec) => {
-            const enter = rec.EnterTime || rec.enterTime || (/* @__PURE__ */ new Date()).toISOString();
-            const docId = `hist_${rec.TagID}_${String(enter).replace(/[: ]/g, "_")}`;
-            return {
-              id: docId,
-              _id: docId,
-              organizationId: orgId,
-              TagID: rec.TagID,
-              tagId: rec.TagID,
-              FirstName: rec.FirstName || "",
-              LastName: rec.LastName || "",
-              name: `${rec.FirstName || ""} ${rec.LastName || ""}`.trim() || `Personnel ${rec.TagID}`,
-              LocationName: rec.LocationName || rec.Location || "Site Area",
-              Location: rec.LocationName || rec.Location || "Site Area",
-              EnterTime: enter,
-              LeaveTime: rec.LeaveTime || "ACTIVE",
-              EnterTimeStr: enter,
-              LeaveTimeStr: rec.LeaveTime || "ACTIVE",
-              Duration: rec.Duration || 0,
-              timestamp: enter,
-              createdAt: (/* @__PURE__ */ new Date()).toISOString()
-            };
-          });
-          await bulkUpsertDocs("tag_history", docsToPersist, orgId).catch(() => {
-          });
-          await bulkUpsertDocs("history_records", docsToPersist, orgId).catch(() => {
-          });
-        }
       } catch (e) {
         console.warn("[PeopleTrackingAPI] History records fetch warning:", e.message);
       }
+    }
+    const combinedIncoming = [...realtimeTags, ...historyRecords];
+    if (combinedIncoming.length > 0) {
+      await autoSyncTelemetryToMongoDB(combinedIncoming, orgId).catch((err) => {
+        console.warn("[PeopleTrackingAPI] autoSyncTelemetryToMongoDB note:", err.message);
+      });
     }
     if (doRealtime && realtimeTags.length === 0 && historyRecords.length > 0) {
       const realHistory = historyRecords.filter((r) => r && r.TagID && isRealTelemetryTag(r.TagID));
@@ -3894,6 +4115,126 @@ function getPeopleTrackingSyncStatus() {
   return { ...lastSyncMetadata };
 }
 
+// src/server/services/ingestionService.ts
+function mapRawItemToTelemetry(item, mapping) {
+  const tagIdKey = mapping?.tagIdField || "TagID";
+  const locKey = mapping?.locationField || "Location";
+  const timeKey = mapping?.timestampField || "Timestamp";
+  const nameKey = mapping?.nameField || "FirstName";
+  const rssiKey = mapping?.rssiField || "rssi";
+  const tagId = item[tagIdKey] || item.TagID || item.tagId || item.epc || item.EPC || item.id || "";
+  const location = item[locKey] || item.Location || item.location || item.LocationName || item.zone || "Zone 1";
+  const timestamp = item[timeKey] || item.Timestamp || item.timestamp || item.EnterTime || (/* @__PURE__ */ new Date()).toISOString();
+  const firstName = item[nameKey] || item.FirstName || item.firstName || item.name?.split(" ")[0] || "";
+  const lastName = item.LastName || item.lastName || item.name?.split(" ").slice(1).join(" ") || "";
+  const rssi = item[rssiKey] !== void 0 ? Number(item[rssiKey]) : item.rssi || -60;
+  return {
+    ...item,
+    TagID: String(tagId),
+    tagId: String(tagId),
+    Location: String(location),
+    LocationName: String(location),
+    Timestamp: String(timestamp),
+    FirstName: String(firstName),
+    LastName: String(lastName),
+    rssi: Number(rssi)
+  };
+}
+async function ingestTelemetry(rawPayload, sourceName, connectionId) {
+  const startTime = Date.now();
+  let connection = null;
+  const sourceValidation = validateTelemetrySource(sourceName);
+  if (!sourceValidation.valid) {
+    return {
+      success: false,
+      recordsProcessed: 0,
+      aiAnalyzed: 0,
+      latencyMs: Date.now() - startTime,
+      error: sourceValidation.error
+    };
+  }
+  if (connectionId) {
+    connection = await getConnectionById(connectionId);
+  }
+  try {
+    let rawList = [];
+    if (Array.isArray(rawPayload)) {
+      rawList = rawPayload;
+    } else if (rawPayload && typeof rawPayload === "object") {
+      if (Array.isArray(rawPayload.data)) rawList = rawPayload.data;
+      else if (Array.isArray(rawPayload.tags)) rawList = rawPayload.tags;
+      else if (Array.isArray(rawPayload.records)) rawList = rawPayload.records;
+      else if (Array.isArray(rawPayload.items)) rawList = rawPayload.items;
+      else if (rawPayload.TagID || rawPayload.tagId || rawPayload.epc || rawPayload.id) rawList = [rawPayload];
+    }
+    if (rawList.length === 0) {
+      console.log(`[INGEST] source="${sourceName}" received empty or non-telemetry payload. Nothing written to MongoDB.`);
+      return {
+        success: true,
+        recordsProcessed: 0,
+        aiAnalyzed: 0,
+        latencyMs: Date.now() - startTime
+      };
+    }
+    const telemetryItems = rawList.map((item) => mapRawItemToTelemetry(item, connection?.dataMapping)).filter((item) => Boolean(item.TagID && item.TagID.trim() !== "") && isRealTelemetryTag(item.TagID));
+    if (telemetryItems.length === 0) {
+      console.warn(`[INGEST] rejected: no valid real external telemetry found from source="${sourceName}" (missing or test/dummy tag identifiers)`);
+      return {
+        success: true,
+        recordsProcessed: 0,
+        aiAnalyzed: 0,
+        latencyMs: Date.now() - startTime
+      };
+    }
+    console.log(`[INGEST] source="${sourceName}" records=${telemetryItems.length}`);
+    const orgId = connection?.organizationId || "default";
+    await autoSyncTelemetryToMongoDB(telemetryItems, orgId).catch((err) => {
+      console.warn(`[INGEST] autoSyncTelemetryToMongoDB warning: ${err.message}`);
+    });
+    const aiResult = await processTelemetryWithAI(telemetryItems, sourceName, orgId);
+    const latencyMs = Date.now() - startTime;
+    const nowIso = (/* @__PURE__ */ new Date()).toISOString();
+    if (connection) {
+      const totalIngested = (connection.totalRecordsIngested || 0) + telemetryItems.length;
+      await saveConnection({
+        ...connection,
+        lastSyncAt: nowIso,
+        lastStatus: "SUCCESS",
+        lastError: null,
+        lastLatencyMs: latencyMs,
+        totalRecordsIngested: totalIngested,
+        updatedAt: nowIso
+      });
+    }
+    return {
+      success: true,
+      recordsProcessed: telemetryItems.length,
+      aiAnalyzed: aiResult.processedCount,
+      latencyMs
+    };
+  } catch (err) {
+    const latencyMs = Date.now() - startTime;
+    const errMsg = err.message || "Ingestion pipeline execution failure";
+    if (connection) {
+      await saveConnection({
+        ...connection,
+        lastSyncAt: (/* @__PURE__ */ new Date()).toISOString(),
+        lastStatus: "ERROR",
+        lastError: errMsg,
+        lastLatencyMs: latencyMs,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      });
+    }
+    return {
+      success: false,
+      recordsProcessed: 0,
+      aiAnalyzed: 0,
+      latencyMs,
+      error: errMsg
+    };
+  }
+}
+
 // src/server/services/connectionPoller.ts
 var peopleTrackingPollerInterval = null;
 async function pollSingleConnection(config) {
@@ -3976,7 +4317,6 @@ function startPeopleTrackingPolling(intervalSeconds = 5) {
 
 // src/server/middleware/auth.ts
 var import_jsonwebtoken = __toESM(require("jsonwebtoken"), 1);
-var import_crypto2 = __toESM(require("crypto"), 1);
 
 // src/constants/permissions.ts
 var DEFAULT_ROLE_PERMISSIONS = [
@@ -4003,10 +4343,17 @@ var DEFAULT_PERMISSIONS_MAP = {
 };
 
 // src/server/middleware/auth.ts
-var jwtSecret = process.env.JWT_SECRET;
-if (!jwtSecret) {
-  jwtSecret = import_crypto2.default.randomBytes(32).toString("hex");
-  console.warn("[Auth] JWT_SECRET not set in environment. Generated random per-boot secret. Set JWT_SECRET in production.");
+var isProduction = process.env.NODE_ENV === "production";
+var jwtSecret = process.env.JWT_SECRET?.trim();
+if (isProduction) {
+  if (!jwtSecret || jwtSecret === "aperture-jwt-secret-change-in-production" || jwtSecret.length < 16) {
+    throw new Error(
+      "[FATAL AUTH CONFIG] JWT_SECRET must be set to a secure, persistent key (at least 16 characters) in production to ensure consistent authentication across serverless cold starts and instances."
+    );
+  }
+} else if (!jwtSecret) {
+  jwtSecret = "aperture-dev-jwt-secret-stable-key";
+  console.warn("[Auth] JWT_SECRET not set in environment. Using stable development secret. Configure JWT_SECRET in .env for production.");
 }
 var JWT_SECRET = jwtSecret;
 function generateToken(user) {
@@ -4614,13 +4961,6 @@ authRouter.post("/login", authRateLimiter, async (req, res) => {
     let isValid = false;
     if (user.passwordHash) {
       isValid = await import_bcryptjs.default.compare(password, user.passwordHash);
-    } else if (user.password) {
-      isValid = user.password === password;
-      if (isValid) {
-        user.passwordHash = await import_bcryptjs.default.hash(password, 10);
-        delete user.password;
-        await upsertDoc("users", user, user.organizationId || "default");
-      }
     }
     if (!isValid) {
       await logAuditEvent({
@@ -5803,7 +6143,7 @@ function parseCleanJSON(rawText) {
   return JSON.parse(cleaned);
 }
 async function generateContentWithFallback(ai, params) {
-  const models = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-1.5-pro"];
+  const models = Array.from(/* @__PURE__ */ new Set([DEFAULT_GEMINI_MODEL, ...DEFAULT_GEMINI_FALLBACK_CANDIDATES]));
   let lastError = null;
   for (const model of models) {
     try {
@@ -6064,6 +6404,37 @@ I have analyzed your query: *"**${q}**"* against real-time MongoDB database reco
   };
 }
 var aiRouter = (0, import_express5.Router)();
+aiRouter.get(["/ai/status", "/status"], async (req, res) => {
+  const status = getAiConfigStatus();
+  const configured = Boolean(status.hasGeminiKey || status.hasOpenAiKey || status.hasClaudeKey);
+  return res.json({
+    success: true,
+    configured,
+    source: status.hasGeminiKey ? process.env.GEMINI_API_KEY ? "environment_variable" : "runtime_key" : "none",
+    message: configured ? `Active (${status.activeProvider} / ${status.activeModel})` : "AI not configured (using deterministic EHS heuristic fallback)",
+    ...status
+  });
+});
+aiRouter.post(["/ai/config-key", "/config-key"], requireAuth, requireRole("admin"), async (req, res) => {
+  const { geminiApiKey, openAiApiKey, claudeApiKey, provider } = req.body || {};
+  if (typeof geminiApiKey === "string") {
+    setRuntimeGeminiKey(geminiApiKey.trim());
+  }
+  setRuntimeAiKeys({
+    geminiKey: geminiApiKey,
+    openAiKey: openAiApiKey,
+    claudeKey: claudeApiKey,
+    provider: provider || "auto"
+  });
+  const status = getAiConfigStatus();
+  const configured = Boolean(status.hasGeminiKey || status.hasOpenAiKey || status.hasClaudeKey);
+  return res.json({
+    success: true,
+    configured,
+    message: `AI provider configured (${status.activeProvider})`,
+    status
+  });
+});
 aiRouter.get(["/intelligence/presets", "/api/intelligence/presets"], (req, res) => {
   return res.json({
     success: true,
@@ -6146,18 +6517,6 @@ aiRouter.post("/ai/update-industry", async (req, res) => {
     activePersona: activeIndustryPersona,
     complianceFramework: activeComplianceStandard
   });
-});
-aiRouter.post("/ai/config-key", requireAuth, requireRole("admin"), (req, res) => {
-  const { geminiApiKey } = req.body || {};
-  if (typeof geminiApiKey === "string") {
-    setRuntimeGeminiKey(geminiApiKey.trim());
-    return res.json({
-      success: true,
-      configured: Boolean(getGeminiApiKey()),
-      message: geminiApiKey.trim() ? "Gemini API key connected to server backend successfully." : "Gemini API key cleared from runtime."
-    });
-  }
-  return res.status(400).json({ success: false, error: "geminiApiKey must be a string" });
 });
 aiRouter.get(["/ai/provider-status", "/api/ai/provider-status"], (req, res) => {
   const status = getAiConfigStatus();
@@ -6280,6 +6639,15 @@ function getDynamicIndustryAnalysis(cfg, combinedScans, zones) {
     ]
   };
 }
+aiRouter.get(["/ai/insights", "/api/ai/insights"], async (req, res) => {
+  try {
+    const orgId = req.user?.organizationId || "default";
+    const insights = await getCollectionDocs("ai_insights", void 0, orgId);
+    return res.json({ success: true, insights, count: insights.length });
+  } catch (err) {
+    return res.status(500).json({ error: "Failed to fetch AI insights" });
+  }
+});
 aiRouter.post(["/analyze-rfid-results", "/ai/analyze-rfid", "/ai/generate-insights", "/generate-insights", "/api/analyze-rfid-results"], aiRateLimiter, async (req, res) => {
   const parseResult = analyzeRfidSchema.safeParse(req.body);
   if (!parseResult.success) {
@@ -6417,7 +6785,7 @@ Respond ONLY with valid JSON with this exact structure:
 aiRouter.post(["/ai-copilot", "/ai/copilot", "/api/ai-copilot", "/api/ai/copilot"], async (req, res) => {
   const parseResult = copilotSchema.safeParse(req.body);
   if (!parseResult.success) {
-    return res.status(400).json({ error: "Invalid question payload", details: parseResult.error.errors });
+    return res.status(400).json({ error: "Invalid question payload", details: parseResult.error.issues });
   }
   const question = parseResult.data.question;
   const history = parseResult.data.history || [];
@@ -6558,19 +6926,19 @@ aiRouter.post(["/analyze-incident", "/ai/incident-rca"], aiRateLimiter, async (r
   if (!apiKey || isGeminiAuthFailed()) {
     return res.json({
       severityScore: 82,
-      aiSummary: `AI RCA Assessment: Incident '${title || "Site Hazard Event"}' (${category || "Near Miss"}, ${severity || "High"}) in ${locationZone || "Structural Work Area"} logged into immutable compliance ledger under ${std}. Immediate CAPA containment initiated.`,
-      probableRootCause: "Proximity breach during heavy equipment slewing operation without secondary flagger verification.",
+      aiSummary: `AI RCA Assessment: Incident '${title || "Operational Event"}' (${category || "Safety Incident"}, ${severity || "High"}) in ${locationZone || "Designated Operational Area"} logged into immutable compliance ledger under ${std}. Immediate CAPA containment initiated.`,
+      probableRootCause: `Proximity boundary threshold breach in ${locationZone || "monitored operational sector"} during active operations without secondary verification.`,
       contributingFactors: [
-        "High ambient noise levels obscuring standard equipment travel alarm",
-        "Simultaneous concrete pour and crane swing radius overlap",
-        "Blind spot at structural column junction"
+        `High ambient operational activity obscuring standard audio-visual warning signals in ${locationZone || "work zone"}`,
+        `Simultaneous high-traffic transit and restricted boundary proximity overlap`,
+        `Sensory or line-of-sight limitations at ${locationZone || "designated zone"} interface`
       ],
       capaRecommendations: [
-        "Recalibrate UHF RFID exclusion zone audio-visual beacons to 5-meter standoff boundary",
-        "Conduct mandatory toolbox refresher for riggers and crane operators before next shift",
-        "Deploy redundant AI vision safety boundary detection camera on mast"
+        `Recalibrate UHF RFID exclusion zone boundaries and audio-visual beacons for ${locationZone || "monitored zone"}`,
+        `Conduct mandatory ${indName} safety briefing and operational protocol refresher before next shift`,
+        `Deploy redundant RFID reader verification portal at ${locationZone || "zone perimeter"}`
       ],
-      regulatoryImpact: `${std} Protocol - Minor Near-Miss recordable, zero lost-time days.`
+      regulatoryImpact: `${std} Protocol - Minor incident recordable under ${indName} compliance framework, zero lost-time days.`
     });
   }
   try {
@@ -6987,6 +7355,7 @@ dataRouter.post("/zones/batch", async (req, res) => {
   const { zones, floorplanUrl, svgSource, activeProject } = req.body || {};
   try {
     const savedZones = [];
+    const zonesMap = {};
     if (Array.isArray(zones)) {
       for (const z7 of zones) {
         if (z7 && (z7.id || z7.zoneId || z7.name)) {
@@ -6994,23 +7363,38 @@ dataRouter.post("/zones/batch", async (req, res) => {
           const cleanZone = { ...z7, id: zoneId, zoneId };
           const saved = await upsertDoc("zones", cleanZone, orgId);
           savedZones.push(saved);
+          if (z7.name) zonesMap[z7.name] = z7;
+        }
+      }
+    } else if (zones && typeof zones === "object") {
+      for (const [name, z7] of Object.entries(zones)) {
+        if (z7 && typeof z7 === "object") {
+          const zoneObj = z7;
+          const zoneId = zoneObj.id || zoneObj.zoneId || `zone_${(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+          const cleanZone = { ...zoneObj, id: zoneId, zoneId, name };
+          const saved = await upsertDoc("zones", cleanZone, orgId);
+          savedZones.push(saved);
+          zonesMap[name] = cleanZone;
         }
       }
     }
-    if (floorplanUrl || svgSource) {
-      const projId = activeProject || "metro-tower";
-      const existingConfig = await getDocById("map_configurations", projId, orgId) || {};
-      const updatedConfig = {
-        ...existingConfig,
-        id: projId,
-        siteId: projId,
-        ...floorplanUrl ? { floorplanUrl } : {},
-        ...svgSource ? { svgSource } : {},
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      await upsertDoc("map_configurations", updatedConfig, orgId);
-    }
-    return res.json({ success: true, count: savedZones.length, zones: savedZones });
+    const projId = activeProject || req.body?.siteId || "metro-tower";
+    const existingConfig = await getDocById("map_configurations", projId, orgId) || {};
+    const mergedZones = req.body?.replaceZones ? zonesMap : {
+      ...existingConfig.zones || {},
+      ...zonesMap
+    };
+    const updatedConfig = {
+      ...existingConfig,
+      id: projId,
+      siteId: projId,
+      zones: mergedZones,
+      ...floorplanUrl ? { floorplanUrl } : {},
+      ...svgSource ? { svgSource } : {},
+      updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    await upsertDoc("map_configurations", updatedConfig, orgId);
+    return res.json({ success: true, count: savedZones.length, zones: savedZones, mapConfig: updatedConfig });
   } catch (err) {
     console.error("[Data Route] Error saving zones batch:", err);
     return res.status(500).json({ error: "Failed to save zones batch" });
@@ -7052,6 +7436,13 @@ var handleCollectionUpsert = async (req, res) => {
     return res.status(400).json({ error: "Request body must be a JSON object" });
   }
   try {
+    if (collection === "map_configurations" && (body.zones === void 0 || body.preserveZones && (!body.zones || Object.keys(body.zones).length === 0))) {
+      const docId = body.id || "metro-tower";
+      const existing = await getDocById("map_configurations", docId, orgId);
+      if (existing && existing.zones && Object.keys(existing.zones).length > 0) {
+        body.zones = existing.zones;
+      }
+    }
     const saved = await upsertDoc(collection, body, orgId);
     if (collection === "registered_people") {
       await upsertDoc("people", { ...body, id: body.id || saved.id }, orgId).catch(() => {
@@ -7086,6 +7477,40 @@ var handleCollectionUpsert = async (req, res) => {
         mac: body.macAddress || body.mac || "00:1A:79:39:63:43"
       }, orgId).catch(() => {
       });
+    } else if (collection === "map_configurations") {
+      if (body.zones && typeof body.zones === "object") {
+        const zoneEntries = Array.isArray(body.zones) ? body.zones : Object.entries(body.zones);
+        for (const entry of zoneEntries) {
+          const zName = Array.isArray(entry) ? entry[0] : entry.name || entry.id;
+          const zData = Array.isArray(entry) ? entry[1] : entry;
+          if (zData && typeof zData === "object") {
+            const cleanId = zData.id || zData.zoneId || `zone_${String(zName).toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+            await upsertDoc("zones", {
+              ...zData,
+              id: cleanId,
+              zoneId: cleanId,
+              name: zData.name || zName,
+              siteId: body.id || body.siteId || "metro-tower",
+              organizationId: orgId,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }, orgId).catch(() => {
+            });
+          }
+        }
+      }
+    } else if (collection === "zones") {
+      const projId = body.siteId || body.projectId || "metro-tower";
+      const cfg = await getDocById("map_configurations", projId, orgId) || { id: projId, siteId: projId, zones: {} };
+      const currentZones = cfg.zones && typeof cfg.zones === "object" ? { ...cfg.zones } : {};
+      const zoneKey = body.name || body.id || "Custom Zone";
+      currentZones[zoneKey] = {
+        id: body.id || saved.id,
+        zoneId: body.id || saved.id,
+        name: zoneKey,
+        ...body
+      };
+      await upsertDoc("map_configurations", { ...cfg, zones: currentZones, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, orgId).catch(() => {
+      });
     }
     await logAuditEvent({
       userId: user?.id || "client",
@@ -7096,6 +7521,8 @@ var handleCollectionUpsert = async (req, res) => {
       details: { docId: saved.id },
       ip: req.ip
     });
+    broadcastWebSocketEvent("data_updated", { collection, id: saved.id, action: "upsert" }, orgId);
+    broadcastSseEvent("data_updated", { collection, id: saved.id, action: "upsert" }, orgId);
     return res.json(saved);
   } catch (err) {
     console.error(`[Data Route] Error upserting in ${collection}:`, err);
@@ -7106,8 +7533,17 @@ var handleCollectionItemUpsert = async (req, res) => {
   const { collection, id } = req.params;
   const user = req.user;
   const orgId = user?.organizationId || "default";
-  const isSpatialConfig = ["map_configurations", "zones", "projects", "sites", "floorplans"].includes(collection);
-  if (!isSpatialConfig) {
+  const isGlobalOrSystemConfig = [
+    "settings",
+    "organizations",
+    "map_configurations",
+    "zones",
+    "geofences",
+    "projects",
+    "sites",
+    "floorplans"
+  ].includes(collection);
+  if (!isGlobalOrSystemConfig) {
     const existingDoc = await getDocById(collection, id, orgId);
     const allExisting = await getDocById(collection, id, "ALL");
     const DEFAULT_ORGS2 = ["default", "demo", "org_main", "org_aperture_default"];
@@ -7119,6 +7555,12 @@ var handleCollectionItemUpsert = async (req, res) => {
   const body = req.body || {};
   body.id = id;
   try {
+    if (collection === "map_configurations" && (body.zones === void 0 || body.preserveZones && (!body.zones || Object.keys(body.zones).length === 0))) {
+      const existing = await getDocById("map_configurations", id, orgId);
+      if (existing && existing.zones && Object.keys(existing.zones).length > 0) {
+        body.zones = existing.zones;
+      }
+    }
     const saved = await upsertDoc(collection, body, orgId);
     if (collection === "registered_people") {
       await upsertDoc("people", { ...body, id: id || body.id }, orgId).catch(() => {
@@ -7153,6 +7595,40 @@ var handleCollectionItemUpsert = async (req, res) => {
         mac: body.macAddress || body.mac || "00:1A:79:39:63:43"
       }, orgId).catch(() => {
       });
+    } else if (collection === "map_configurations") {
+      if (body.zones && typeof body.zones === "object") {
+        const zoneEntries = Array.isArray(body.zones) ? body.zones : Object.entries(body.zones);
+        for (const entry of zoneEntries) {
+          const zName = Array.isArray(entry) ? entry[0] : entry.name || entry.id;
+          const zData = Array.isArray(entry) ? entry[1] : entry;
+          if (zData && typeof zData === "object") {
+            const cleanId = zData.id || zData.zoneId || `zone_${String(zName).toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+            await upsertDoc("zones", {
+              ...zData,
+              id: cleanId,
+              zoneId: cleanId,
+              name: zData.name || zName,
+              siteId: id || body.id || body.siteId || "metro-tower",
+              organizationId: orgId,
+              updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+            }, orgId).catch(() => {
+            });
+          }
+        }
+      }
+    } else if (collection === "zones") {
+      const projId = body.siteId || body.projectId || "metro-tower";
+      const cfg = await getDocById("map_configurations", projId, orgId) || { id: projId, siteId: projId, zones: {} };
+      const currentZones = cfg.zones && typeof cfg.zones === "object" ? { ...cfg.zones } : {};
+      const zoneKey = body.name || id || body.id || "Custom Zone";
+      currentZones[zoneKey] = {
+        id: id || body.id,
+        zoneId: id || body.id,
+        name: zoneKey,
+        ...body
+      };
+      await upsertDoc("map_configurations", { ...cfg, zones: currentZones, updatedAt: (/* @__PURE__ */ new Date()).toISOString() }, orgId).catch(() => {
+      });
     }
     await logAuditEvent({
       userId: user?.id || "client",
@@ -7163,6 +7639,8 @@ var handleCollectionItemUpsert = async (req, res) => {
       details: { docId: id },
       ip: req.ip
     });
+    broadcastWebSocketEvent("data_updated", { collection, id, action: "update" }, orgId);
+    broadcastSseEvent("data_updated", { collection, id, action: "update" }, orgId);
     return res.json(saved);
   } catch (err) {
     console.error(`[Data Route] Error updating doc ${id} in ${collection}:`, err);
@@ -7188,6 +7666,25 @@ dataRouter.delete("/:collection/:id", async (req, res) => {
       const tagMapDel = await deleteDocById("hardware_tag_mappings", id, orgId).catch(() => false);
       const liveDel = await deleteDocById("live_tags", id, orgId).catch(() => false);
       if (mirrorDel || tagMapDel || liveDel) deleted = true;
+    } else if (collection === "zones" || collection === "geofences") {
+      const configs = await getCollectionDocs("map_configurations", void 0, orgId);
+      for (const cfg of configs) {
+        if (cfg.zones && typeof cfg.zones === "object") {
+          let modified = false;
+          const nextZones = { ...cfg.zones };
+          for (const k of Object.keys(nextZones)) {
+            const zId = nextZones[k]?.id || nextZones[k]?.zoneId || `zone_${k.toLowerCase().replace(/[^a-z0-9]+/g, "_")}`;
+            if (k === id || zId === id || k.toLowerCase() === id.toLowerCase() || `zone_${id.toLowerCase()}` === zId) {
+              delete nextZones[k];
+              modified = true;
+            }
+          }
+          if (modified) {
+            await upsertDoc("map_configurations", { ...cfg, zones: nextZones }, orgId);
+            deleted = true;
+          }
+        }
+      }
     }
     await logAuditEvent({
       userId: user?.id || "client",
@@ -7201,6 +7698,8 @@ dataRouter.delete("/:collection/:id", async (req, res) => {
     if (!deleted) {
       return res.status(404).json({ error: "Document not found or belongs to another organization" });
     }
+    broadcastWebSocketEvent("data_updated", { collection, id, action: "delete" }, orgId);
+    broadcastSseEvent("data_updated", { collection, id, action: "delete" }, orgId);
     return res.json({ message: "Document deleted successfully", id });
   } catch (err) {
     console.error(`[Data Route] Error deleting doc ${id} in ${collection}:`, err);
@@ -7229,6 +7728,33 @@ data: ${JSON.stringify({ status: "connected", timestamp: (/* @__PURE__ */ new Da
 // src/server/routes/mongodb.ts
 var import_express8 = require("express");
 var mongodbRouter = (0, import_express8.Router)();
+mongodbRouter.get("/status", async (req, res) => {
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  try {
+    const isQuick = req.query.quick === "true" || req.query.fast === "1";
+    if (isQuick) {
+      return res.json({
+        connected: isMongoConnected(),
+        engine: isMongoConnected() ? "MongoDB Atlas / Cluster" : "In-Memory Fallback"
+      });
+    }
+    const forceRefresh = req.query.refresh === "true";
+    const stats = await getMongoStats(forceRefresh);
+    return res.json(stats);
+  } catch (err) {
+    const rawUri = getMongoUri();
+    const maskedUri = rawUri ? rawUri.replace(/\/\/[^:]+:[^@]+@/, "//***:***@") : "None (In-Memory Fallback)";
+    return res.status(500).json({
+      connected: false,
+      connectionString: maskedUri,
+      engine: "In-Memory Fallback",
+      collectionsCount: 0,
+      totalRecords: 0,
+      lastError: err.message || "Error checking MongoDB status"
+    });
+  }
+});
+mongodbRouter.use(requireAuth, requireRole("admin"));
 mongodbRouter.post("/prune-alerts", async (_req, res) => {
   try {
     const prunedCount = await pruneDuplicateAlerts();
@@ -7249,31 +7775,6 @@ mongodbRouter.post("/purge-samples", async (_req, res) => {
     return res.status(500).json({ success: false, error: err.message });
   }
 });
-mongodbRouter.get("/status", async (req, res) => {
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  try {
-    const isQuick = req.query.quick === "true" || req.query.fast === "1";
-    if (isQuick) {
-      return res.json({
-        connected: isMongoConnected(),
-        engine: isMongoConnected() ? "MongoDB Atlas / Cluster" : "In-Memory Fallback"
-      });
-    }
-    const forceRefresh = req.query.refresh === "true";
-    const stats = await getMongoStats(forceRefresh);
-    return res.json(stats);
-  } catch (err) {
-    return res.status(500).json({
-      connected: false,
-      connectionString: getMongoUri(),
-      engine: "In-Memory Fallback",
-      collectionsCount: 0,
-      totalRecords: 0,
-      lastError: err.message || "Error checking MongoDB status"
-    });
-  }
-});
-mongodbRouter.use(requireAuth, requireRole("admin"));
 mongodbRouter.post("/test-connection", async (req, res) => {
   const { mongodbUri } = req.body || {};
   const uriToTest = mongodbUri || getMongoUri();
@@ -7295,8 +7796,9 @@ mongodbRouter.post("/config", async (req, res) => {
       success: true,
       connected: true,
       latencyMs: result.latencyMs,
+      isEphemeral: true,
       stats,
-      message: "MongoDB connection established and runtime configuration saved successfully."
+      message: "MongoDB connection established and active in-memory for this runtime session. Note: For permanent persistence across serverless cold starts or reboots, configure MONGODB_URI in your deployment environment variables (e.g. Vercel / Railway)."
     });
   } else {
     return res.status(400).json({
@@ -7538,7 +8040,16 @@ function parseGaoNativeBody(body) {
 }
 
 // src/server/routes/hardware.ts
+var import_express_rate_limit3 = __toESM(require("express-rate-limit"), 1);
 var hardwareRouter = (0, import_express9.Router)();
+var hardwareRateLimiter = (0, import_express_rate_limit3.default)({
+  windowMs: 60 * 1e3,
+  max: 300,
+  skip: () => process.env.NODE_ENV === "test" || Boolean(process.env.VITEST),
+  message: { success: false, error: "Hardware ingestion rate limit exceeded. Please reduce scan push frequency." },
+  standardHeaders: true,
+  legacyHeaders: false
+});
 function getReqOrgId(req) {
   if (req.user?.organizationId) {
     return req.user.organizationId;
@@ -7551,7 +8062,7 @@ function getReqOrgId(req) {
   }
   return req.body?.organizationId || req.query.organizationId || "default";
 }
-hardwareRouter.post("/gao-native", async (req, res) => {
+hardwareRouter.post("/gao-native", hardwareRateLimiter, async (req, res) => {
   const orgId = getReqOrgId(req);
   try {
     const events = parseGaoNativeBody(req.body);
@@ -7608,7 +8119,7 @@ hardwareRouter.post("/scan", async (req, res) => {
     }
     const result = await processDirectHardwareScan({
       readerId: readerId || "GAO-UHF-DEFAULT",
-      antennaId: Number(antennaId) || 1,
+      antennaId: Number(antennaId || req.body && req.body.antenna) || 1,
       tagId: String(tagId),
       rssi: rssi !== void 0 ? Number(rssi) : -60,
       timestamp: timestamp || (/* @__PURE__ */ new Date()).toISOString(),
@@ -8308,8 +8819,8 @@ externalPeopleTrackingRouter.post("/sync", async (req, res) => {
 function errorHandler(err, req, res, next) {
   const statusCode = err.statusCode || 500;
   console.error(`[Error Handler] ${req.method} ${req.path} (${statusCode}):`, err.stack || err.message);
-  const isProduction = process.env.NODE_ENV === "production";
-  const message = statusCode === 500 && isProduction ? "An internal server error occurred" : err.message || "An error occurred";
+  const isProduction2 = process.env.NODE_ENV === "production";
+  const message = statusCode === 500 && isProduction2 ? "An internal server error occurred" : err.message || "An error occurred";
   res.status(statusCode).json({
     error: message,
     ...err.details ? { details: err.details } : {}
@@ -8332,22 +8843,59 @@ async function startServer() {
   }));
   app.use(import_express12.default.json({ limit: "10mb" }));
   app.use(import_express12.default.urlencoded({ extended: true, limit: "10mb" }));
+  function sanitizeRequestBody(body) {
+    if (!body || typeof body !== "object") return body;
+    if (Array.isArray(body)) return body.map(sanitizeRequestBody);
+    const sensitivePattern = /password|token|secret|apikey|authorization|credential|mongodburi|privkey/i;
+    const sanitized = {};
+    for (const [key, value] of Object.entries(body)) {
+      if (sensitivePattern.test(key)) {
+        sanitized[key] = "[REDACTED]";
+      } else if (typeof value === "object" && value !== null) {
+        sanitized[key] = sanitizeRequestBody(value);
+      } else {
+        sanitized[key] = value;
+      }
+    }
+    return sanitized;
+  }
   app.use((req, res, next) => {
     if (req.method === "POST" || req.method === "PUT") {
       console.log(`[INBOUND REQUEST] ${req.method} ${req.url} from IP: ${req.ip} | User-Agent: ${req.headers["user-agent"] || "none"}`);
       if (req.body && Object.keys(req.body).length > 0) {
-        const bodyStr = JSON.stringify(req.body) || "";
+        const cleanBody = sanitizeRequestBody(req.body);
+        const bodyStr = JSON.stringify(cleanBody) || "";
         console.log(`[INBOUND BODY]`, bodyStr.slice(0, 300));
       }
     }
     next();
   });
-  const configuredOrigins = process.env.CORS_ORIGINS ? process.env.CORS_ORIGINS.split(",").map((s) => s.trim()) : [];
+  const configuredOrigins = (process.env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (process.env.APP_URL) {
+    try {
+      const appUrlOrigin = new URL(process.env.APP_URL).origin;
+      if (!configuredOrigins.includes(appUrlOrigin)) {
+        configuredOrigins.push(appUrlOrigin);
+      }
+    } catch {
+    }
+  }
+  const isProduction2 = process.env.NODE_ENV === "production";
   app.use((0, import_cors.default)({
     origin: (origin, callback) => {
-      if (!origin || configuredOrigins.length === 0 || configuredOrigins.includes(origin) || process.env.NODE_ENV !== "production") {
+      if (!origin) {
         return callback(null, true);
       }
+      if (configuredOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      if (!isProduction2) {
+        const isLocalDev = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin);
+        if (isLocalDev) {
+          return callback(null, true);
+        }
+      }
+      console.warn(`[CORS Blocked] Origin not allowed: ${origin}`);
       return callback(new Error("Not allowed by CORS restrictions"));
     },
     credentials: true
@@ -8361,6 +8909,10 @@ async function startServer() {
   app.use("/api", rfidRouter);
   app.use("/api", aiRouter);
   app.use("/api/data", dataRouter);
+  app.use("/api/zones", (req, res, next) => {
+    req.url = "/zones" + (req.url === "/" ? "" : req.url);
+    dataRouter(req, res, next);
+  });
   app.use("/api/events", eventsRouter);
   app.use("/api/mongodb", mongodbRouter);
   app.use("/api/connections", connectionsRouter);
@@ -8371,10 +8923,10 @@ async function startServer() {
   app.use("/GetHistoryTotalCount", rfidRouter);
   app.use("/GetHistoryRecords", rfidRouter);
   app.use("/GetTagsInRealtime", rfidRouter);
-  const publicUploadsPath = import_path2.default.join(process.cwd(), "public", "uploads");
-  const distUploadsPath = import_path2.default.join(process.cwd(), "dist", "uploads");
-  if (!import_fs2.default.existsSync(publicUploadsPath)) import_fs2.default.mkdirSync(publicUploadsPath, { recursive: true });
-  if (!import_fs2.default.existsSync(distUploadsPath)) import_fs2.default.mkdirSync(distUploadsPath, { recursive: true });
+  const publicUploadsPath = import_path.default.join(process.cwd(), "public", "uploads");
+  const distUploadsPath = import_path.default.join(process.cwd(), "dist", "uploads");
+  if (!import_fs.default.existsSync(publicUploadsPath)) import_fs.default.mkdirSync(publicUploadsPath, { recursive: true });
+  if (!import_fs.default.existsSync(distUploadsPath)) import_fs.default.mkdirSync(distUploadsPath, { recursive: true });
   app.use("/uploads", import_express12.default.static(publicUploadsPath, { maxAge: "30d" }));
   app.use("/uploads", import_express12.default.static(distUploadsPath, { maxAge: "30d" }));
   app.use(errorHandler);
@@ -8385,10 +8937,10 @@ async function startServer() {
     });
     app.use(vite.middlewares);
   } else {
-    const distPath = import_path2.default.join(process.cwd(), "dist");
+    const distPath = import_path.default.join(process.cwd(), "dist");
     app.use(import_express12.default.static(distPath));
     app.get("*", (req, res) => {
-      res.sendFile(import_path2.default.join(distPath, "index.html"));
+      res.sendFile(import_path.default.join(distPath, "index.html"));
     });
   }
   initWebSocketServer(httpServer);

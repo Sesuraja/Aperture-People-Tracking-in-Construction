@@ -57,7 +57,7 @@ export default function AnalyticsTab({ people = [], isLoading: externalLoading }
   } = useTerminology();
 
   const activeIndustry = intelligenceProfile?.industry || config?.industryId || 'construction';
-  const activeSubIndustry = intelligenceProfile?.subIndustry || config?.name || 'General Operations';
+  const activeSubIndustry = intelligenceProfile?.subIndustry || config?.subIndustry || config?.industryName || 'General Operations';
 
   // Live workforce registry from MongoDB registered_people
   const [dbPeople, setDbPeople] = useState<any[]>([]);

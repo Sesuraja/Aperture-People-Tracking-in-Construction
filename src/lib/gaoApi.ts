@@ -5,6 +5,7 @@ export interface HistoryRecord {
   FirstName: string;
   LastName: string;
   LocationName: string;
+  Location?: string;
   EnterTime?: string;
   EnterTimeStr?: string;
   LeaveTime?: string;
@@ -14,18 +15,27 @@ export interface HistoryRecord {
 
 export interface RealtimeTag {
   TagID: string;
+  tagId?: string;
+  id?: string;
   Timestamp: string;
+  EnterTime?: string;
   Location: string;
   LocationName?: string;
   personName?: string;
   personId?: string | null;
+  FirstName?: string;
+  LastName?: string;
+  name?: string;
   zoneId?: string;
   zoneName?: string;
+  zone?: string;
   x?: number;
   y?: number;
   rssi?: number;
+  RSSI?: number;
   readerId?: string;
   antennaId?: number;
+  AntennaID?: number;
   role?: string;
 }
 

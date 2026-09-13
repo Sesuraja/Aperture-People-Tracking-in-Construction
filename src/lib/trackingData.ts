@@ -168,6 +168,29 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
   const [dynamicZones, setDynamicZones] = useState<Record<string, any>>({});
 
   useEffect(() => {
+    fetch('/api/zones')
+      .then(res => res.ok ? res.json() : [])
+      .then((zoneList: any[]) => {
+        if (Array.isArray(zoneList) && zoneList.length > 0) {
+          const dict: Record<string, any> = {};
+          zoneList.forEach(z => {
+            dict[z.name || z.id] = {
+              x: z.x ?? 20,
+              y: z.y ?? 20,
+              width: z.width ?? 25,
+              height: z.height ?? 20,
+              category: z.category || 'ZONE',
+              hazardLevel: z.hazardLevel || 'normal'
+            };
+          });
+          setDynamicZones(dict);
+          dynamicZonesRef.current = dict;
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
     if (!mode) return;
     
     let isMounted = true;

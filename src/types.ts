@@ -1,7 +1,8 @@
-export type PresenceState = 'MOVING' | 'IDLE' | 'EXITED';
+export type PresenceState = 'MOVING' | 'IDLE' | 'EXITED' | 'ACTIVE';
 
 export interface Person {
   id: string;
+  tagId?: string;
   name: string;
   role: string;
   tradeCompany?: string;
@@ -12,6 +13,7 @@ export interface Person {
   trainingCourse?: string;
   trainingExpiry?: string;
   isLate?: boolean;
+  overtimeHours?: number;
   certifications?: string[];
   hardhatTagId?: string;
   permitToWork?: string | null;
@@ -106,7 +108,10 @@ export type AlertCategory =
   | 'Visitor' 
   | 'Maintenance' 
   | 'Weather' 
-  | 'System';
+  | 'System'
+  | 'Operational'
+  | 'Compliance'
+  | 'Asset';
 
 export type AlertPriority = 'Critical' | 'High' | 'Medium' | 'Low';
 export type AlertStatus = 'New' | 'In Progress' | 'Escalated' | 'Resolved' | 'Suppressed';

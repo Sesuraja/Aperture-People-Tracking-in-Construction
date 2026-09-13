@@ -219,15 +219,6 @@ authRouter.post('/login', authRateLimiter, async (req: Request, res: Response) =
     let isValid = false;
     if (user.passwordHash) {
       isValid = await bcrypt.compare(password, user.passwordHash);
-    } else if (user.password) {
-      // Legacy unhashed password migration fallback
-      isValid = user.password === password;
-      if (isValid) {
-        // Upgrade to hashed password immediately
-        user.passwordHash = await bcrypt.hash(password, 10);
-        delete user.password;
-        await upsertDoc('users', user, user.organizationId || 'default');
-      }
     }
 
     if (!isValid) {

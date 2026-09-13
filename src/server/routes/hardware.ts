@@ -17,8 +17,19 @@ import {
 } from '../services/gaoEventMapper.js';
 
 import { optionalAuth, verifyToken } from '../middleware/auth.js';
+import rateLimit from 'express-rate-limit';
 
 export const hardwareRouter = Router();
+
+// Hardware telemetry rate limiter: 300 requests per minute per IP (skipped in tests)
+export const hardwareRateLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  skip: () => process.env.NODE_ENV === 'test' || Boolean(process.env.VITEST),
+  message: { success: false, error: 'Hardware ingestion rate limit exceeded. Please reduce scan push frequency.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
 
 function getReqOrgId(req: Request): string {
   if ((req as any).user?.organizationId) {
@@ -38,7 +49,7 @@ function getReqOrgId(req: Request): string {
 // ===========================================================================
 
 // POST /api/hardware/gao-native (GAO 216031A Native JSON Push)
-hardwareRouter.post('/gao-native', async (req: Request, res: Response) => {
+hardwareRouter.post('/gao-native', hardwareRateLimiter, async (req: Request, res: Response) => {
   const orgId = getReqOrgId(req);
   try {
     const events = parseGaoNativeBody(req.body);
@@ -105,7 +116,7 @@ hardwareRouter.post('/scan', async (req: Request, res: Response) => {
 
     const result = await processDirectHardwareScan({
       readerId: readerId || 'GAO-UHF-DEFAULT',
-      antennaId: Number(antennaId) || 1,
+      antennaId: Number(antennaId || (req.body && req.body.antenna)) || 1,
       tagId: String(tagId),
       rssi: rssi !== undefined ? Number(rssi) : -60,
       timestamp: timestamp || new Date().toISOString(),

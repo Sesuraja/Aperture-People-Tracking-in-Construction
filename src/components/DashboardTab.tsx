@@ -1882,7 +1882,7 @@ export default function DashboardTab({
         });
         const firstEntry = sortedLogs.find(l => l.checkInTime || l.inTime || l.status === 'PRESENT' || l.status === 'LATE');
         const lastExit = [...sortedLogs].reverse().find(l => l.checkOutTime || l.outTime || l.status === 'EXITED');
-        const firstEntryTime = firstEntry?.checkInTime || firstEntry?.inTime ? formatEdtTime(firstEntry.checkInTime || firstEntry.inTime, { includeSeconds: false }) : (sortedLogs.length > 0 ? '07:00 AM EDT' : 'No scans recorded');
+        const firstEntryTime = firstEntry?.checkInTime || firstEntry?.inTime ? formatEdtTime(firstEntry.checkInTime || firstEntry.inTime, { includeSeconds: false }) : (sortedLogs.length > 0 ? '07:00 AM UTC' : 'No scans recorded');
         const firstEntryName = firstEntry?.name || firstEntry?.personName || (registeredPeopleList[0]?.name) || 'Awaiting entry telemetry';
         const lastExitTime = lastExit?.checkOutTime || lastExit?.outTime ? formatEdtTime(lastExit.checkOutTime || lastExit.outTime, { includeSeconds: false }) : 'On site / No exit';
         const lastExitName = lastExit?.name || lastExit?.personName || 'All active personnel logged in';

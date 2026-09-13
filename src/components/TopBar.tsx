@@ -5,7 +5,8 @@ import { AppModeContext } from '../App';
 import ExportReportModal from './ExportReportModal';
 import { ApertureLogoMark } from './ApertureLogo';
 import { useTerminology } from '../context/TrackingContext';
-import { useEdtClock } from '../lib/dateTimeUtils';
+import { useSystemClock } from '../lib/dateTimeUtils';
+import { doc, db, onSnapshot } from '../lib/db';
 
 interface TopBarProps {
   onOpenCommandPalette?: () => void;
@@ -26,9 +27,12 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
   const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
   const [isExportOpen, setIsExportOpen] = useState(false);
   const [orgInfo, setOrgInfo] = useState<{ id: string; name: string } | null>(null);
+  const [currentTimezone, setCurrentTimezone] = useState<string>(() => {
+    return (typeof window !== 'undefined' ? localStorage.getItem('gao_system_timezone') : null) || 'UTC (Coordinated Universal Time)';
+  });
   const { mode } = useContext(AppModeContext);
   const { config, personnelPlural } = useTerminology();
-  const edtClock = useEdtClock(1000);
+  const systemClock = useSystemClock(currentTimezone, 1000);
 
   // Real-time MongoDB and Server Health state
   const [dbStatus, setDbStatus] = useState<MongoStatus>({
@@ -46,7 +50,7 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
     }
   }, [isDark]);
 
-  // Fetch organization info
+  // Fetch organization info & subscribe to global settings
   useEffect(() => {
     const fetchOrg = async () => {
       try {
@@ -63,6 +67,38 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
       } catch {}
     };
     fetchOrg();
+
+    // Live MongoDB settings listener
+    const unsub = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        if (data.companyName) {
+          setOrgInfo(prev => ({ id: prev?.id || 'default', name: data.companyName }));
+        }
+        if (data.systemTimezone) {
+          setCurrentTimezone(data.systemTimezone);
+        }
+      }
+    });
+
+    const handleSettingsUpdate = (e: any) => {
+      if (e?.detail?.companyName) {
+        setOrgInfo(prev => ({ id: prev?.id || 'default', name: e.detail.companyName }));
+      }
+      if (e?.detail?.systemTimezone) {
+        setCurrentTimezone(e.detail.systemTimezone);
+      }
+      fetchOrg();
+    };
+
+    window.addEventListener('gao_settings_updated', handleSettingsUpdate);
+    window.addEventListener('gao_data_updated', fetchOrg);
+
+    return () => {
+      unsub();
+      window.removeEventListener('gao_settings_updated', handleSettingsUpdate);
+      window.removeEventListener('gao_data_updated', fetchOrg);
+    };
   }, []);
 
   // Polling real system & MongoDB health from /api/mongodb/status
@@ -119,8 +155,8 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
 
         <div className="flex flex-col justify-center min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <h1 className="text-sm sm:text-base lg:text-lg font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight truncate" title={config?.appTitle || 'Aperture People Tracking'}>
-              {config?.appTitle || 'Aperture People Tracking'}
+            <h1 className="text-sm sm:text-base lg:text-lg font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight truncate" title={orgInfo?.name || config?.appTitle || 'Aperture People Tracking'}>
+              {orgInfo?.name || config?.appTitle || 'Aperture People Tracking'}
             </h1>
             <span className="hidden md:inline-flex text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#007BC4]/10 text-[#007BC4] border border-[#007BC4]/20 max-w-[220px] truncate" title={config?.industryName || 'Multi-Industry'}>
               {config?.industryName || 'Multi-Industry'}
@@ -208,23 +244,23 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
           </div>
         )}
 
-        {/* REAL-TIME LIVE EDT CLOCK WIDGET */}
+        {/* REAL-TIME LIVE CLOCK WIDGET */}
         <div 
           className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 text-slate-700 dark:text-slate-200 shadow-2xs text-xs whitespace-nowrap shrink-0"
-          title={`System Real-Time Clock: Eastern Daylight Time (EDT, UTC-4)\nDate: ${edtClock.dateLong}`}
+          title={`System Real-Time Clock: ${systemClock.timezoneLabel}\nDate: ${systemClock.dateLong}`}
         >
           <div className="flex items-center gap-1.5">
             <Clock className="w-3.5 h-3.5 text-[#007BC4] animate-pulse shrink-0" />
             <span className="font-mono font-bold text-xs tracking-tight text-slate-900 dark:text-white">
-              {edtClock.timeNoSuffix}
+              {systemClock.timeNoSuffix}
             </span>
           </div>
           <span className="flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded-md border border-emerald-300/60 dark:border-emerald-700/50">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-            EDT LIVE
+            {systemClock.timezoneLabel} LIVE
           </span>
           <span className="hidden xl:inline-block text-[11px] text-slate-400 font-medium pl-1 border-l border-slate-200 dark:border-slate-700">
-            {edtClock.dateStr}
+            {systemClock.dateStr}
           </span>
         </div>
 

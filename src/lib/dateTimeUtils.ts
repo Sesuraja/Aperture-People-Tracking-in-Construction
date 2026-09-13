@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
 
-export const EDT_TIMEZONE = 'America/New_York';
-export const TIMEZONE_LABEL = 'EDT';
+export const UTC_TIMEZONE = 'UTC';
+export const TIMEZONE_LABEL = 'UTC';
+
+// Backward compatibility alias for existing imports
+export const EDT_TIMEZONE = 'UTC';
 
 /**
  * Safely parses any date input (Date object, timestamp number, ISO string,
  * or raw space-separated database timestamp "YYYY-MM-DD HH:mm:ss")
- * treating timezone-less strings as UTC so they can be reliably converted to EDT.
+ * treating timezone-less strings as UTC.
  */
 export function parseDateInput(dateInput?: string | Date | number | null): Date {
   if (!dateInput) return new Date();
@@ -32,30 +35,34 @@ export function parseDateInput(dateInput?: string | Date | number | null): Date 
   return isNaN(parsed.getTime()) ? new Date() : parsed;
 }
 
-export interface FormatEdtTimeOptions {
+export interface FormatTimeOptions {
   includeSeconds?: boolean;
-  includeSuffix?: boolean; // Appends "EDT"
+  includeSuffix?: boolean; // Appends "UTC"
   hour12?: boolean;
+  timeZone?: string;
 }
 
+export type FormatEdtTimeOptions = FormatTimeOptions;
+
 /**
- * Formats any timestamp into Eastern Daylight Time (EDT / America/New_York)
+ * Formats any timestamp into Coordinated Universal Time (UTC)
  * Examples:
- *   formatEdtTime() => "10:06:24 AM EDT"
- *   formatEdtTime(date, { includeSeconds: false }) => "10:06 AM EDT"
+ *   formatUtcTime() => "02:06:24 PM UTC"
+ *   formatUtcTime(date, { includeSeconds: false }) => "02:06 PM UTC"
  */
-export function formatEdtTime(
+export function formatUtcTime(
   dateInput?: string | Date | number | null,
-  options: FormatEdtTimeOptions = {}
+  options: FormatTimeOptions = {}
 ): string {
   const d = parseDateInput(dateInput);
   const includeSeconds = options.includeSeconds !== undefined ? options.includeSeconds : true;
   const includeSuffix = options.includeSuffix !== undefined ? options.includeSuffix : true;
   const hour12 = options.hour12 !== undefined ? options.hour12 : true;
+  const timeZone = options.timeZone || UTC_TIMEZONE;
 
   try {
     const formatted = d.toLocaleTimeString('en-US', {
-      timeZone: EDT_TIMEZONE,
+      timeZone,
       hour12,
       hour: '2-digit',
       minute: '2-digit',
@@ -64,31 +71,35 @@ export function formatEdtTime(
 
     return includeSuffix ? `${formatted} ${TIMEZONE_LABEL}` : formatted;
   } catch {
-    return d.toLocaleTimeString();
+    return d.toUTCString();
   }
 }
 
+// Backward-compatible alias for formatEdtTime
+export const formatEdtTime = formatUtcTime;
+
 /**
- * Formats any timestamp into EDT Date representation.
+ * Formats any timestamp into UTC Date representation.
  * Examples:
- *   formatEdtDate() => "Sep 7, 2026"
- *   formatEdtDate(date, { format: 'iso' }) => "2026-09-07"
- *   formatEdtDate(date, { format: 'long' }) => "Monday, September 7, 2026"
+ *   formatUtcDate() => "Sep 7, 2026"
+ *   formatUtcDate(date, { format: 'iso' }) => "2026-09-07"
+ *   formatUtcDate(date, { format: 'long' }) => "Monday, September 7, 2026"
  */
-export function formatEdtDate(
+export function formatUtcDate(
   dateInput?: string | Date | number | null,
-  options: { format?: 'short' | 'long' | 'iso' } = {}
+  options: { format?: 'short' | 'long' | 'iso'; timeZone?: string } = {}
 ): string {
   const d = parseDateInput(dateInput);
   const fmt = options.format || 'short';
+  const timeZone = options.timeZone || UTC_TIMEZONE;
 
   try {
     if (fmt === 'iso') {
-      return d.toLocaleDateString('en-CA', { timeZone: EDT_TIMEZONE });
+      return d.toLocaleDateString('en-CA', { timeZone });
     }
     if (fmt === 'long') {
       return d.toLocaleDateString('en-US', {
-        timeZone: EDT_TIMEZONE,
+        timeZone,
         weekday: 'long',
         month: 'long',
         day: 'numeric',
@@ -96,7 +107,7 @@ export function formatEdtDate(
       });
     }
     return d.toLocaleDateString('en-US', {
-      timeZone: EDT_TIMEZONE,
+      timeZone,
       month: 'short',
       day: 'numeric',
       year: 'numeric'
@@ -106,48 +117,93 @@ export function formatEdtDate(
   }
 }
 
+// Backward-compatible alias for formatEdtDate
+export const formatEdtDate = formatUtcDate;
+
 /**
- * Formats full Date + Time in Eastern Daylight Time (EDT)
- * Example: "Sep 7, 2026, 10:06:24 AM EDT"
+ * Formats full Date + Time in Coordinated Universal Time (UTC)
+ * Example: "Sep 7, 2026, 02:06:24 PM UTC"
  */
-export function formatEdtDateTime(
+export function formatUtcDateTime(
   dateInput?: string | Date | number | null,
   includeSeconds: boolean = true
 ): string {
   const d = parseDateInput(dateInput);
-  const datePart = formatEdtDate(d, { format: 'short' });
-  const timePart = formatEdtTime(d, { includeSeconds, includeSuffix: true });
+  const datePart = formatUtcDate(d, { format: 'short' });
+  const timePart = formatUtcTime(d, { includeSeconds, includeSuffix: true });
   return `${datePart}, ${timePart}`;
 }
 
+// Backward-compatible alias for formatEdtDateTime
+export const formatEdtDateTime = formatUtcDateTime;
+
+export function resolveIanaTimezone(tzSetting?: string): { iana: string; label: string } {
+  const str = String(tzSetting || '').toLowerCase();
+  if (str.includes('eastern') || str.includes('edt') || str.includes('est')) {
+    return { iana: 'America/New_York', label: 'EDT' };
+  }
+  if (str.includes('central') || str.includes('cst')) {
+    return { iana: 'America/Chicago', label: 'CST' };
+  }
+  if (str.includes('pacific') || str.includes('pst')) {
+    return { iana: 'America/Los_Angeles', label: 'PST' };
+  }
+  if (str.includes('gmt')) {
+    return { iana: 'GMT', label: 'GMT' };
+  }
+  return { iana: 'UTC', label: 'UTC' };
+}
+
 /**
- * Live snapshot of current real-time EDT clock
+ * Live snapshot of current real-time clock according to system timezone setting
  */
-export function getLiveEdtClock() {
+export function getLiveSystemClock(tzSetting?: string) {
   const now = new Date();
+  const { iana, label } = resolveIanaTimezone(tzSetting);
   return {
     now,
-    timeStr: formatEdtTime(now, { includeSeconds: true, includeSuffix: true }),
-    timeNoSuffix: formatEdtTime(now, { includeSeconds: true, includeSuffix: false }),
-    timeShort: formatEdtTime(now, { includeSeconds: false, includeSuffix: true }),
-    dateStr: formatEdtDate(now, { format: 'short' }),
-    dateLong: formatEdtDate(now, { format: 'long' }),
-    isoDate: formatEdtDate(now, { format: 'iso' }),
-    timezoneLabel: TIMEZONE_LABEL
+    timeStr: formatUtcTime(now, { includeSeconds: true, includeSuffix: false, timeZone: iana }) + ` ${label}`,
+    timeNoSuffix: formatUtcTime(now, { includeSeconds: true, includeSuffix: false, timeZone: iana }),
+    timeShort: formatUtcTime(now, { includeSeconds: false, includeSuffix: false, timeZone: iana }) + ` ${label}`,
+    dateStr: formatUtcDate(now, { format: 'short', timeZone: iana }),
+    dateLong: formatUtcDate(now, { format: 'long', timeZone: iana }),
+    isoDate: formatUtcDate(now, { format: 'iso', timeZone: iana }),
+    timezoneLabel: label
   };
 }
 
 /**
- * React hook that ticks every second in EDT Real-Time
+ * Live snapshot of current real-time UTC clock (default fallback)
  */
-export function useEdtClock(intervalMs: number = 1000) {
-  const [clock, setClock] = useState(() => getLiveEdtClock());
+export function getLiveUtcClock() {
+  return getLiveSystemClock('UTC');
+}
+
+// Backward-compatible alias for getLiveEdtClock
+export const getLiveEdtClock = getLiveUtcClock;
+
+/**
+ * React hook that ticks every second in system-configured timezone (defaulting to UTC)
+ */
+export function useSystemClock(tzSetting?: string, intervalMs: number = 1000) {
+  const [clock, setClock] = useState(() => getLiveSystemClock(tzSetting));
 
   useEffect(() => {
-    const tick = () => setClock(getLiveEdtClock());
+    const tick = () => setClock(getLiveSystemClock(tzSetting));
+    tick();
     const timer = setInterval(tick, intervalMs);
     return () => clearInterval(timer);
-  }, [intervalMs]);
+  }, [tzSetting, intervalMs]);
 
   return clock;
 }
+
+/**
+ * React hook that ticks every second in UTC Real-Time (or optionally configured timezone)
+ */
+export function useUtcClock(intervalMs: number = 1000, tzSetting?: string) {
+  return useSystemClock(tzSetting || 'UTC', intervalMs);
+}
+
+// Backward-compatible alias for useEdtClock
+export const useEdtClock = useUtcClock;

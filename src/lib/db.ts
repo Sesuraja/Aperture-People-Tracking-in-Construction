@@ -203,10 +203,14 @@ export async function setDoc(docRef: any, data: any, _options?: any): Promise<vo
       headers: getAuthHeaders(),
       body: JSON.stringify(data)
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!response.ok) {
+      const errBody = await response.json().catch(() => ({ error: `HTTP ${response.status}` }));
+      throw new Error(errBody.error || `HTTP ${response.status}`);
+    }
     notifyDataUpdated(colName);
   } catch (err) {
     console.warn(`setDoc MongoDB API error for ${colName}/${docId}:`, err);
+    throw err;
   }
 }
 

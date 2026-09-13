@@ -48,31 +48,41 @@ const DEFAULT_3X3_COORDS = [
   { x: 69.0, y: 68.0, width: 24.5, height: 21.5 }
 ];
 
-function buildDynamicZones(configuredZones?: Array<{ id: string; name: string; category?: string; hazardLevel?: string }>) {
+function buildDynamicZones(
+  configuredZones?: Array<{ id?: string; name: string; category?: string; hazardLevel?: string }>,
+  functionalAreas?: Array<{ id?: string; name: string; category?: string; hazardLevel?: string }>
+) {
   const result: Record<string, any> = {};
-  if (configuredZones && configuredZones.length > 0) {
-    configuredZones.slice(0, 9).forEach((z, i) => {
+  const sourceList = (configuredZones && configuredZones.length > 0)
+    ? configuredZones
+    : (functionalAreas && functionalAreas.length > 0)
+      ? functionalAreas
+      : null;
+
+  if (sourceList && sourceList.length > 0) {
+    sourceList.slice(0, 9).forEach((z, i) => {
       const coords = DEFAULT_3X3_COORDS[i] || DEFAULT_3X3_COORDS[0];
       result[z.name] = {
         ...coords,
-        category: z.category || 'ZONE',
+        category: (z.category || 'ZONE').toUpperCase(),
         hazardLevel: z.hazardLevel || 'normal',
         maxCapacity: z.hazardLevel === 'critical' ? 4 : z.hazardLevel === 'warning' ? 8 : 20
       };
     });
     return result;
   }
-  return {
-    'Zone A - Main Entrance': { x: 6.5, y: 8.0, width: 23.5, height: 21.5, category: 'ACCESS', hazardLevel: 'normal', maxCapacity: 15 },
-    'Zone B - Operations Floor': { x: 36.5, y: 8.0, width: 26.0, height: 21.5, category: 'OPERATIONS', hazardLevel: 'normal', maxCapacity: 25 },
-    'Zone C - High Hazard Unit': { x: 69.0, y: 8.0, width: 24.5, height: 21.5, category: 'RESTRICTED', hazardLevel: 'critical', maxCapacity: 4 },
-    'Zone D - Staging Bay': { x: 6.5, y: 38.0, width: 23.5, height: 21.5, category: 'LOGISTICS', hazardLevel: 'warning', maxCapacity: 8 },
-    'Zone E - Central Command': { x: 36.5, y: 38.0, width: 26.0, height: 21.5, category: 'MANAGEMENT', hazardLevel: 'normal', maxCapacity: 12 },
-    'Zone F - Machinery Bay': { x: 69.0, y: 38.0, width: 24.5, height: 21.5, category: 'MACHINERY', hazardLevel: 'warning', maxCapacity: 6 },
-    'Zone G - Perimeter Buffer': { x: 6.5, y: 68.0, width: 23.5, height: 21.5, category: 'SECURITY', hazardLevel: 'normal', maxCapacity: 10 },
-    'Zone H - Emergency Muster Point': { x: 36.5, y: 68.0, width: 26.0, height: 21.5, category: 'SAFETY', hazardLevel: 'normal', maxCapacity: 50 },
-    'Zone I - Utilities & Power': { x: 69.0, y: 68.0, width: 24.5, height: 21.5, category: 'UTILITIES', hazardLevel: 'critical', maxCapacity: 4 }
-  };
+
+  const fallbackSectors = ['Sector A', 'Sector B', 'Sector C', 'Sector D', 'Sector E', 'Sector F', 'Sector G', 'Sector H', 'Sector I'];
+  fallbackSectors.forEach((name, i) => {
+    const coords = DEFAULT_3X3_COORDS[i] || DEFAULT_3X3_COORDS[0];
+    result[name] = {
+      ...coords,
+      category: 'GENERAL',
+      hazardLevel: 'normal',
+      maxCapacity: 15
+    };
+  });
+  return result;
 }
 
 const INITIAL_PROJECT_PROPERTIES: Record<string, ProjectProperties> = {
@@ -148,7 +158,7 @@ export default function LiveTrackingTab({
   }, [activeProject]);
   
   const trackingCtx = useTracking();
-  const { personnelPlural, personnelSingular, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType } = useTerminology();
+  const { personnelPlural, personnelSingular, roleLabel, idBadgeLabel, safetyComplianceLabel, zoneLabel, siteLabel, organizationType, intelligenceProfile } = useTerminology();
   const [selectedEntity, setSelectedEntity] = useState<SelectedEntity | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [activeTab, setActiveTab] = useState<'people' | 'assets' | 'hardware' | 'zones'>('people');
@@ -327,11 +337,11 @@ export default function LiveTrackingTab({
   // Custom Geofences & Capacity Thresholds (3x3 Layout matching design)
   const [customZonesState, setCustomZonesState] = useState<Record<string, any>>(() => {
     if (defaultZones && Object.keys(defaultZones).length > 0) return defaultZones;
-    return buildDynamicZones(trackingCtx?.industryConfig?.defaultZones);
+    return buildDynamicZones(trackingCtx?.industryConfig?.defaultZones, intelligenceProfile?.functionalAreas);
   });
 
   const [zoneCapacities, setZoneCapacities] = useState<Record<string, number>>(() => {
-    const initial = buildDynamicZones(trackingCtx?.industryConfig?.defaultZones);
+    const initial = buildDynamicZones(trackingCtx?.industryConfig?.defaultZones, intelligenceProfile?.functionalAreas);
     const caps: Record<string, number> = {};
     Object.entries(initial).forEach(([name, b]: [string, any]) => {
       caps[name] = b.maxCapacity || 10;
@@ -341,7 +351,7 @@ export default function LiveTrackingTab({
 
   useEffect(() => {
     if (!defaultZones || Object.keys(defaultZones).length === 0) {
-      const dynamic = buildDynamicZones(trackingCtx?.industryConfig?.defaultZones);
+      const dynamic = buildDynamicZones(trackingCtx?.industryConfig?.defaultZones, intelligenceProfile?.functionalAreas);
       setCustomZonesState(dynamic);
       const caps: Record<string, number> = {};
       Object.entries(dynamic).forEach(([name, b]: [string, any]) => {
@@ -349,7 +359,7 @@ export default function LiveTrackingTab({
       });
       setZoneCapacities(caps);
     }
-  }, [trackingCtx?.industryConfig?.defaultZones, defaultZones]);
+  }, [trackingCtx?.industryConfig?.defaultZones, intelligenceProfile?.functionalAreas, defaultZones]);
 
   // Geofence Drawing State
   const [isDrawingGeofence, setIsDrawingGeofence] = useState(false);

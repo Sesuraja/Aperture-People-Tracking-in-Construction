@@ -90,7 +90,7 @@ export default function DailyReportingTaskModal({
   const attendanceRate = totalCount > 0 ? Math.round((presentCount / totalCount) * 100) : 0;
   const ppeCompliantCount = people.filter(p => p.ppeStatus === 'COMPLIANT').length;
   const ppeRate = totalCount > 0 ? Math.round((ppeCompliantCount / totalCount) * 100) : 0;
-  const lateCount = people.filter(p => p.shiftStatus === 'LATE').length;
+  const lateCount = people.filter(p => p.isLate || (p.shiftStatus as string) === 'LATE').length;
   const overtimeHours = people.reduce((acc, p) => acc + (p.overtimeHours || 0), 0);
   const safetyIndex = totalCount > 0 
     ? Math.min(100, Math.max(50, Math.round((ppeRate * 0.6) + (attendanceRate * 0.4)))) 

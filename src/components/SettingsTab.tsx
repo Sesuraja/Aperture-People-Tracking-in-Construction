@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { useLocation } from "react-router-dom";
 import {
   Save,
@@ -50,7 +50,7 @@ import ThirdPartyApiIntegrationSection from "./ThirdPartyApiIntegrationSection";
 import DirectHardwareIntegrationSection from "./DirectHardwareIntegrationSection";
 import MongoDbConfigurationSection from "./MongoDbConfigurationSection";
 import IndustryConfigurationSection from "./IndustryConfigurationSection";
-import { gaoApi, DEFAULT_HOST } from "../lib/gaoApi";
+import { gaoApi, DEFAULT_HOST, getAuthHeaders } from "../lib/gaoApi";
 import { doc, getDoc, setDoc, onSnapshot, isMongoActive, db } from "../lib/db";
 import { AppModeContext } from "../App";
 import { useTracking } from "../context/TrackingContext";
@@ -75,26 +75,36 @@ export default function SettingsTab() {
   const [saveSuccessNotice, setSaveSuccessNotice] = useState<string | null>(null);
 
   // 1. General Settings States
-  const [companyName, setCompanyName] = useState("Aperture Construction Systems");
-  const [systemTimezone, setSystemTimezone] = useState("EDT (Eastern Daylight Time / UTC-4)");
-  const [dataRetentionDays, setDataRetentionDays] = useState(90);
+  const [companyName, setCompanyName] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("gao_company_name") : null) || "Aperture Construction Systems");
+  const [systemTimezone, setSystemTimezone] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("gao_system_timezone") : null) || "UTC (Coordinated Universal Time)");
+  const [dataRetentionDays, setDataRetentionDays] = useState(() => {
+    const val = typeof window !== "undefined" ? localStorage.getItem("gao_data_retention_days") : null;
+    return val ? parseInt(val, 10) : 90;
+  });
   const [currencySymbol, setCurrencySymbol] = useState("$ USD");
-  const [siteLocation, setSiteLocation] = useState("Tower 1 - Metro Commercial Build");
-  const [maintenanceMode, setMaintenanceMode] = useState(false);
-  const [systemLanguage, setSystemLanguage] = useState("English (US)");
+  const [siteLocation, setSiteLocation] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("gao_site_location") : null) || "Tower 1 - Metro Commercial Build");
+  const [maintenanceMode, setMaintenanceMode] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("gao_maintenance_mode") === "true" : false));
+  const [systemLanguage, setSystemLanguage] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("gao_system_language") : null) || "English (US)");
+
+  const isInitialLoadDoneRef = useRef(false);
 
   // Real-time listener for global settings stored in MongoDB Atlas
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "settings", "global"), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        if (data.companyName) setCompanyName(data.companyName);
-        if (data.systemTimezone) setSystemTimezone(data.systemTimezone);
-        if (data.dataRetentionDays !== undefined) setDataRetentionDays(data.dataRetentionDays);
-        if (data.currencySymbol) setCurrencySymbol(data.currencySymbol);
-        if (data.siteLocation) setSiteLocation(data.siteLocation);
-        if (data.maintenanceMode !== undefined) setMaintenanceMode(data.maintenanceMode);
-        if (data.systemLanguage) setSystemLanguage(data.systemLanguage);
+        const isUserInteracting = typeof document !== "undefined" &&
+          (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "SELECT");
+        if (!isInitialLoadDoneRef.current || !isUserInteracting) {
+          isInitialLoadDoneRef.current = true;
+          if (data.companyName) setCompanyName(data.companyName);
+          if (data.systemTimezone) setSystemTimezone(data.systemTimezone);
+          if (data.dataRetentionDays !== undefined) setDataRetentionDays(data.dataRetentionDays);
+          if (data.currencySymbol) setCurrencySymbol(data.currencySymbol);
+          if (data.siteLocation) setSiteLocation(data.siteLocation);
+          if (data.maintenanceMode !== undefined) setMaintenanceMode(data.maintenanceMode);
+          if (data.systemLanguage) setSystemLanguage(data.systemLanguage);
+        }
         if (data.apiUrl) setApiUrl(data.apiUrl);
         if (data.loiteringThreshold !== undefined) setLoiteringThreshold(data.loiteringThreshold);
         if (data.idleAlertThreshold !== undefined) setIdleAlertThreshold(data.idleAlertThreshold);
@@ -138,13 +148,33 @@ export default function SettingsTab() {
   // 2. Security & Tracking States
   const [loiteringThreshold, setLoiteringThreshold] = useState(300);
   const [idleAlertThreshold, setIdleAlertThreshold] = useState(3600);
-  const { zones } = useTracking();
-  const [occupancyThresholds, setOccupancyThresholds] = useState<Record<string, number>>({
-    "Zone 1 - Main Floor": 25,
-    "Zone 2 - North Perimeter": 15,
-  });
+  const { zones, updateIndustryConfig } = useTracking();
+  const [occupancyThresholds, setOccupancyThresholds] = useState<Record<string, number>>({});
   const [newZoneName, setNewZoneName] = useState("");
   const [newZoneLimit, setNewZoneLimit] = useState(20);
+
+  // Dynamically load active zones directly from MongoDB persistence endpoints on mount
+  useEffect(() => {
+    fetch('/api/data/zones', { headers: getAuthHeaders() })
+      .then(res => (res.ok ? res.json() : []))
+      .then((data: any[]) => {
+        if (Array.isArray(data) && data.length > 0) {
+          setOccupancyThresholds(prev => {
+            const next = { ...prev };
+            let updated = false;
+            data.forEach(z => {
+              const zoneKey = z.name || z.zoneId || z.id;
+              if (zoneKey && next[zoneKey] === undefined) {
+                next[zoneKey] = z.capacity || z.maxCapacity || 20;
+                updated = true;
+              }
+            });
+            return updated ? next : prev;
+          });
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Sync occupancy thresholds dynamically with real site CAD/tracking zones
   useEffect(() => {
@@ -401,14 +431,7 @@ export default function SettingsTab() {
   const [isSavingAperture, setIsSavingAperture] = useState(false);
   const [apertureNotice, setApertureNotice] = useState<{ type: "success" | "error"; msg: string } | null>(null);
 
-  const getAuthHeaders = (): Record<string, string> => {
-    const headers: Record<string, string> = { "Content-Type": "application/json" };
-    const token = localStorage.getItem("gao_jwt_token");
-    if (token) {
-      headers["Authorization"] = `Bearer ${token}`;
-    }
-    return headers;
-  };
+
 
   const fetchApertureConfig = async () => {
     try {
@@ -1419,6 +1442,55 @@ export default function SettingsTab() {
 
       await setDoc(doc(db, "settings", "global"), payload, { merge: true });
 
+      // Synchronize organization name to MongoDB organizations collection (default, demo, and active tenant)
+      const activeOrg = (typeof window !== "undefined" && localStorage.getItem("gao_active_organization")) || "default";
+      if (companyName) {
+        try {
+          const orgPayload = {
+            name: companyName,
+            updatedAt: new Date().toISOString()
+          };
+          await Promise.allSettled([
+            setDoc(doc(db, "organizations", activeOrg), { id: activeOrg, ...orgPayload }, { merge: true }),
+            setDoc(doc(db, "organizations", "default"), { id: "default", ...orgPayload }, { merge: true }),
+            setDoc(doc(db, "organizations", "demo"), { id: "demo", ...orgPayload }, { merge: true })
+          ]);
+        } catch (orgErr) {
+          console.warn("Could not sync organization name to MongoDB:", orgErr);
+        }
+      }
+
+      // Synchronize Industry Config (appTitle & primarySiteName)
+      try {
+        await updateIndustryConfig({
+          appTitle: companyName,
+          primarySiteName: siteLocation
+        });
+      } catch (indErr) {
+        console.warn("Could not sync industry config:", indErr);
+      }
+
+      // Local storage persistence for General Preferences
+      localStorage.setItem("gao_company_name", companyName);
+      localStorage.setItem("gao_system_timezone", systemTimezone);
+      localStorage.setItem("gao_site_location", siteLocation);
+      localStorage.setItem("gao_system_language", systemLanguage);
+      localStorage.setItem("gao_maintenance_mode", String(maintenanceMode));
+      localStorage.setItem("gao_data_retention_days", String(dataRetentionDays));
+
+      // Broadcast settings update to TopBar, Sidebar, and all listeners
+      window.dispatchEvent(new CustomEvent("gao_settings_updated", {
+        detail: {
+          companyName,
+          systemTimezone,
+          siteLocation,
+          systemLanguage,
+          maintenanceMode,
+          dataRetentionDays
+        }
+      }));
+      window.dispatchEvent(new CustomEvent("gao_data_updated"));
+
       // Synchronize backend MQTT service broker URL
       try {
         await fetch('/api/realtime/mqtt/config', {
@@ -1551,12 +1623,24 @@ export default function SettingsTab() {
   const handleExportAllCollections = async () => {
     setIsExportingDb(true);
     try {
-      const collectionsToExport = ["personnel", "devices", "alerts", "history", "settings", "audit_trail"];
+      const collectionsToExport = [
+        "registered_people",
+        "devices",
+        "visitors",
+        "alerts",
+        "tag_history",
+        "settings",
+        "audit_logs",
+        "zones",
+        "hardware_readers"
+      ];
       const exportObject: Record<string, any> = {};
 
       for (const col of collectionsToExport) {
         try {
-          const res = await fetch(`/api/data/${col}`);
+          const res = await fetch(`/api/data/${col}`, {
+            headers: getAuthHeaders(),
+          });
           if (res.ok) {
             exportObject[col] = await res.json();
           }
@@ -1569,7 +1653,7 @@ export default function SettingsTab() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `mongodb_full_snapshot_${new Date().toISOString().slice(0,10)}.json`;
+      a.download = `mongodb_full_snapshot_${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err: any) {
@@ -1583,9 +1667,22 @@ export default function SettingsTab() {
     if (!window.confirm("Are you sure you want to purge tracking logs older than the retention threshold? This operation cannot be undone.")) return;
     setIsPurgingLogs(true);
     try {
-      // simulate/execute purge log request
-      await new Promise((r) => setTimeout(r, 1000));
-      alert("Purged 142 expired log entries from MongoDB cluster according to retention policies.");
+      const res = await fetch("/api/admin/retention-policy/cleanup", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...getAuthHeaders(),
+        },
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to execute retention cleanup");
+      }
+      const count = data.result?.deletedCount ?? 0;
+      const scanned = data.result?.collectionsScanned ?? 0;
+      alert(`MongoDB Retention Cleanup Complete: Purged ${count} expired records across ${scanned} collections.`);
+    } catch (err: any) {
+      alert(`Error purging logs: ${err.message}`);
     } finally {
       setIsPurgingLogs(false);
     }
@@ -1747,10 +1844,11 @@ export default function SettingsTab() {
 
               <div className="bg-white border border-slate-200 shadow-sm rounded-xl overflow-hidden divide-y divide-slate-100">
                 <div className="p-6">
-                  <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                  <label htmlFor="input_company_name" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                     Organization / Company Name
                   </label>
                   <input
+                    id="input_company_name"
                     type="text"
                     value={companyName}
                     onChange={(e) => setCompanyName(e.target.value)}
@@ -1760,10 +1858,11 @@ export default function SettingsTab() {
 
                 <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                    <label htmlFor="select_system_timezone" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                       System Timezone
                     </label>
                     <select
+                      id="select_system_timezone"
                       value={systemTimezone}
                       onChange={(e) => setSystemTimezone(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition cursor-pointer"
@@ -1778,10 +1877,11 @@ export default function SettingsTab() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                    <label htmlFor="select_system_language" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                       System Interface Language
                     </label>
                     <select
+                      id="select_system_language"
                       value={systemLanguage}
                       onChange={(e) => setSystemLanguage(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition cursor-pointer"
@@ -1796,10 +1896,11 @@ export default function SettingsTab() {
 
                 <div className="p-6 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                    <label htmlFor="input_site_location" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                       Primary Site Location
                     </label>
                     <input
+                      id="input_site_location"
                       type="text"
                       value={siteLocation}
                       onChange={(e) => setSiteLocation(e.target.value)}
@@ -1808,10 +1909,11 @@ export default function SettingsTab() {
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
+                    <label htmlFor="input_data_retention_days" className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2">
                       Data Retention Period (Days)
                     </label>
                     <input
+                      id="input_data_retention_days"
                       type="number"
                       value={dataRetentionDays}
                       onChange={(e) => setDataRetentionDays(parseInt(e.target.value) || 90)}
@@ -1829,6 +1931,7 @@ export default function SettingsTab() {
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
+                      id="toggle_maintenance_mode"
                       type="checkbox"
                       checked={maintenanceMode}
                       onChange={(e) => setMaintenanceMode(e.target.checked)}
@@ -1839,8 +1942,17 @@ export default function SettingsTab() {
                 </div>
               </div>
 
-              <div className="flex justify-end pt-2">
+              <div className="flex items-center justify-between pt-2">
+                <div>
+                  {saveSuccessNotice && (
+                    <span id="general_saved_inline_notice" className="text-xs font-bold text-emerald-600 flex items-center gap-1.5 animate-in fade-in">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      Preferences saved & synced to MongoDB!
+                    </span>
+                  )}
+                </div>
                 <button
+                  id="btn_save_general_settings"
                   onClick={handleSaveSettings}
                   disabled={isSaving}
                   className="flex items-center gap-2 bg-[#007BC4] hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-xs font-bold shadow-md transition disabled:opacity-50 cursor-pointer"
@@ -1952,6 +2064,7 @@ export default function SettingsTab() {
                   {/* Add New Custom Zone Limit */}
                   <div className="flex items-center gap-2 mb-4 p-3 bg-slate-50 border border-slate-200 rounded-lg">
                     <input
+                      id="input_new_zone_name"
                       type="text"
                       value={newZoneName}
                       onChange={(e) => setNewZoneName(e.target.value)}
@@ -1961,6 +2074,7 @@ export default function SettingsTab() {
                     <div className="flex items-center gap-1.5">
                       <span className="text-xs text-slate-500 font-medium">Limit:</span>
                       <input
+                        id="input_new_zone_limit"
                         type="number"
                         min="1"
                         value={newZoneLimit}
@@ -1969,6 +2083,7 @@ export default function SettingsTab() {
                       />
                     </div>
                     <button
+                      id="btn_add_custom_zone"
                       type="button"
                       onClick={() => {
                         if (!newZoneName.trim()) return;
@@ -2178,6 +2293,7 @@ export default function SettingsTab() {
 
               <div className="flex justify-end pt-2">
                 <button
+                  id="btn_save_security_settings"
                   onClick={handleSaveSettings}
                   disabled={isSaving}
                   className="flex items-center gap-2 bg-[#007BC4] hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-xs font-bold shadow-md transition disabled:opacity-50 cursor-pointer"
