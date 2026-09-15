@@ -745,7 +745,7 @@ async function initDatabaseIndexes() {
       console.warn(`[DB Service] Index initialization note for ${col}:`, err.message);
     }
   }
-  const TEN_DAYS_SECONDS = 10 * 24 * 60 * 60;
+  const SEVEN_DAYS_SECONDS = 7 * 24 * 60 * 60;
   for (const col of DATA_RETENTION_COLLECTIONS) {
     try {
       await mongoDb.collection(col).createIndex({ expireAt: 1 }, { expireAfterSeconds: 0, background: true });
@@ -753,7 +753,15 @@ async function initDatabaseIndexes() {
       console.warn(`[DB Service] TTL index note (expireAt) for ${col}:`, err.message);
     }
     try {
-      await mongoDb.collection(col).createIndex({ createdAt: 1 }, { expireAfterSeconds: TEN_DAYS_SECONDS, background: true });
+      try {
+        const existingIndexes = await mongoDb.collection(col).indexes();
+        const oldCreatedAtIndex = existingIndexes.find((idx) => idx.key?.createdAt === 1 && idx.expireAfterSeconds !== void 0 && idx.expireAfterSeconds !== SEVEN_DAYS_SECONDS);
+        if (oldCreatedAtIndex && oldCreatedAtIndex.name) {
+          await mongoDb.collection(col).dropIndex(oldCreatedAtIndex.name);
+        }
+      } catch {
+      }
+      await mongoDb.collection(col).createIndex({ createdAt: 1 }, { expireAfterSeconds: SEVEN_DAYS_SECONDS, background: true });
     } catch (err) {
       console.warn(`[DB Service] TTL index note (createdAt) for ${col}:`, err.message);
     }
@@ -794,7 +802,7 @@ async function initDatabaseIndexes() {
     } catch {
     }
   }
-  console.log("[DB Service] MongoDB deduplication, uniqueness, and 10-day retention TTL indexes initialized.");
+  console.log("[DB Service] MongoDB deduplication, uniqueness, and 7-day retention TTL indexes initialized.");
 }
 async function initDatabase(customUri) {
   const rawUri = customUri || getMongoUri();
@@ -1028,6 +1036,36 @@ async function getCollectionDocs(colName, opts, organizationId) {
   collectionReadCache.set(cacheKey, { docs: serialized, cachedAt: Date.now() });
   return serialized;
 }
+async function countCollectionDocs(colName, organizationId) {
+  if (mongoDb) {
+    try {
+      const isSpatialConfig = ["map_configurations", "zones", "geofences", "projects", "sites", "floorplans", "settings", "organizations"].includes(colName);
+      const query = {};
+      if (organizationId && organizationId !== "ALL" && !isSpatialConfig) {
+        if (organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default") {
+          query.$or = [
+            { organizationId: "default" },
+            { organizationId: "org_main" },
+            { organizationId: "org_aperture_default" },
+            { organizationId: { $exists: false } },
+            { organizationId: null },
+            { organizationId: "" }
+          ];
+        } else {
+          query.organizationId = organizationId;
+        }
+      }
+      if (Object.keys(query).length === 0) {
+        return await mongoDb.collection(colName).estimatedDocumentCount();
+      }
+      return await mongoDb.collection(colName).countDocuments(query);
+    } catch (err) {
+      console.warn(`[DB Service] Error counting docs for ${colName}:`, err);
+    }
+  }
+  const items = inMemoryStore[colName] || [];
+  return items.length;
+}
 var DEFAULT_ORGS = ["default", "org_main", "org_aperture_default"];
 async function getDocById(colName, id, organizationId) {
   if (mongoDb) {
@@ -1112,14 +1150,14 @@ async function upsertDoc(colName, doc, organizationId) {
     cleanDoc.organizationId = organizationId;
   }
   if (DATA_RETENTION_COLLECTIONS.includes(colName)) {
-    const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1e3;
+    const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1e3;
     const now = /* @__PURE__ */ new Date();
     if (!cleanDoc.createdAt || !(cleanDoc.createdAt instanceof Date)) {
       const parsed = cleanDoc.createdAt ? new Date(cleanDoc.createdAt) : now;
       cleanDoc.createdAt = isNaN(parsed.getTime()) ? now : parsed;
     }
     if (!cleanDoc.expireAt || !(cleanDoc.expireAt instanceof Date)) {
-      cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + TEN_DAYS_MS);
+      cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + SEVEN_DAYS_MS);
     }
   }
   if (mongoDb) {
@@ -1367,7 +1405,7 @@ async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol
     const readerId = raw.readerId || raw.ReaderID || "APERTURE-READER-01";
     const eventHash = raw.externalEventId || raw.eventId || generateEventHash(tagId, timestampMs, location, readerId, orgId);
     const docId = `evt_${tagId}_${eventHash}`;
-    const tenDaysLater = new Date(validDate.getTime() + 10 * 24 * 60 * 60 * 1e3);
+    const sevenDaysLater = new Date(validDate.getTime() + 7 * 24 * 60 * 60 * 1e3);
     return {
       id: docId,
       organizationId: orgId,
@@ -1382,7 +1420,7 @@ async function bulkWriteRfidRealtimeEvents(rawEvents, protocol = "Multi-Protocol
       antennaPort: raw.antennaPort || raw.antennaId || 1,
       receivedAt: nowIso,
       createdAt: validDate,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
   }).filter(Boolean);
   if (normalizedDocs.length === 0) {
@@ -1431,7 +1469,7 @@ async function bulkWriteRealtimeTags(tags, organizationId = "default") {
     const tagId = rawTag.TagID || rawTag.tagId || rawTag.epc || `TAG_${Date.now()}`;
     const orgId = rawTag.organizationId || organizationId;
     const now = /* @__PURE__ */ new Date();
-    const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
+    const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1e3);
     const fullName = rawTag.name || rawTag.workerName || rawTag.personName || `${rawTag.FirstName || ""} ${rawTag.LastName || ""}`.trim() || "";
     const parts = fullName ? fullName.split(" ") : [];
     const firstName = rawTag.FirstName || parts[0] || "";
@@ -1451,7 +1489,7 @@ async function bulkWriteRealtimeTags(tags, organizationId = "default") {
       lastSyncAt: (/* @__PURE__ */ new Date()).toISOString(),
       updatedAt: (/* @__PURE__ */ new Date()).toISOString(),
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
   });
   if (mongoDb) {
@@ -1474,6 +1512,42 @@ async function bulkWriteRealtimeTags(tags, organizationId = "default") {
         ).catch(() => {
         });
       }
+      const historyOperations = normalizedTags.map((t) => {
+        const enterTime = t.Timestamp || (/* @__PURE__ */ new Date()).toISOString();
+        const docId = `hist_${t.TagID}_${String(enterTime).replace(/[: ]/g, "_")}`;
+        return {
+          updateOne: {
+            filter: { id: docId, organizationId: t.organizationId },
+            update: {
+              $set: {
+                id: docId,
+                organizationId: t.organizationId,
+                TagID: t.TagID,
+                tagId: t.TagID,
+                FirstName: t.FirstName,
+                LastName: t.LastName,
+                name: t.name,
+                role: t.role,
+                status: t.status,
+                LocationName: t.Location,
+                Location: t.Location,
+                EnterTime: enterTime,
+                EnterTimeStr: enterTime,
+                LeaveTime: "ACTIVE",
+                LeaveTimeStr: "ACTIVE",
+                Duration: "Active",
+                rssi: t.rssi,
+                createdAt: t.createdAt,
+                expireAt: t.expireAt
+              }
+            },
+            upsert: true
+          }
+        };
+      });
+      await mongoDb.collection("tag_history").bulkWrite(historyOperations, { ordered: false }).catch(() => {
+      });
+      invalidateCollectionCache("tag_history");
       setImmediate(() => savePlaybackSnapshot(normalizedTags, organizationId).catch(() => {
       }));
       return { insertedCount, updatedCount, totalProcessed: tags.length };
@@ -1484,6 +1558,29 @@ async function bulkWriteRealtimeTags(tags, organizationId = "default") {
   for (const cleanDoc of normalizedTags) {
     await upsertDoc("real_time_tags", cleanDoc, cleanDoc.organizationId);
     await upsertDoc("live_tags", cleanDoc, cleanDoc.organizationId);
+    const enterTime = cleanDoc.Timestamp || (/* @__PURE__ */ new Date()).toISOString();
+    const docId = `hist_${cleanDoc.TagID}_${String(enterTime).replace(/[: ]/g, "_")}`;
+    await upsertDoc("tag_history", {
+      id: docId,
+      organizationId: cleanDoc.organizationId,
+      TagID: cleanDoc.TagID,
+      tagId: cleanDoc.TagID,
+      FirstName: cleanDoc.FirstName,
+      LastName: cleanDoc.LastName,
+      name: cleanDoc.name,
+      role: cleanDoc.role,
+      status: cleanDoc.status,
+      LocationName: cleanDoc.Location,
+      Location: cleanDoc.Location,
+      EnterTime: enterTime,
+      EnterTimeStr: enterTime,
+      LeaveTime: "ACTIVE",
+      LeaveTimeStr: "ACTIVE",
+      Duration: "Active",
+      rssi: cleanDoc.rssi,
+      createdAt: cleanDoc.createdAt,
+      expireAt: cleanDoc.expireAt
+    }, cleanDoc.organizationId);
     updatedCount++;
   }
   return { insertedCount: tags.length, updatedCount, totalProcessed: tags.length };
@@ -1493,7 +1590,7 @@ async function bulkUpsertDocs(colName, docs, organizationId = "default") {
     return { count: 0, success: true };
   }
   invalidateCollectionCache(colName);
-  const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1e3;
+  const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1e3;
   const now = /* @__PURE__ */ new Date();
   const preparedDocs = docs.map((doc, idx) => {
     const docId = String(doc.id || doc._id || `${colName}_${now.getTime()}_${idx}`);
@@ -1505,7 +1602,7 @@ async function bulkUpsertDocs(colName, docs, organizationId = "default") {
         cleanDoc.createdAt = isNaN(parsed.getTime()) ? now : parsed;
       }
       if (!cleanDoc.expireAt || !(cleanDoc.expireAt instanceof Date)) {
-        cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + TEN_DAYS_MS);
+        cleanDoc.expireAt = new Date(cleanDoc.createdAt.getTime() + SEVEN_DAYS_MS);
       }
     }
     return cleanDoc;
@@ -1533,7 +1630,7 @@ async function bulkUpsertDocs(colName, docs, organizationId = "default") {
 async function savePlaybackSnapshot(tags, organizationId = "default") {
   if (!tags || tags.length === 0) return;
   const now = /* @__PURE__ */ new Date();
-  const expireAt = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
+  const expireAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1e3);
   const dateStr = now.toISOString().split("T")[0];
   const snapId = `snap_${organizationId}_${now.getTime()}`;
   const snapshot = {
@@ -1756,7 +1853,7 @@ function startRealTimeTagsCleanupJob(intervalMinutes = 15, maxAgeMinutes = 60) {
     cleanupStaleRealTimeTags(maxAgeMinutes).catch((err) => console.error("[DB Service] Cleanup job periodic run error:", err));
   }, intervalMinutes * 60 * 1e3);
 }
-async function cleanupExpiredRetentionData(retentionDays = 10) {
+async function cleanupExpiredRetentionData(retentionDays = 7) {
   const thresholdDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1e3);
   const now = /* @__PURE__ */ new Date();
   let totalDeleted = 0;
@@ -1794,7 +1891,7 @@ async function cleanupExpiredRetentionData(retentionDays = 10) {
       totalDeleted += removed;
     }
   }
-  console.log(`[DB Service] 10-day retention cleanup finished: purged ${totalDeleted} documents across ${DATA_RETENTION_COLLECTIONS.length} collections.`);
+  console.log(`[DB Service] 7-day retention cleanup finished: purged ${totalDeleted} documents across ${DATA_RETENTION_COLLECTIONS.length} collections.`);
   return {
     deletedCount: totalDeleted,
     collectionsScanned: DATA_RETENTION_COLLECTIONS.length,
@@ -1802,7 +1899,7 @@ async function cleanupExpiredRetentionData(retentionDays = 10) {
   };
 }
 var retentionCleanupTimer = null;
-function startDataRetentionCleanupJob(retentionDays = 10, intervalMinutes = 60) {
+function startDataRetentionCleanupJob(retentionDays = 7, intervalMinutes = 60) {
   if (retentionCleanupTimer) clearInterval(retentionCleanupTimer);
   setTimeout(() => {
     cleanupExpiredRetentionData(retentionDays).catch(() => {
@@ -1812,9 +1909,9 @@ function startDataRetentionCleanupJob(retentionDays = 10, intervalMinutes = 60) 
     cleanupExpiredRetentionData(retentionDays).catch(() => {
     });
   }, intervalMinutes * 60 * 1e3);
-  console.log(`[DB Service] Automated 10-day MongoDB data retention cleanup job started (interval: ${intervalMinutes}m).`);
+  console.log(`[DB Service] Automated 7-day MongoDB data retention cleanup job started (interval: ${intervalMinutes}m).`);
 }
-async function getDataRetentionStatus(retentionDays = 10) {
+async function getDataRetentionStatus(retentionDays = 7) {
   const collectionsStatus = {};
   if (mongoDb) {
     for (const col of DATA_RETENTION_COLLECTIONS) {
@@ -3197,7 +3294,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
   );
   const now = /* @__PURE__ */ new Date();
   const nowIso = now.toISOString();
-  const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
+  const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1e3);
   const analyzedResults = [];
   for (let i = 0; i < contextItems.length; i++) {
     const item = contextItems[i];
@@ -3235,7 +3332,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       aiEngine: analysisResult.aiEngine,
       lastSyncAt: nowIso,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc("real_time_tags", tagDocument, orgId);
     await upsertDoc("live_tags", tagDocument, orgId);
@@ -3250,7 +3347,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
         ...tagDocument,
         receivedAt: nowIso,
         createdAt: now,
-        expireAt: tenDaysLater
+        expireAt: sevenDaysLater
       }, orgId);
       await upsertDoc("tag_history", {
         id: `hist_${tagId}_${eventHash}`,
@@ -3259,12 +3356,19 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
         TagID: tagId,
         FirstName: item.firstName,
         LastName: item.lastName,
+        name: `${item.firstName || ""} ${item.lastName || ""}`.trim() || item.fullName || `Tag ${tagId}`,
         LocationName: item.location,
+        Location: item.location,
         EnterTime: item.timestamp,
-        LeaveTime: item.timestamp,
+        EnterTimeStr: item.timestamp,
+        LeaveTime: "ACTIVE",
+        LeaveTimeStr: "ACTIVE",
+        Duration: "Active",
+        role: item.role || "Field Personnel",
+        category: item.role && String(item.role).toLowerCase().includes("visitor") ? "visitors" : "workers",
         ...tagDocument,
         createdAt: now,
-        expireAt: tenDaysLater
+        expireAt: sevenDaysLater
       }, orgId);
     }
     const existingPerson = await getDocById("registered_people", tagId, orgId) || await getDocById("people", tagId, orgId);
@@ -3296,7 +3400,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
         lastSeen: item.timestamp || nowIso,
         updatedAt: nowIso,
         createdAt: existingPerson?.createdAt || nowIso,
-        expireAt: tenDaysLater
+        expireAt: sevenDaysLater
       };
       await upsertDoc("registered_people", personDoc, orgId);
       await upsertDoc("people", personDoc, orgId);
@@ -3335,7 +3439,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       updatedAt: nowIso,
       organizationId: orgId,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc("attendance_logs", attendanceDoc, orgId);
     broadcastWebSocketEvent("tag_update", tagDocument, orgId);
@@ -3351,7 +3455,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       organizationId,
       updatedAt: nowIso,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     if (nowMs - lastAlertTime < 18e4) {
       await upsertDoc("alerts", alertDoc, organizationId);
@@ -3369,7 +3473,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       ...incident,
       organizationId,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc("incidents", incDoc, organizationId);
     const enterpriseIncDoc = {
@@ -3406,7 +3510,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       },
       organizationId,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc("incidents_enterprise", enterpriseIncDoc, organizationId);
     broadcastWebSocketEvent("incident_created", incDoc, organizationId);
@@ -3418,7 +3522,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       organizationId,
       aiEngine: analysisResult.aiEngine,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc("ai_insights", insightDoc, organizationId);
     broadcastWebSocketEvent("ai_insight_created", insightDoc, organizationId);
@@ -3428,7 +3532,7 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
     ...analysisResult.analytics,
     organizationId,
     createdAt: now,
-    expireAt: tenDaysLater
+    expireAt: sevenDaysLater
   };
   await upsertDoc("analytics_metrics", analyticsDoc, organizationId);
   await upsertDoc("analytics_reports", analyticsDoc, organizationId);
@@ -3662,7 +3766,7 @@ async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
   if (validItems.length === 0) return;
   const now = /* @__PURE__ */ new Date();
   const nowIso = now.toISOString();
-  const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1e3);
+  const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1e3);
   const historyDocs = [];
   const tagMap = /* @__PURE__ */ new Map();
   const locationSet = /* @__PURE__ */ new Set();
@@ -3695,7 +3799,7 @@ async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
       durationMins: typeof rec.durationMins === "number" ? rec.durationMins : typeof rec.Duration === "number" ? Math.round(rec.Duration * 60 * 10) / 10 : 10,
       timestamp: enter,
       createdAt: nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     });
     if (!tagMap.has(tid) || new Date(enter).getTime() >= new Date(tagMap.get(tid).enter).getTime()) {
       tagMap.set(tid, {
@@ -3756,7 +3860,7 @@ async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
       lastSeen: item.enter,
       updatedAt: nowIso,
       createdAt: existing?.createdAt || nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc("registered_people", personDoc, orgId).catch(() => {
     });
@@ -3781,7 +3885,7 @@ async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
       organizationId: orgId,
       updatedAt: nowIso,
       createdAt: nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc("devices", deviceDoc, orgId).catch(() => {
     });
@@ -3820,7 +3924,7 @@ async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
       updatedAt: nowIso,
       organizationId: orgId,
       createdAt: nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc("attendance_logs", attDoc, orgId).catch(() => {
     });
@@ -3841,7 +3945,7 @@ async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
       status: "Active",
       updatedAt: nowIso,
       createdAt: nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc("live_tags", liveTagDoc, orgId).catch(() => {
     });
@@ -3934,7 +4038,7 @@ async function syncPeopleTrackingData(options) {
           await bulkWriteRealtimeTags(realtimeTags, orgId).catch(() => {
           });
           const nowIso = (/* @__PURE__ */ new Date()).toISOString();
-          const tenDaysLater = new Date(Date.now() + 10 * 24 * 60 * 60 * 1e3);
+          const sevenDaysLater = new Date(Date.now() + 7 * 24 * 60 * 60 * 1e3);
           for (const tag of realtimeTags) {
             const tid = tag.TagID || tag.tagId || tag.id;
             await upsertDoc("live_tags", {
@@ -3946,7 +4050,7 @@ async function syncPeopleTrackingData(options) {
               organizationId: orgId,
               createdAt: nowIso,
               updatedAt: nowIso,
-              expireAt: tenDaysLater
+              expireAt: sevenDaysLater
             }, orgId).catch(() => {
             });
           }
@@ -3988,7 +4092,7 @@ async function syncPeopleTrackingData(options) {
             FirstName: r.FirstName || "",
             LastName: r.LastName || "",
             createdAt: /* @__PURE__ */ new Date(),
-            expireAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1e3)
+            expireAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1e3)
           });
         }
       }
@@ -4815,7 +4919,7 @@ async function bootstrapAdminUser() {
   const existing = users.find((u) => u.email?.toLowerCase() === adminEmail);
   if (!existing) {
     const orgId = process.env.ADMIN_INITIAL_ORG_ID || "org_main";
-    const orgName = process.env.ADMIN_INITIAL_ORG_NAME || "Primary Organization";
+    const orgName = process.env.ADMIN_INITIAL_ORG_NAME || "People Tracking in Construction";
     const existingOrg = await getDocById("organizations", orgId);
     if (!existingOrg) {
       await upsertDoc("organizations", {
@@ -4860,7 +4964,7 @@ authRouter.post("/register", authRateLimiter, async (req, res) => {
       return res.status(400).json({ error: "User with this email already exists" });
     }
     let resolvedOrgId = organizationId;
-    let resolvedOrgName = organizationName || "My Organization";
+    let resolvedOrgName = organizationName || "People Tracking in Construction";
     if (organizationName && organizationName.trim()) {
       resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       resolvedOrgName = organizationName.trim();
@@ -5089,13 +5193,13 @@ authRouter.get("/me", requireAuth, async (req, res) => {
   const orgDoc = await getDocById("organizations", orgId);
   return res.json({
     user: req.user,
-    organization: orgDoc || { id: orgId, name: orgDoc?.name || orgId, status: "active", plan: "standard" }
+    organization: orgDoc || { id: orgId, name: orgDoc?.name || (orgId === "default" || orgId === "org_main" ? "People Tracking in Construction" : orgId), status: "active", plan: "standard" }
   });
 });
 authRouter.get("/organization", requireAuth, async (req, res) => {
   const orgId = req.user?.organizationId || "default";
   const orgDoc = await getDocById("organizations", orgId, "ALL");
-  const org = orgDoc || { id: orgId, name: orgId === "demo" ? "Metro Commercial Tower (Demo)" : orgId, status: "active", plan: "standard" };
+  const org = orgDoc || { id: orgId, name: orgId === "demo" || orgId === "default" || orgId === "org_main" ? "People Tracking in Construction" : orgId, status: "active", plan: "standard" };
   return res.json({ success: true, organization: org, ...org });
 });
 authRouter.post("/logout", async (req, res) => {
@@ -5649,7 +5753,7 @@ adminRouter.post("/purge-demo", requirePermission("settings"), async (req, res) 
 });
 adminRouter.get(["/retention-policy", "/data-retention/status"], async (req, res) => {
   try {
-    const status = await getDataRetentionStatus(10);
+    const status = await getDataRetentionStatus(7);
     return res.json({
       success: true,
       ...status
@@ -5660,19 +5764,19 @@ adminRouter.get(["/retention-policy", "/data-retention/status"], async (req, res
 });
 adminRouter.post(["/retention-policy/cleanup", "/retention-policy/execute"], requirePermission("settings"), async (req, res) => {
   try {
-    const result = await cleanupExpiredRetentionData(10);
+    const result = await cleanupExpiredRetentionData(7);
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
       organizationId: req.user?.organizationId || "default",
-      action: "ADMIN_MANUAL_10_DAY_RETENTION_CLEANUP",
+      action: "ADMIN_MANUAL_7_DAY_RETENTION_CLEANUP",
       resource: "data_retention",
       details: { ...result },
       ip: req.ip
     });
     return res.json({
       success: true,
-      message: `10-day retention cleanup completed: purged ${result.deletedCount} expired documents.`,
+      message: `7-day retention cleanup completed: purged ${result.deletedCount} expired documents.`,
       result
     });
   } catch (err) {
@@ -5686,17 +5790,13 @@ var import_zod5 = require("zod");
 var rfidRouter = (0, import_express4.Router)();
 function formatUtcDateTime(dateInput) {
   const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
-  if (isNaN(d.getTime())) {
-    const now = /* @__PURE__ */ new Date();
-    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}-${String(now.getUTCDate()).padStart(2, "0")} ${String(now.getUTCHours()).padStart(2, "0")}:${String(now.getUTCMinutes()).padStart(2, "0")}:${String(now.getUTCSeconds()).padStart(2, "0")}`;
-  }
-  const YYYY = d.getUTCFullYear();
-  const MM = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const DD = String(d.getUTCDate()).padStart(2, "0");
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const mm = String(d.getUTCMinutes()).padStart(2, "0");
-  const ss = String(d.getUTCSeconds()).padStart(2, "0");
-  return `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}`;
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  const hours = String(d.getUTCHours()).padStart(2, "0");
+  const minutes = String(d.getUTCMinutes()).padStart(2, "0");
+  const seconds = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 function formatUtcTimestampMs(dateInput) {
   const d = dateInput ? new Date(dateInput) : /* @__PURE__ */ new Date();
@@ -5704,31 +5804,47 @@ function formatUtcTimestampMs(dateInput) {
   const fff = String(isNaN(d.getTime()) ? 0 : d.getUTCMilliseconds()).padStart(3, "0");
   return `${base}.${fff}`;
 }
-var scanSchema = import_zod5.z.object({
-  tagId: import_zod5.z.string().optional(),
-  TagID: import_zod5.z.string().optional(),
+var realtimeTagSchema = import_zod5.z.object({
+  TagID: import_zod5.z.string().min(1, "TagID is required"),
+  Location: import_zod5.z.string().optional(),
+  LocationName: import_zod5.z.string().optional(),
+  Timestamp: import_zod5.z.string().optional(),
   name: import_zod5.z.string().optional(),
   FirstName: import_zod5.z.string().optional(),
   LastName: import_zod5.z.string().optional(),
   role: import_zod5.z.string().optional().default("General Staff"),
   zone: import_zod5.z.string().optional(),
-  LocationName: import_zod5.z.string().optional(),
-  Location: import_zod5.z.string().optional(),
   status: import_zod5.z.string().optional().default("Active"),
   epc: import_zod5.z.string().optional(),
   rssi: import_zod5.z.number().optional().default(-62),
   antennaId: import_zod5.z.number().optional().default(1),
   readerId: import_zod5.z.string().optional().default("GAO-UHF-READER-01")
 });
+var scanSchema = realtimeTagSchema.extend({
+  tagId: import_zod5.z.string().optional()
+});
+var HISTORY_CACHE_TTL_MS = 15e3;
+var FAST_UPSTREAM_TIMEOUT_MS = 2e3;
+var historyRecordsCache = /* @__PURE__ */ new Map();
+var historyCountCache = null;
+var cachedGlobalTz = null;
 var handleGetTotalCount = async (req, res) => {
   const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
+  if (historyCountCache && Date.now() - historyCountCache.timestamp < HISTORY_CACHE_TTL_MS) {
+    if (req.query.format === "object") {
+      return res.json({ totalCount: historyCountCache.count, count: historyCountCache.count, organizationId: orgId, cached: true });
+    }
+    res.setHeader("Content-Type", "application/json");
+    return res.status(200).send(String(historyCountCache.count));
+  }
   try {
     try {
       const upstream = await Promise.race([
         fetchHistoryTotalCount(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream total count timeout after 4000ms")), 4e3))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream total count timeout after 2000ms")), FAST_UPSTREAM_TIMEOUT_MS))
       ]);
       if (upstream && typeof upstream.totalCount === "number" && upstream.totalCount > 0) {
+        historyCountCache = { timestamp: Date.now(), count: upstream.totalCount };
         if (req.query.format === "object") {
           return res.json({ totalCount: upstream.totalCount, count: upstream.totalCount, organizationId: orgId });
         }
@@ -5737,8 +5853,8 @@ var handleGetTotalCount = async (req, res) => {
       }
     } catch (upstreamErr) {
     }
-    const history = await getCollectionDocs("tag_history", void 0, orgId);
-    const total = history.length;
+    const total = await countCollectionDocs("tag_history", orgId);
+    historyCountCache = { timestamp: Date.now(), count: total };
     if (req.query.format === "object") {
       return res.json({ totalCount: total, count: total, organizationId: orgId });
     }
@@ -5751,12 +5867,91 @@ var handleGetTotalCount = async (req, res) => {
 };
 rfidRouter.get("/GetHistoryTotalCount", handleGetTotalCount);
 rfidRouter.get("/history/count", handleGetTotalCount);
+function resolveServerTimezone(tz) {
+  const str = String(tz || "").trim().toLowerCase();
+  if (!str || str.includes("system") || str.includes("local") || str.includes("browser") || str === "auto") {
+    try {
+      const local = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+      const parts = new Intl.DateTimeFormat("en-US", { timeZone: local, timeZoneName: "short" }).formatToParts(/* @__PURE__ */ new Date());
+      const tzPart = parts.find((p) => p.type === "timeZoneName");
+      return { iana: local, label: tzPart?.value || "LOCAL" };
+    } catch {
+      return { iana: "UTC", label: "UTC" };
+    }
+  }
+  if (str.includes("eastern") || str.includes("edt") || str.includes("est") || str === "america/new_york") return { iana: "America/New_York", label: "EDT" };
+  if (str.includes("central") || str.includes("cst") || str.includes("cdt") || str === "america/chicago") return { iana: "America/Chicago", label: "CST" };
+  if (str.includes("mountain") || str.includes("mst") || str.includes("mdt") || str === "america/denver") return { iana: "America/Denver", label: "MST" };
+  if (str.includes("pacific") || str.includes("pst") || str.includes("pdt") || str === "america/los_angeles") return { iana: "America/Los_Angeles", label: "PST" };
+  if (str.includes("ist") || str.includes("india") || str.includes("kolkata") || str === "asia/kolkata") return { iana: "Asia/Kolkata", label: "IST" };
+  if (str.includes("cet") || str.includes("cest") || str === "europe/paris") return { iana: "Europe/Paris", label: "CET" };
+  if (str.includes("jst") || str.includes("tokyo") || str === "asia/tokyo") return { iana: "Asia/Tokyo", label: "JST" };
+  if (str.includes("aest") || str.includes("sydney") || str === "australia/sydney") return { iana: "Australia/Sydney", label: "AEST" };
+  if (str.includes("gmt") || str.includes("london") || str.includes("bst")) return { iana: "Europe/London", label: "GMT" };
+  if (str.includes("utc") || str === "etc/utc") return { iana: "UTC", label: "UTC" };
+  try {
+    new Intl.DateTimeFormat(void 0, { timeZone: tz });
+    const parts = new Intl.DateTimeFormat("en-US", { timeZone: tz, timeZoneName: "short" }).formatToParts(/* @__PURE__ */ new Date());
+    const tzPart = parts.find((p) => p.type === "timeZoneName");
+    return { iana: tz, label: tzPart?.value || tz };
+  } catch {
+    return { iana: "UTC", label: "UTC" };
+  }
+}
+function formatHistoryInTz(isoDate, iana, label) {
+  if (!isoDate || isoDate === "ACTIVE" || isoDate === "Recent" || isoDate === "\u2014") return isoDate;
+  try {
+    const raw = String(isoDate).trim();
+    let d = new Date(raw);
+    if (isNaN(d.getTime())) {
+      const fixed = raw.replace(" ", "T") + (raw.endsWith("Z") ? "" : "Z");
+      d = new Date(fixed);
+    }
+    if (isNaN(d.getTime())) return isoDate;
+    const dateStr = d.toLocaleDateString("en-CA", { timeZone: iana });
+    const timeStr = d.toLocaleTimeString("en-US", {
+      timeZone: iana,
+      hour12: true,
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit"
+    });
+    return `${dateStr} ${timeStr} ${label}`;
+  } catch {
+    return isoDate;
+  }
+}
 var handleGetHistory = async (req, res) => {
   const skipCount = parseInt(req.params.SkipCount || req.params.skip || req.query.skip || "0", 10);
   const rawTake = parseInt(req.params.TakeCount || req.params.take || req.query.take || "50", 10);
   const takeCount = Math.min(Math.max(1, rawTake), 200);
   const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   const filterDate = req.query.date || "";
+  const reqTz = req.query.timezone || req.headers["x-timezone"] || "";
+  let effectiveTz = reqTz;
+  if (!effectiveTz) {
+    if (cachedGlobalTz && Date.now() - cachedGlobalTz.timestamp < 6e4) {
+      effectiveTz = cachedGlobalTz.tz;
+    } else {
+      try {
+        const globalSettings = await getDocById("settings", "global", orgId);
+        effectiveTz = globalSettings?.systemTimezone || "";
+      } catch {
+      }
+      cachedGlobalTz = { tz: effectiveTz || "UTC", timestamp: Date.now() };
+    }
+  }
+  const { iana, label } = resolveServerTimezone(effectiveTz);
+  res.setHeader("X-Timezone", iana);
+  res.setHeader("X-Timezone-Label", label);
+  const cacheKey = `${orgId}_${skipCount}_${takeCount}_${iana}_${filterDate}`;
+  const cached = historyRecordsCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && now - cached.timestamp < HISTORY_CACHE_TTL_MS) {
+    res.setHeader("X-Cache", "HIT");
+    return res.json(cached.data);
+  }
+  res.setHeader("X-Cache", "MISS");
   try {
     const [peopleList, visitorsList] = await Promise.all([
       getCollectionDocs("registered_people", void 0, orgId).catch(() => []),
@@ -5794,7 +5989,7 @@ var handleGetHistory = async (req, res) => {
     try {
       const liveRecords = await Promise.race([
         fetchHistoryRecords(skipCount, takeCount),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream API timeout after 6000ms")), 6e3))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream API timeout after 2500ms")), 2500))
       ]);
       if (Array.isArray(liveRecords) && liveRecords.length > 0) {
         const enrichedLive = [];
@@ -5826,6 +6021,8 @@ var handleGetHistory = async (req, res) => {
           const enter = rec.EnterTime || rec.enterTime || (/* @__PURE__ */ new Date()).toISOString();
           const leave = rec.LeaveTime || rec.leaveTime || "ACTIVE";
           const durationMins = calcDurationMins(enter, leave, rec.Duration);
+          const enterStr = formatHistoryInTz(enter, iana, label);
+          const leaveStr = leave && leave !== "ACTIVE" ? formatHistoryInTz(leave, iana, label) : leave;
           const formattedRec = {
             TagID: rec.TagID || rec.tagId || "",
             FirstName: fName,
@@ -5837,8 +6034,12 @@ var handleGetHistory = async (req, res) => {
             LocationName: rec.LocationName || rec.Location || rec.location || "Site Area",
             EnterTime: enter,
             LeaveTime: leave,
-            EnterTimeStr: enter,
-            LeaveTimeStr: leave,
+            EnterTimeStr: enterStr,
+            LeaveTimeStr: leaveStr,
+            EnterTimeIso: enter,
+            LeaveTimeIso: leave,
+            timezone: iana,
+            timezoneLabel: label,
             Duration: durationMins,
             durationMins
           };
@@ -5856,18 +6057,26 @@ var handleGetHistory = async (req, res) => {
         });
         let filtered = enrichedLive;
         if (filterDate) {
-          filtered = enrichedLive.filter((r) => r.EnterTime && r.EnterTime.includes(filterDate) || r.LeaveTime && r.LeaveTime.includes(filterDate));
+          filtered = enrichedLive.filter(
+            (r) => r.EnterTime && r.EnterTime.includes(filterDate) || r.EnterTimeStr && r.EnterTimeStr.includes(filterDate) || r.LeaveTime && r.LeaveTime.includes(filterDate) || r.LeaveTimeStr && r.LeaveTimeStr.includes(filterDate)
+          );
         }
+        historyRecordsCache.set(cacheKey, { timestamp: Date.now(), data: filtered });
         return res.json(filtered);
       }
     } catch (upstreamErr) {
+      if (cached && Array.isArray(cached.data) && cached.data.length > 0) {
+        return res.json(cached.data);
+      }
     }
-    const dbHistory = await getCollectionDocs("tag_history", void 0, orgId);
+    const dbHistory = await getCollectionDocs("tag_history", { limit: Math.max(takeCount + skipCount, 200), sort: { createdAt: -1 } }, orgId);
     const records = dbHistory;
     const formattedRecords = records.map((item) => {
       const enter = item.EnterTime || item.EnterTimeStr || item.enterTime || item.timestamp || item.createdTime || (/* @__PURE__ */ new Date()).toISOString();
       const leave = item.LeaveTime || item.LeaveTimeStr || item.leaveTime || "ACTIVE";
       const durationMins = calcDurationMins(enter, leave, item.Duration);
+      const enterStr = formatHistoryInTz(enter, iana, label);
+      const leaveStr = leave && leave !== "ACTIVE" ? formatHistoryInTz(leave, iana, label) : leave;
       const tagKey = String(item.TagID || item.tagId || item.epc || "").toLowerCase();
       const matched = personMap.get(tagKey);
       const matchedFirst = String(matched?.firstName || matched?.FirstName || item.FirstName || item.firstName || "").trim();
@@ -5903,8 +6112,12 @@ var handleGetHistory = async (req, res) => {
         LocationName: item.LocationName || item.locationName || item.zone || item.Location || "Site Area",
         EnterTime: enter,
         LeaveTime: leave,
-        EnterTimeStr: enter,
-        LeaveTimeStr: leave,
+        EnterTimeStr: enterStr,
+        LeaveTimeStr: leaveStr,
+        EnterTimeIso: enter,
+        LeaveTimeIso: leave,
+        timezone: iana,
+        timezoneLabel: label,
         Duration: durationMins,
         durationMins
       };
@@ -5912,9 +6125,12 @@ var handleGetHistory = async (req, res) => {
     formattedRecords.sort((a, b) => new Date(b.EnterTime).getTime() - new Date(a.EnterTime).getTime());
     let result = formattedRecords;
     if (filterDate) {
-      result = formattedRecords.filter((r) => r.EnterTime && r.EnterTime.includes(filterDate) || r.LeaveTime && r.LeaveTime.includes(filterDate));
+      result = formattedRecords.filter(
+        (r) => r.EnterTime && r.EnterTime.includes(filterDate) || r.EnterTimeStr && r.EnterTimeStr.includes(filterDate) || r.LeaveTime && r.LeaveTime.includes(filterDate) || r.LeaveTimeStr && r.LeaveTimeStr.includes(filterDate)
+      );
     }
     const paginated = result.slice(skipCount, skipCount + takeCount);
+    historyRecordsCache.set(cacheKey, { timestamp: Date.now(), data: paginated });
     return res.json(paginated);
   } catch (err) {
     console.error("[RFID Route] GetHistoryRecords error:", err);
@@ -5953,8 +6169,10 @@ var handleGetRealtime = async (req, res) => {
       ]);
       if (Array.isArray(upstreamTags) && upstreamTags.length > 0) {
         rawTags = upstreamTags;
+        bulkWriteRealtimeTags(upstreamTags, orgId).catch(() => {
+        });
       }
-    } catch (upstreamErr) {
+    } catch {
     }
     if (rawTags.length === 0) {
       rawTags = await getCollectionDocs("live_tags", void 0, orgId);
@@ -7324,7 +7542,9 @@ dataRouter.get("/:collection", async (req, res) => {
     return res.status(400).json({ error: `Invalid or restricted collection: ${collection}` });
   }
   try {
-    const docs = await getCollectionDocs(collection, void 0, orgId);
+    const rawLimit = req.query.limit ? parseInt(req.query.limit, 10) : void 0;
+    const limit = rawLimit && !isNaN(rawLimit) && rawLimit > 0 ? rawLimit : void 0;
+    const docs = await getCollectionDocs(collection, limit ? { limit } : void 0, orgId);
     return res.json(docs);
   } catch (err) {
     console.error(`[Data Route] Error fetching collection ${collection}:`, err);
@@ -8946,7 +9166,7 @@ async function startServer() {
   initWebSocketServer(httpServer);
   initDatabase().then(async () => {
     startRealTimeTagsCleanupJob(15, 60);
-    startDataRetentionCleanupJob(10, 60);
+    startDataRetentionCleanupJob(7, 60);
     startPeopleTrackingPolling(Number(process.env.PEOPLE_TRACKING_POLL_INTERVAL_SECONDS) || 20);
     await bootstrapAdminUser();
   }).catch((e) => {

@@ -72,7 +72,7 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
     const unsub = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
       if (snap.exists()) {
         const data = snap.data();
-        if (data.companyName) {
+        if (data.companyName && data.companyName !== 'Aperture Global Systems UTC') {
           setOrgInfo(prev => ({ id: prev?.id || 'default', name: data.companyName }));
         }
         if (data.systemTimezone) {
@@ -82,7 +82,7 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
     });
 
     const handleSettingsUpdate = (e: any) => {
-      if (e?.detail?.companyName) {
+      if (e?.detail?.companyName && e.detail.companyName !== 'Aperture Global Systems UTC') {
         setOrgInfo(prev => ({ id: prev?.id || 'default', name: e.detail.companyName }));
       }
       if (e?.detail?.systemTimezone) {
@@ -155,8 +155,8 @@ export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
 
         <div className="flex flex-col justify-center min-w-0">
           <div className="flex items-center gap-2 min-w-0">
-            <h1 className="text-sm sm:text-base lg:text-lg font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight truncate" title={orgInfo?.name || config?.appTitle || 'Aperture People Tracking'}>
-              {orgInfo?.name || config?.appTitle || 'Aperture People Tracking'}
+            <h1 className="text-sm sm:text-base lg:text-lg font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight truncate" title="People Tracking in Construction">
+              People Tracking in Construction
             </h1>
             <span className="hidden md:inline-flex text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#007BC4]/10 text-[#007BC4] border border-[#007BC4]/20 max-w-[220px] truncate" title={config?.industryName || 'Multi-Industry'}>
               {config?.industryName || 'Multi-Industry'}

@@ -117,7 +117,7 @@ describe('External People Tracking UHF API Integration & Multi-AI Workflow', () 
     expect(syncRes.aiProcessedCount).toBeGreaterThan(0);
     console.log(`[Test] Sync completed: ${syncRes.aiProcessedCount} telemetry items analyzed with AI (${syncRes.generatedAlerts} alerts, ${syncRes.generatedIncidents} incidents)`);
 
-    // Verify 10-day retention timestamps in MongoDB
+    // Verify 7-day retention timestamps in MongoDB
     const liveTags = await getCollectionDocs('live_tags', undefined, 'test_org_i360_sync');
     expect(liveTags.length).toBeGreaterThan(0);
 
@@ -129,7 +129,7 @@ describe('External People Tracking UHF API Integration & Multi-AI Workflow', () 
     const expireAtMs = new Date(sampleDoc.expireAt).getTime();
     const retentionDays = (expireAtMs - createdAtMs) / (1000 * 60 * 60 * 24);
 
-    expect(retentionDays).toBeCloseTo(10, 0); // 10 days retention
+    expect(retentionDays).toBeCloseTo(7, 0); // 7 days retention
   }, 90000);
 
   it('TEST 6: Exposes full suite of REST API endpoints for frontend and external clients', async () => {

@@ -43,7 +43,8 @@ import {
   Square,
   Pencil,
   Zap,
-  Code2
+  Code2,
+  Clock
 } from "lucide-react";
 import DeveloperApiTab from "./DeveloperApiTab";
 import ThirdPartyApiIntegrationSection from "./ThirdPartyApiIntegrationSection";
@@ -54,7 +55,12 @@ import { gaoApi, DEFAULT_HOST, getAuthHeaders } from "../lib/gaoApi";
 import { doc, getDoc, setDoc, onSnapshot, isMongoActive, db } from "../lib/db";
 import { AppModeContext } from "../App";
 import { useTracking } from "../context/TrackingContext";
-import { formatEdtTime } from "../lib/dateTimeUtils";
+import { 
+  formatEdtTime, 
+  formatUtcTime, 
+  getLocalSystemIanaTimezone, 
+  resolveIanaTimezone 
+} from "../lib/dateTimeUtils";
 
 export default function SettingsTab() {
   const { mode } = React.useContext(AppModeContext);
@@ -75,8 +81,26 @@ export default function SettingsTab() {
   const [saveSuccessNotice, setSaveSuccessNotice] = useState<string | null>(null);
 
   // 1. General Settings States
-  const [companyName, setCompanyName] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("gao_company_name") : null) || "Aperture Construction Systems");
-  const [systemTimezone, setSystemTimezone] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("gao_system_timezone") : null) || "UTC (Coordinated Universal Time)");
+  const [companyName, setCompanyName] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("gao_company_name");
+      if (saved && saved !== "Aperture Global Systems UTC" && saved !== "Aperture Construction Systems") return saved;
+    }
+    return "People Tracking in Construction";
+  });
+  const [systemTimezone, setSystemTimezone] = useState(() => (typeof window !== "undefined" ? localStorage.getItem("gao_system_timezone") : null) || "System (Local Browser Time)");
+  const localIanaTz = getLocalSystemIanaTimezone();
+  const currentResolvedTz = resolveIanaTimezone(systemTimezone);
+
+  const handleTimezoneChange = (newTz: string) => {
+    setSystemTimezone(newTz);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("gao_system_timezone", newTz);
+      window.dispatchEvent(new CustomEvent("gao_settings_updated", {
+        detail: { systemTimezone: newTz }
+      }));
+    }
+  };
   const [dataRetentionDays, setDataRetentionDays] = useState(() => {
     const val = typeof window !== "undefined" ? localStorage.getItem("gao_data_retention_days") : null;
     return val ? parseInt(val, 10) : 90;
@@ -97,7 +121,9 @@ export default function SettingsTab() {
           (document.activeElement?.tagName === "INPUT" || document.activeElement?.tagName === "SELECT");
         if (!isInitialLoadDoneRef.current || !isUserInteracting) {
           isInitialLoadDoneRef.current = true;
-          if (data.companyName) setCompanyName(data.companyName);
+          if (data.companyName && data.companyName !== 'Aperture Global Systems UTC' && data.companyName !== 'Aperture Construction Systems') {
+            setCompanyName(data.companyName);
+          }
           if (data.systemTimezone) setSystemTimezone(data.systemTimezone);
           if (data.dataRetentionDays !== undefined) setDataRetentionDays(data.dataRetentionDays);
           if (data.currencySymbol) setCurrencySymbol(data.currencySymbol);
@@ -1864,16 +1890,31 @@ export default function SettingsTab() {
                     <select
                       id="select_system_timezone"
                       value={systemTimezone}
-                      onChange={(e) => setSystemTimezone(e.target.value)}
+                      onChange={(e) => handleTimezoneChange(e.target.value)}
                       className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-slate-900 font-semibold text-xs focus:border-[#007BC4] outline-none transition cursor-pointer"
                     >
+                      <option value="System (Local Browser Time)">System / Local Device Time ({localIanaTz})</option>
+                      <option value="UTC (Coordinated Universal Time)">UTC (Coordinated Universal Time)</option>
                       <option value="EDT (Eastern Daylight Time / UTC-4)">EDT (Eastern Daylight Time / UTC-4)</option>
                       <option value="EST (Eastern Standard Time / UTC-5)">EST (Eastern Standard Time / UTC-5)</option>
-                      <option value="UTC (Coordinated Universal Time)">UTC (Coordinated Universal Time)</option>
-                      <option value="CST (Central Standard Time)">CST (Central Standard Time)</option>
-                      <option value="PST (Pacific Standard Time)">PST (Pacific Standard Time)</option>
-                      <option value="GMT (Greenwich Mean Time)">GMT (Greenwich Mean Time)</option>
+                      <option value="CST (Central Standard Time / UTC-6)">CST (Central Standard Time / UTC-6)</option>
+                      <option value="MST (Mountain Standard Time / UTC-7)">MST (Mountain Standard Time / UTC-7)</option>
+                      <option value="PST (Pacific Standard Time / UTC-8)">PST (Pacific Standard Time / UTC-8)</option>
+                      <option value="GMT / BST (Greenwich Mean Time / UK)">GMT / BST (Greenwich Mean Time / UK)</option>
+                      <option value="IST (Indian Standard Time / UTC+5:30)">IST (Indian Standard Time / UTC+5:30)</option>
+                      <option value="CET / CEST (Central European Time)">CET / CEST (Central European Time)</option>
+                      <option value="JST (Japan Standard Time / UTC+9)">JST (Japan Standard Time / UTC+9)</option>
+                      <option value="AEST / AEDT (Australian Eastern Time)">AEST / AEDT (Australian Eastern Time)</option>
+                      <option value="SGT (Singapore Time / UTC+8)">SGT (Singapore Time / UTC+8)</option>
+                      <option value="GST (Gulf Standard Time / Dubai / UTC+4)">GST (Gulf Standard Time / Dubai / UTC+4)</option>
                     </select>
+                    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-500">
+                      <Clock size={12} className="text-[#007BC4]" />
+                      <span>Live Clock: <strong className="text-slate-800 dark:text-white font-mono">{formatUtcTime(new Date(), { timeZone: currentResolvedTz.iana })}</strong></span>
+                      <span className="px-1.5 py-0.5 bg-blue-50 text-[#007BC4] font-bold text-[10px] rounded border border-blue-200">
+                        Zone: {currentResolvedTz.iana} ({currentResolvedTz.label})
+                      </span>
+                    </div>
                   </div>
 
                   <div>

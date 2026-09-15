@@ -50,7 +50,7 @@ export async function bootstrapAdminUser() {
   const existing = users.find((u: any) => u.email?.toLowerCase() === adminEmail);
   if (!existing) {
     const orgId = process.env.ADMIN_INITIAL_ORG_ID || 'org_main';
-    const orgName = process.env.ADMIN_INITIAL_ORG_NAME || 'Primary Organization';
+    const orgName = process.env.ADMIN_INITIAL_ORG_NAME || 'People Tracking in Construction';
 
     const existingOrg = await getDocById('organizations', orgId);
     if (!existingOrg) {
@@ -103,7 +103,7 @@ authRouter.post('/register', authRateLimiter, async (req: Request, res: Response
     }
 
     let resolvedOrgId = organizationId;
-    let resolvedOrgName = organizationName || 'My Organization';
+    let resolvedOrgName = organizationName || 'People Tracking in Construction';
 
     // If new customer provides company/organization name, create dedicated organization
     if (organizationName && organizationName.trim()) {
@@ -369,7 +369,7 @@ authRouter.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const orgDoc = await getDocById('organizations', orgId);
   return res.json({
     user: req.user,
-    organization: orgDoc || { id: orgId, name: orgDoc?.name || orgId, status: 'active', plan: 'standard' }
+    organization: orgDoc || { id: orgId, name: orgDoc?.name || (orgId === 'default' || orgId === 'org_main' ? 'People Tracking in Construction' : orgId), status: 'active', plan: 'standard' }
   });
 });
 
@@ -377,7 +377,7 @@ authRouter.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
 authRouter.get('/organization', requireAuth, async (req: AuthRequest, res: Response) => {
   const orgId = req.user?.organizationId || 'default';
   const orgDoc = await getDocById('organizations', orgId, 'ALL');
-  const org = orgDoc || { id: orgId, name: orgId === 'demo' ? 'Metro Commercial Tower (Demo)' : orgId, status: 'active', plan: 'standard' };
+  const org = orgDoc || { id: orgId, name: (orgId === 'demo' || orgId === 'default' || orgId === 'org_main') ? 'People Tracking in Construction' : orgId, status: 'active', plan: 'standard' };
   return res.json({ success: true, organization: org, ...org });
 });
 

@@ -136,10 +136,10 @@ export async function processTelemetryWithAI(
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000);
+  const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
   const analyzedResults: AIAnalysisResult[] = [];
 
-  // 3. Persist Tag Telemetry & AI Scores to MongoDB with 10-day retention
+  // 3. Persist Tag Telemetry & AI Scores to MongoDB with 7-day retention
   for (let i = 0; i < contextItems.length; i++) {
     const item = contextItems[i];
     const tagAnalysis = analysisResult.perTagAnalysis[i];
@@ -179,7 +179,7 @@ export async function processTelemetryWithAI(
       aiEngine: analysisResult.aiEngine,
       lastSyncAt: nowIso,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
 
     await upsertDoc('real_time_tags', tagDocument, orgId);
@@ -198,7 +198,7 @@ export async function processTelemetryWithAI(
         ...tagDocument,
         receivedAt: nowIso,
         createdAt: now,
-        expireAt: tenDaysLater
+        expireAt: sevenDaysLater
       }, orgId);
 
       await upsertDoc('tag_history', {
@@ -208,12 +208,19 @@ export async function processTelemetryWithAI(
         TagID: tagId,
         FirstName: item.firstName,
         LastName: item.lastName,
+        name: `${item.firstName || ''} ${item.lastName || ''}`.trim() || item.fullName || `Tag ${tagId}`,
         LocationName: item.location,
+        Location: item.location,
         EnterTime: item.timestamp,
-        LeaveTime: item.timestamp,
+        EnterTimeStr: item.timestamp,
+        LeaveTime: 'ACTIVE',
+        LeaveTimeStr: 'ACTIVE',
+        Duration: 'Active',
+        role: item.role || 'Field Personnel',
+        category: (item.role && String(item.role).toLowerCase().includes('visitor')) ? 'visitors' : 'workers',
         ...tagDocument,
         createdAt: now,
-        expireAt: tenDaysLater
+        expireAt: sevenDaysLater
       }, orgId);
     }
 
@@ -250,7 +257,7 @@ export async function processTelemetryWithAI(
         lastSeen: item.timestamp || nowIso,
         updatedAt: nowIso,
         createdAt: existingPerson?.createdAt || nowIso,
-        expireAt: tenDaysLater
+        expireAt: sevenDaysLater
       };
       await upsertDoc('registered_people', personDoc, orgId);
       await upsertDoc('people', personDoc, orgId);
@@ -295,7 +302,7 @@ export async function processTelemetryWithAI(
       updatedAt: nowIso,
       organizationId: orgId,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc('attendance_logs', attendanceDoc, orgId);
 
@@ -316,7 +323,7 @@ export async function processTelemetryWithAI(
       organizationId,
       updatedAt: nowIso,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
 
     // If less than 3 minutes since last alert of this type for this tag, update existing doc without spamming new WS notifications
@@ -339,7 +346,7 @@ export async function processTelemetryWithAI(
       ...incident,
       organizationId,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc('incidents', incDoc, organizationId);
 
@@ -378,7 +385,7 @@ export async function processTelemetryWithAI(
       },
       organizationId,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc('incidents_enterprise', enterpriseIncDoc, organizationId);
 
@@ -393,7 +400,7 @@ export async function processTelemetryWithAI(
       organizationId,
       aiEngine: analysisResult.aiEngine,
       createdAt: now,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc('ai_insights', insightDoc, organizationId);
     broadcastWebSocketEvent('ai_insight_created', insightDoc, organizationId);
@@ -405,7 +412,7 @@ export async function processTelemetryWithAI(
     ...analysisResult.analytics,
     organizationId,
     createdAt: now,
-    expireAt: tenDaysLater
+    expireAt: sevenDaysLater
   };
   await upsertDoc('analytics_metrics', analyticsDoc, organizationId);
   await upsertDoc('analytics_reports', analyticsDoc, organizationId);

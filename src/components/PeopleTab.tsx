@@ -23,7 +23,7 @@ import {
 } from '../lib/db';
 import { useTracking, useTerminology } from '../context/TrackingContext';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
-import { formatEdtTime, formatEdtDate } from '../lib/dateTimeUtils';
+import { formatEdtTime, formatEdtDate, formatHistoryTimestamp } from '../lib/dateTimeUtils';
 
 interface PeopleTabProps {
 
@@ -736,7 +736,8 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
         // 1. Fetch from /api/GetHistoryRecords endpoint
         try {
-          const res = await fetch('/api/GetHistoryRecords/0/200');
+          const tz = typeof window !== 'undefined' ? (localStorage.getItem('gao_system_timezone') || '') : '';
+          const res = await fetch(`/api/GetHistoryRecords/0/200${tz ? `?timezone=${encodeURIComponent(tz)}` : ''}`);
           if (res.ok) {
             const records = await res.json();
             if (Array.isArray(records)) {
@@ -2529,11 +2530,11 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                                 {h.fromZone && <span className="text-slate-400 font-normal text-[11px]"> (From: {h.fromZone})</span>}
                               </div>
                               <div className="text-[10px] text-slate-500 font-mono flex items-center gap-2 mt-0.5">
-                                <span>Enter: <strong className="text-slate-700 dark:text-slate-300">{h.enterTime || h.timestamp}</strong></span>
+                                <span>Enter: <strong className="text-slate-700 dark:text-slate-300">{formatHistoryTimestamp(h.enterTime || h.timestamp)}</strong></span>
                                 {h.leaveTime && h.leaveTime !== 'ACTIVE' && (
                                   <>
                                     <span>•</span>
-                                    <span>Leave: <strong className="text-slate-700 dark:text-slate-300">{h.leaveTime}</strong></span>
+                                    <span>Leave: <strong className="text-slate-700 dark:text-slate-300">{formatHistoryTimestamp(h.leaveTime)}</strong></span>
                                   </>
                                 )}
                               </div>
@@ -2547,7 +2548,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                               </span>
                             )}
                             <span className="font-mono text-[10px] text-slate-400 bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded-md">
-                              {h.timestamp ? formatEdtTime(h.timestamp) : 'Logged'}
+                              {h.timestamp ? formatHistoryTimestamp(h.timestamp, undefined, { showDate: false }) : 'Logged'}
                             </span>
                           </div>
                         </div>

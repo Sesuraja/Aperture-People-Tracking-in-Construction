@@ -182,27 +182,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<{ id?: string; email?: string; name?: string; role?: string } | null>(null);
   
-  const [brandTitle, setBrandTitle] = useState<string>(() => {
-    if (typeof window === 'undefined') return 'Aperture People Tracking';
-    const directName = localStorage.getItem('gao_company_name');
-    if (directName) return directName;
-    try {
-      const cfg = JSON.parse(localStorage.getItem('gao_industry_config') || '{}');
-      return cfg.appTitle || 'Aperture People Tracking';
-    } catch {
-      return 'Aperture People Tracking';
-    }
-  });
 
-  useEffect(() => {
-    const handleSettingsUpdate = (e: any) => {
-      if (e?.detail?.companyName) {
-        setBrandTitle(e.detail.companyName);
-      }
-    };
-    window.addEventListener('gao_settings_updated', handleSettingsUpdate);
-    return () => window.removeEventListener('gao_settings_updated', handleSettingsUpdate);
-  }, []);
 
   // Custom Claims Role-based visibility and access controls
   const [userRole, setUserRole] = useState<string>('operator');
@@ -226,6 +206,9 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
             setCurrentUser(data.user);
             resolvedRole = data.user.role || 'admin';
             currentUid = data.user.id || '';
+          }
+          if (data.organization?.name && data.organization.name !== 'Aperture Global Systems UTC') {
+            localStorage.setItem('gao_company_name', data.organization.name);
           }
         }
       } catch (err) {
@@ -329,7 +312,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
         {/* LOGO */}
         <div className={`mb-5 flex flex-col ${isSidebarCollapsed ? 'items-center px-2' : 'px-3.5'}`}>
           {isSidebarCollapsed ? (
-            <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 flex items-center justify-center shadow-xs hover:scale-105 transition cursor-pointer" title="Aperture">
+            <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800/90 border border-slate-200 dark:border-slate-700/80 flex items-center justify-center shadow-xs hover:scale-105 transition cursor-pointer" title="People Tracking in Construction">
               <ApertureLogoMark size={24} />
             </div>
           ) : (
@@ -337,13 +320,8 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
               <ApertureLogo variant="horizontal" size="sm" />
               <div className="flex flex-col gap-0.5 mt-2 px-0.5">
                 <span className="text-[11px] font-bold text-slate-800 dark:text-slate-100 tracking-tight leading-tight">
-                  {brandTitle}
+                  People Tracking in Construction
                 </span>
-                {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config') && JSON.parse(localStorage.getItem('gao_industry_config') || '{}').subIndustry && (
-                  <span className="text-[9px] font-semibold text-[#007BC4] tracking-tight">
-                    {JSON.parse(localStorage.getItem('gao_industry_config') || '{}').subIndustry}
-                  </span>
-                )}
               </div>
             </div>
           )}
@@ -369,7 +347,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
                 <span className="truncate text-xs font-normal">Search {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config') ? (JSON.parse(localStorage.getItem('gao_industry_config') || '{}').terminology?.personnelPlural || 'workforce') : 'workforce'} & commands...</span>
               </div>
               <kbd className="text-[9px] font-mono font-semibold text-slate-500 dark:text-slate-400 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded shadow-2xs shrink-0 ml-1.5 inline-flex items-center justify-center leading-none">
-                ⌘K
+                Ctrl+K
               </kbd>
             </button>
           )}
@@ -389,7 +367,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
             {isPageAllowed('dashboard') && <NavItem to="/dashboard" icon={<LayoutDashboard size={18}/>} label="Dashboard" isCollapsed={isSidebarCollapsed} />}
             {isPageAllowed('live') && <NavItem to="/live" icon={<Map size={18}/>} label="Live Tracking" isCollapsed={isSidebarCollapsed} />}
             {isPageAllowed('customMap') && <NavItem to="/custom-map" icon={<MapIcon size={18}/>} label="Custom Map & Assets" isCollapsed={isSidebarCollapsed} />}
-            {isPageAllowed('playback') && <NavItem to="/playback" icon={<PlayCircle size={18}/>} label="Playback History" isCollapsed={isSidebarCollapsed} />}
+            {isPageAllowed('playback') && <NavItem to="/playback" icon={<PlayCircle size={18}/>} label="History & Playback" isCollapsed={isSidebarCollapsed} />}
           </div>
 
           {/* OPERATIONS DOMAIN */}
@@ -533,6 +511,7 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
                    featureName="Tracking History Playback"
                  />
               } />
+              <Route path="/history" element={<Navigate to="/playback" replace />} />
               <Route path="/people" element={
                  <ProtectedRoute 
                    element={<PeopleTab people={people || []} />}

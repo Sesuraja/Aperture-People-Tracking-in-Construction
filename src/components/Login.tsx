@@ -57,8 +57,14 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
         safeStorage.setItem('gao_jwt_token', apiData.token);
         const orgId = apiData.user?.organizationId || apiData.organization?.id || 'demo';
+        const orgName = apiData.organization?.name || organizationName.trim() || 'People Tracking in Construction';
         safeStorage.setItem('gao_active_organization', orgId);
         safeStorage.setItem('gao_active_project', orgId);
+        safeStorage.setItem('gao_company_name', orgName);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('gao_company_name', orgName);
+          window.dispatchEvent(new CustomEvent('gao_settings_updated', { detail: { companyName: orgName } }));
+        }
         safeStorage.setItem('gao_app_mode', 'real');
 
         const userId = apiData.user?.id || `usr_${Date.now()}`;
@@ -95,8 +101,14 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
         safeStorage.setItem('gao_jwt_token', apiData.token);
         const orgId = apiData.user?.organizationId || apiData.organization?.id || 'demo';
+        const orgName = apiData.organization?.name || 'People Tracking in Construction';
         safeStorage.setItem('gao_active_organization', orgId);
         safeStorage.setItem('gao_active_project', orgId);
+        safeStorage.setItem('gao_company_name', orgName);
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('gao_company_name', orgName);
+          window.dispatchEvent(new CustomEvent('gao_settings_updated', { detail: { companyName: orgName } }));
+        }
         safeStorage.setItem('gao_app_mode', 'real');
       }
       onLoginSuccess('real');

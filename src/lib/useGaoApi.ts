@@ -39,11 +39,18 @@ export function useGaoRealtime(pollingIntervalMs = 1000) {
   return { tags, error, isLoading };
 }
 
-export function useGaoHistory(skip: number, take: number) {
+export function useGaoHistory(skip: number, take: number, customTz?: string) {
   const [records, setRecords] = useState<HistoryRecord[]>([]);
   const [totalCount, setTotalCount] = useState<number>(0);
   const [error, setError] = useState<Error | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [tzVersion, setTzVersion] = useState(0);
+
+  useEffect(() => {
+    const handleTzUpdate = () => setTzVersion(v => v + 1);
+    window.addEventListener('gao_settings_updated', handleTzUpdate);
+    return () => window.removeEventListener('gao_settings_updated', handleTzUpdate);
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -74,7 +81,7 @@ export function useGaoHistory(skip: number, take: number) {
     return () => {
       isMounted = false;
     };
-  }, [skip, take]);
+  }, [skip, take, customTz, tzVersion]);
 
   return { records, totalCount, error, isLoading };
 }

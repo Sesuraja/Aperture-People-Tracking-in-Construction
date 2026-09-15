@@ -144,7 +144,9 @@ dataRouter.get('/:collection', async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const docs = await getCollectionDocs(collection, undefined, orgId);
+    const rawLimit = req.query.limit ? parseInt(req.query.limit as string, 10) : undefined;
+    const limit = (rawLimit && !isNaN(rawLimit) && rawLimit > 0) ? rawLimit : undefined;
+    const docs = await getCollectionDocs(collection, limit ? { limit } : undefined, orgId);
     return res.json(docs);
   } catch (err: any) {
     console.error(`[Data Route] Error fetching collection ${collection}:`, err);

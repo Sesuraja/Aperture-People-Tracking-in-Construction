@@ -329,7 +329,7 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
 
   const now = new Date();
   const nowIso = now.toISOString();
-  const tenDaysLater = new Date(now.getTime() + 10 * 24 * 60 * 60 * 1000);
+  const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   const historyDocs: any[] = [];
   const tagMap = new Map<string, any>();
@@ -366,7 +366,7 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
       durationMins: typeof rec.durationMins === 'number' ? rec.durationMins : (typeof rec.Duration === 'number' ? Math.round(rec.Duration * 60 * 10) / 10 : 10),
       timestamp: enter,
       createdAt: nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     });
 
     if (!tagMap.has(tid) || new Date(enter).getTime() >= new Date(tagMap.get(tid).enter).getTime()) {
@@ -432,7 +432,7 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
       lastSeen: item.enter,
       updatedAt: nowIso,
       createdAt: existing?.createdAt || nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
 
     await upsertDoc('registered_people', personDoc, orgId).catch(() => {});
@@ -458,7 +458,7 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
       organizationId: orgId,
       updatedAt: nowIso,
       createdAt: nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc('devices', deviceDoc, orgId).catch(() => {});
 
@@ -503,7 +503,7 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
       updatedAt: nowIso,
       organizationId: orgId,
       createdAt: nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc('attendance_logs', attDoc, orgId).catch(() => {});
 
@@ -525,7 +525,7 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
       status: 'Active',
       updatedAt: nowIso,
       createdAt: nowIso,
-      expireAt: tenDaysLater
+      expireAt: sevenDaysLater
     };
     await upsertDoc('live_tags', liveTagDoc, orgId).catch(() => {});
     await upsertDoc('real_time_tags', liveTagDoc, orgId).catch(() => {});
@@ -641,7 +641,7 @@ export async function syncPeopleTrackingData(options?: {
         if (realtimeTags.length > 0) {
           await bulkWriteRealtimeTags(realtimeTags, orgId).catch(() => {});
           const nowIso = new Date().toISOString();
-          const tenDaysLater = new Date(Date.now() + 10 * 24 * 60 * 60 * 1000);
+          const sevenDaysLater = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
           for (const tag of realtimeTags) {
             const tid = tag.TagID || tag.tagId || tag.id;
             await upsertDoc('live_tags', {
@@ -653,7 +653,7 @@ export async function syncPeopleTrackingData(options?: {
               organizationId: orgId,
               createdAt: nowIso,
               updatedAt: nowIso,
-              expireAt: tenDaysLater
+              expireAt: sevenDaysLater
             }, orgId).catch(() => {});
           }
         }
@@ -700,7 +700,7 @@ export async function syncPeopleTrackingData(options?: {
             FirstName: r.FirstName || '',
             LastName: r.LastName || '',
             createdAt: new Date(),
-            expireAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000)
+            expireAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
           });
         }
       }

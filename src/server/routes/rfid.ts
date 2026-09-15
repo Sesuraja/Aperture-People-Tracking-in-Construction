@@ -2,11 +2,13 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { 
   getCollectionDocs, 
+  countCollectionDocs,
   upsertDoc, 
   logAuditEvent, 
   bulkWriteRealtimeTags, 
   cleanupStaleRealTimeTags,
-  bulkUpsertDocs 
+  bulkUpsertDocs,
+  getDocById
 } from '../services/db.js';
 import { broadcastSseEvent } from '../services/sse.js';
 import { broadcastWebSocketEvent } from '../services/websocket.js';
@@ -22,17 +24,13 @@ export const rfidRouter = Router();
 // Helper to format date into "yyyy-MM-dd HH:mm:ss" UTC string
 export function formatUtcDateTime(dateInput?: string | Date | number): string {
   const d = dateInput ? new Date(dateInput) : new Date();
-  if (isNaN(d.getTime())) {
-    const now = new Date();
-    return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')} ${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}:${String(now.getUTCSeconds()).padStart(2, '0')}`;
-  }
-  const YYYY = d.getUTCFullYear();
-  const MM = String(d.getUTCMonth() + 1).padStart(2, '0');
-  const DD = String(d.getUTCDate()).padStart(2, '0');
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mm = String(d.getUTCMinutes()).padStart(2, '0');
-  const ss = String(d.getUTCSeconds()).padStart(2, '0');
-  return `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}`;
+  const year = d.getUTCFullYear();
+  const month = String(d.getUTCMonth() + 1).padStart(2, '0');
+  const day = String(d.getUTCDate()).padStart(2, '0');
+  const hours = String(d.getUTCHours()).padStart(2, '0');
+  const minutes = String(d.getUTCMinutes()).padStart(2, '0');
+  const seconds = String(d.getUTCSeconds()).padStart(2, '0');
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
 // Helper to format date into "yyyy-MM-dd HH:mm:ss.fff" UTC string
@@ -43,34 +41,55 @@ export function formatUtcTimestampMs(dateInput?: string | Date | number): string
   return `${base}.${fff}`;
 }
 
-const scanSchema = z.object({
-  tagId: z.string().optional(),
-  TagID: z.string().optional(),
+const realtimeTagSchema = z.object({
+  TagID: z.string().min(1, 'TagID is required'),
+  Location: z.string().optional(),
+  LocationName: z.string().optional(),
+  Timestamp: z.string().optional(),
   name: z.string().optional(),
   FirstName: z.string().optional(),
   LastName: z.string().optional(),
   role: z.string().optional().default('General Staff'),
   zone: z.string().optional(),
-  LocationName: z.string().optional(),
-  Location: z.string().optional(),
   status: z.string().optional().default('Active'),
   epc: z.string().optional(),
   rssi: z.number().optional().default(-62),
   antennaId: z.number().optional().default(1),
   readerId: z.string().optional().default('GAO-UHF-READER-01')
 });
+const scanSchema = realtimeTagSchema.extend({
+  tagId: z.string().optional()
+});
+
+// High-performance in-memory cache for external RFID history & count
+const HISTORY_CACHE_TTL_MS = 15000; // 15 seconds fresh cache
+const FAST_UPSTREAM_TIMEOUT_MS = 2000; // 2 seconds fast race timeout for snappy UI
+const historyRecordsCache = new Map<string, { timestamp: number; data: any[] }>();
+let historyCountCache: { timestamp: number; count: number } | null = null;
+let cachedGlobalTz: { tz: string; timestamp: number } | null = null;
 
 // 1. GET /api/GetHistoryTotalCount
 const handleGetTotalCount = async (req: Request, res: Response) => {
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
+
+  // Fast-path: return cached count if fresh
+  if (historyCountCache && (Date.now() - historyCountCache.timestamp < HISTORY_CACHE_TTL_MS)) {
+    if (req.query.format === 'object') {
+      return res.json({ totalCount: historyCountCache.count, count: historyCountCache.count, organizationId: orgId, cached: true });
+    }
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).send(String(historyCountCache.count));
+  }
+
   try {
-    // 1. Check live external cloud server first (with 4-second race)
+    // 1. Check live external cloud server first (with 2-second fast race)
     try {
       const upstream = await Promise.race([
         fetchHistoryTotalCount(),
-        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Upstream total count timeout after 4000ms')), 4000))
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Upstream total count timeout after 2000ms')), FAST_UPSTREAM_TIMEOUT_MS))
       ]);
       if (upstream && typeof upstream.totalCount === 'number' && upstream.totalCount > 0) {
+        historyCountCache = { timestamp: Date.now(), count: upstream.totalCount };
         if (req.query.format === 'object') {
           return res.json({ totalCount: upstream.totalCount, count: upstream.totalCount, organizationId: orgId });
         }
@@ -81,8 +100,8 @@ const handleGetTotalCount = async (req: Request, res: Response) => {
       // Fall through to local DB
     }
 
-    const history = await getCollectionDocs('tag_history', undefined, orgId);
-    const total = history.length;
+    const total = await countCollectionDocs('tag_history', orgId);
+    historyCountCache = { timestamp: Date.now(), count: total };
     
     // According to GAO spec: Response body is plain number e.g. 100 with application/json header
     if (req.query.format === 'object') {
@@ -99,6 +118,63 @@ const handleGetTotalCount = async (req: Request, res: Response) => {
 rfidRouter.get('/GetHistoryTotalCount', handleGetTotalCount);
 rfidRouter.get('/history/count', handleGetTotalCount);
 
+// Helper to resolve timezone and format date string on the server
+function resolveServerTimezone(tz?: string): { iana: string; label: string } {
+  const str = String(tz || '').trim().toLowerCase();
+  if (!str || str.includes('system') || str.includes('local') || str.includes('browser') || str === 'auto') {
+    try {
+      const local = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const parts = new Intl.DateTimeFormat('en-US', { timeZone: local, timeZoneName: 'short' }).formatToParts(new Date());
+      const tzPart = parts.find(p => p.type === 'timeZoneName');
+      return { iana: local, label: tzPart?.value || 'LOCAL' };
+    } catch {
+      return { iana: 'UTC', label: 'UTC' };
+    }
+  }
+  if (str.includes('eastern') || str.includes('edt') || str.includes('est') || str === 'america/new_york') return { iana: 'America/New_York', label: 'EDT' };
+  if (str.includes('central') || str.includes('cst') || str.includes('cdt') || str === 'america/chicago') return { iana: 'America/Chicago', label: 'CST' };
+  if (str.includes('mountain') || str.includes('mst') || str.includes('mdt') || str === 'america/denver') return { iana: 'America/Denver', label: 'MST' };
+  if (str.includes('pacific') || str.includes('pst') || str.includes('pdt') || str === 'america/los_angeles') return { iana: 'America/Los_Angeles', label: 'PST' };
+  if (str.includes('ist') || str.includes('india') || str.includes('kolkata') || str === 'asia/kolkata') return { iana: 'Asia/Kolkata', label: 'IST' };
+  if (str.includes('cet') || str.includes('cest') || str === 'europe/paris') return { iana: 'Europe/Paris', label: 'CET' };
+  if (str.includes('jst') || str.includes('tokyo') || str === 'asia/tokyo') return { iana: 'Asia/Tokyo', label: 'JST' };
+  if (str.includes('aest') || str.includes('sydney') || str === 'australia/sydney') return { iana: 'Australia/Sydney', label: 'AEST' };
+  if (str.includes('gmt') || str.includes('london') || str.includes('bst')) return { iana: 'Europe/London', label: 'GMT' };
+  if (str.includes('utc') || str === 'etc/utc') return { iana: 'UTC', label: 'UTC' };
+  try {
+    new Intl.DateTimeFormat(undefined, { timeZone: tz });
+    const parts = new Intl.DateTimeFormat('en-US', { timeZone: tz, timeZoneName: 'short' }).formatToParts(new Date());
+    const tzPart = parts.find(p => p.type === 'timeZoneName');
+    return { iana: tz!, label: tzPart?.value || tz! };
+  } catch {
+    return { iana: 'UTC', label: 'UTC' };
+  }
+}
+
+function formatHistoryInTz(isoDate: string, iana: string, label: string): string {
+  if (!isoDate || isoDate === 'ACTIVE' || isoDate === 'Recent' || isoDate === '—') return isoDate;
+  try {
+    const raw = String(isoDate).trim();
+    let d = new Date(raw);
+    if (isNaN(d.getTime())) {
+      const fixed = raw.replace(' ', 'T') + (raw.endsWith('Z') ? '' : 'Z');
+      d = new Date(fixed);
+    }
+    if (isNaN(d.getTime())) return isoDate;
+    const dateStr = d.toLocaleDateString('en-CA', { timeZone: iana });
+    const timeStr = d.toLocaleTimeString('en-US', {
+      timeZone: iana,
+      hour12: true,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+    return `${dateStr} ${timeStr} ${label}`;
+  } catch {
+    return isoDate;
+  }
+}
+
 // 2. GET /api/GetHistoryRecords/{SkipCount}/{TakeCount}
 const handleGetHistory = async (req: Request, res: Response) => {
   const skipCount = parseInt(req.params.SkipCount || req.params.skip || (req.query.skip as string) || '0', 10);
@@ -106,6 +182,33 @@ const handleGetHistory = async (req: Request, res: Response) => {
   const takeCount = Math.min(Math.max(1, rawTake), 200); // Max value is 200 per GAO spec
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
   const filterDate = (req.query.date as string) || '';
+
+  // Resolve requested or configured system timezone
+  const reqTz = (req.query.timezone as string) || (req.headers['x-timezone'] as string) || '';
+  let effectiveTz = reqTz;
+  if (!effectiveTz) {
+    if (cachedGlobalTz && (Date.now() - cachedGlobalTz.timestamp < 60000)) {
+      effectiveTz = cachedGlobalTz.tz;
+    } else {
+      try {
+        const globalSettings = await getDocById('settings', 'global', orgId);
+        effectiveTz = globalSettings?.systemTimezone || '';
+      } catch {}
+      cachedGlobalTz = { tz: effectiveTz || 'UTC', timestamp: Date.now() };
+    }
+  }
+  const { iana, label } = resolveServerTimezone(effectiveTz);
+  res.setHeader('X-Timezone', iana);
+  res.setHeader('X-Timezone-Label', label);
+
+  const cacheKey = `${orgId}_${skipCount}_${takeCount}_${iana}_${filterDate}`;
+  const cached = historyRecordsCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && (now - cached.timestamp < HISTORY_CACHE_TTL_MS)) {
+    res.setHeader('X-Cache', 'HIT');
+    return res.json(cached.data);
+  }
+  res.setHeader('X-Cache', 'MISS');
 
   try {
     // Fetch registered people and visitors to enrich real names and roles
@@ -146,11 +249,11 @@ const handleGetHistory = async (req: Request, res: Response) => {
       return 0.5;
     };
 
-    // 1. Check live external cloud server first (with 6-second timeout race)
+    // 1. Check live external cloud server first (with 2.5-second fast timeout race)
     try {
       const liveRecords = await Promise.race([
         fetchHistoryRecords(skipCount, takeCount),
-        new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Upstream API timeout after 6000ms')), 6000))
+        new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Upstream API timeout after 2500ms')), 2500))
       ]);
 
       if (Array.isArray(liveRecords) && liveRecords.length > 0) {
@@ -186,6 +289,8 @@ const handleGetHistory = async (req: Request, res: Response) => {
           const enter = rec.EnterTime || rec.enterTime || new Date().toISOString();
           const leave = rec.LeaveTime || rec.leaveTime || 'ACTIVE';
           const durationMins = calcDurationMins(enter, leave, rec.Duration);
+          const enterStr = formatHistoryInTz(enter, iana, label);
+          const leaveStr = (leave && leave !== 'ACTIVE') ? formatHistoryInTz(leave, iana, label) : leave;
 
           const formattedRec = {
             TagID: rec.TagID || rec.tagId || '',
@@ -198,8 +303,12 @@ const handleGetHistory = async (req: Request, res: Response) => {
             LocationName: rec.LocationName || rec.Location || rec.location || 'Site Area',
             EnterTime: enter,
             LeaveTime: leave,
-            EnterTimeStr: enter,
-            LeaveTimeStr: leave,
+            EnterTimeStr: enterStr,
+            LeaveTimeStr: leaveStr,
+            EnterTimeIso: enter,
+            LeaveTimeIso: leave,
+            timezone: iana,
+            timezoneLabel: label,
             Duration: durationMins,
             durationMins
           };
@@ -221,16 +330,25 @@ const handleGetHistory = async (req: Request, res: Response) => {
         // Apply date filter if specified
         let filtered = enrichedLive;
         if (filterDate) {
-          filtered = enrichedLive.filter(r => (r.EnterTime && r.EnterTime.includes(filterDate)) || (r.LeaveTime && r.LeaveTime.includes(filterDate)));
+          filtered = enrichedLive.filter(r => 
+            (r.EnterTime && r.EnterTime.includes(filterDate)) || 
+            (r.EnterTimeStr && r.EnterTimeStr.includes(filterDate)) ||
+            (r.LeaveTime && r.LeaveTime.includes(filterDate)) ||
+            (r.LeaveTimeStr && r.LeaveTimeStr.includes(filterDate))
+          );
         }
 
+        historyRecordsCache.set(cacheKey, { timestamp: Date.now(), data: filtered });
         return res.json(filtered);
       }
     } catch (upstreamErr) {
-      // Fall through to local DB
+      // Fall through to stale cache if available, or local DB
+      if (cached && Array.isArray(cached.data) && cached.data.length > 0) {
+        return res.json(cached.data);
+      }
     }
 
-    const dbHistory = await getCollectionDocs('tag_history', undefined, orgId);
+    const dbHistory = await getCollectionDocs('tag_history', { limit: Math.max(takeCount + skipCount, 200), sort: { createdAt: -1 } }, orgId);
     const records = dbHistory;
 
     // Ensure all records strictly match the GAO specification fields with real names and minute durations
@@ -238,6 +356,8 @@ const handleGetHistory = async (req: Request, res: Response) => {
       const enter = item.EnterTime || item.EnterTimeStr || item.enterTime || item.timestamp || item.createdTime || new Date().toISOString();
       const leave = item.LeaveTime || item.LeaveTimeStr || item.leaveTime || 'ACTIVE';
       const durationMins = calcDurationMins(enter, leave, item.Duration);
+      const enterStr = formatHistoryInTz(enter, iana, label);
+      const leaveStr = (leave && leave !== 'ACTIVE') ? formatHistoryInTz(leave, iana, label) : leave;
 
       const tagKey = String(item.TagID || item.tagId || item.epc || '').toLowerCase();
       const matched = personMap.get(tagKey);
@@ -277,8 +397,12 @@ const handleGetHistory = async (req: Request, res: Response) => {
         LocationName: item.LocationName || item.locationName || item.zone || item.Location || 'Site Area',
         EnterTime: enter,
         LeaveTime: leave,
-        EnterTimeStr: enter,
-        LeaveTimeStr: leave,
+        EnterTimeStr: enterStr,
+        LeaveTimeStr: leaveStr,
+        EnterTimeIso: enter,
+        LeaveTimeIso: leave,
+        timezone: iana,
+        timezoneLabel: label,
         Duration: durationMins,
         durationMins
       };
@@ -290,11 +414,17 @@ const handleGetHistory = async (req: Request, res: Response) => {
     // Filter by date if requested
     let result = formattedRecords;
     if (filterDate) {
-      result = formattedRecords.filter(r => (r.EnterTime && r.EnterTime.includes(filterDate)) || (r.LeaveTime && r.LeaveTime.includes(filterDate)));
+      result = formattedRecords.filter(r => 
+        (r.EnterTime && r.EnterTime.includes(filterDate)) || 
+        (r.EnterTimeStr && r.EnterTimeStr.includes(filterDate)) ||
+        (r.LeaveTime && r.LeaveTime.includes(filterDate)) ||
+        (r.LeaveTimeStr && r.LeaveTimeStr.includes(filterDate))
+      );
     }
 
     // Skip & Take slicing
     const paginated = result.slice(skipCount, skipCount + takeCount);
+    historyRecordsCache.set(cacheKey, { timestamp: Date.now(), data: paginated });
 
     return res.json(paginated);
   } catch (err: any) {
@@ -343,8 +473,10 @@ const handleGetRealtime = async (req: Request, res: Response) => {
       ]);
       if (Array.isArray(upstreamTags) && upstreamTags.length > 0) {
         rawTags = upstreamTags;
+        // Asynchronously persist real-time tags and active history into MongoDB with 7-day retention
+        bulkWriteRealtimeTags(upstreamTags, orgId).catch(() => {});
       }
-    } catch (upstreamErr) {
+    } catch {
       // Fall through to local DB
     }
 

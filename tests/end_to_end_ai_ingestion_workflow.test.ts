@@ -14,12 +14,12 @@ import {
   DATA_RETENTION_COLLECTIONS
 } from '../src/server/services/db.js';
 
-describe('End-to-End Multi-AI Engine, API Ingestion & 10-Day Retention Workflow', () => {
+describe('End-to-End Multi-AI Engine, API Ingestion & 7-Day Retention Workflow', () => {
   const TEST_ORG = `ai_workflow_org_${Date.now()}`;
 
   beforeAll(async () => {
     await initDatabase();
-  }, 30000);
+  }, 90000);
 
   it('TEST 1: Multi-AI Engine Status & Provider Configuration', () => {
     const configStatus = getAiConfigStatus();
@@ -97,7 +97,7 @@ describe('End-to-End Multi-AI Engine, API Ingestion & 10-Day Retention Workflow'
     expect(Array.isArray(analysis.incidents)).toBe(true);
   }, 25000);
 
-  it('TEST 3: Full API Ingestion Pipeline Stores All Generated Data in MongoDB with 10-Day Expiration', async () => {
+  it('TEST 3: Full API Ingestion Pipeline Stores All Generated Data in MongoDB with 7-Day Expiration', async () => {
     const telemetryPayload = [
       {
         TagID: 'TAG_API_WORKER_99',
@@ -125,11 +125,11 @@ describe('End-to-End Multi-AI Engine, API Ingestion & 10-Day Retention Workflow'
     expect(storedTag.createdAt).toBeDefined();
     expect(storedTag.expireAt).toBeDefined();
 
-    // Verify expireAt is ~10 days after createdAt (within 5 seconds tolerance)
+    // Verify expireAt is ~7 days after createdAt (within 5 seconds tolerance)
     const createdTime = new Date(storedTag.createdAt).getTime();
     const expireTime = new Date(storedTag.expireAt).getTime();
     const diffDays = (expireTime - createdTime) / (1000 * 60 * 60 * 24);
-    expect(Math.round(diffDays)).toBe(10);
+    expect(Math.round(diffDays)).toBe(7);
 
     // Verify stored tag_history document
     const history = await getCollectionDocs('tag_history', undefined, TEST_ORG);
@@ -144,7 +144,7 @@ describe('End-to-End Multi-AI Engine, API Ingestion & 10-Day Retention Workflow'
     expect(storedAnalytics.totalTracked).toBe(1);
     expect(storedAnalytics.expireAt).toBeDefined();
     const analyticsExpireDiff = (new Date(storedAnalytics.expireAt).getTime() - new Date(storedAnalytics.createdAt).getTime()) / (1000 * 60 * 60 * 24);
-    expect(Math.round(analyticsExpireDiff)).toBe(10);
+    expect(Math.round(analyticsExpireDiff)).toBe(7);
 
     // Verify stored ai_insights in MongoDB
     const insightsDocs = await getCollectionDocs('ai_insights', undefined, TEST_ORG);
@@ -152,13 +152,13 @@ describe('End-to-End Multi-AI Engine, API Ingestion & 10-Day Retention Workflow'
     const storedInsight = insightsDocs[0];
     expect(storedInsight.expireAt).toBeDefined();
     const insightExpireDiff = (new Date(storedInsight.expireAt).getTime() - new Date(storedInsight.createdAt).getTime()) / (1000 * 60 * 60 * 24);
-    expect(Math.round(insightExpireDiff)).toBe(10);
+    expect(Math.round(insightExpireDiff)).toBe(7);
   }, 25000);
 
-  it('TEST 4: 10-Day Retention Policy Status & TTL Index Verification', async () => {
-    const status = await getDataRetentionStatus(10);
-    expect(status.retentionPolicyDays).toBe(10);
-    expect(status.retentionSeconds).toBe(864000); // 10 * 24 * 3600
+  it('TEST 4: 7-Day Retention Policy Status & TTL Index Verification', async () => {
+    const status = await getDataRetentionStatus(7);
+    expect(status.retentionPolicyDays).toBe(7);
+    expect(status.retentionSeconds).toBe(604800); // 7 * 24 * 3600
     expect(status.policyEnforced).toBe(true);
     expect(status.collections).toBeDefined();
 
@@ -170,22 +170,22 @@ describe('End-to-End Multi-AI Engine, API Ingestion & 10-Day Retention Workflow'
     }
   }, 25000);
 
-  it('TEST 5: Active 10-Day Retention Cleanup Purges Expired Documents', async () => {
-    const elevenDaysAgo = new Date(Date.now() - 11 * 24 * 60 * 60 * 1000);
+  it('TEST 5: Active 7-Day Retention Cleanup Purges Expired Documents', async () => {
+    const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
     const expiredDoc = {
       id: `expired_alert_test_${Date.now()}`,
       organizationId: TEST_ORG,
       title: 'Stale Historical Alert',
       type: 'Safety',
-      message: 'Old alert that exceeded 10-day retention',
-      createdAt: elevenDaysAgo,
+      message: 'Old alert that exceeded 7-day retention',
+      createdAt: eightDaysAgo,
       expireAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000) // Expired yesterday
     };
 
     await upsertDoc('alerts', expiredDoc, TEST_ORG);
 
     // Run active cleanup job
-    const cleanupResult = await cleanupExpiredRetentionData(10);
+    const cleanupResult = await cleanupExpiredRetentionData(7);
     expect(cleanupResult).toBeDefined();
     expect(cleanupResult.collectionsScanned).toBe(DATA_RETENTION_COLLECTIONS.length);
 

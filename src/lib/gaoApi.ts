@@ -77,7 +77,7 @@ class GaoApi {
    */
   async getHistoryTotalCount(): Promise<number> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 6000);
+    const timeout = setTimeout(() => controller.abort(), 3500);
     try {
       const response = await fetch('/api/GetHistoryTotalCount', {
         headers: getAuthHeaders(),
@@ -102,14 +102,14 @@ class GaoApi {
       console.warn('[gaoApi] getHistoryTotalCount error:', err);
     }
 
-    // Fallback: query MongoDB tag_history count
+    // High-performance fallback: query stats
     try {
-      const fallbackRes = await fetch('/api/data/tag_history', {
+      const fallbackRes = await fetch('/api/data/stats', {
         headers: getAuthHeaders()
       });
       if (fallbackRes.ok) {
         const fbData = await fallbackRes.json();
-        if (Array.isArray(fbData)) return fbData.length;
+        if (typeof fbData?.tag_history === 'number') return fbData.tag_history;
       }
     } catch {}
 
@@ -121,10 +121,15 @@ class GaoApi {
    */
   async getHistoryRecords(skip: number, take: number): Promise<HistoryRecord[]> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 8000);
+    const timeout = setTimeout(() => controller.abort(), 4000);
+    const tz = typeof window !== 'undefined' ? (localStorage.getItem('gao_system_timezone') || '') : '';
+    const url = `/api/GetHistoryRecords/${skip}/${take}${tz ? `?timezone=${encodeURIComponent(tz)}` : ''}`;
     try {
-      const response = await fetch(`/api/GetHistoryRecords/${skip}/${take}`, {
-        headers: getAuthHeaders(),
+      const response = await fetch(url, {
+        headers: {
+          ...getAuthHeaders(),
+          ...(tz ? { 'X-Timezone': tz } : {})
+        },
         signal: controller.signal
       });
       clearTimeout(timeout);
@@ -139,9 +144,10 @@ class GaoApi {
       console.warn('[gaoApi] Primary /api/GetHistoryRecords fetch error, falling back to MongoDB Atlas tag_history:', err);
     }
 
-    // High-resiliency fallback: directly query MongoDB Atlas tag_history collection
+    // High-resiliency fallback: query MongoDB Atlas tag_history with bounded limit
     try {
-      const fallbackRes = await fetch('/api/data/tag_history', {
+      const queryLimit = Math.max(take, 100);
+      const fallbackRes = await fetch(`/api/data/tag_history?limit=${queryLimit}`, {
         headers: getAuthHeaders()
       });
       if (fallbackRes.ok) {

@@ -75,13 +75,38 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
     return map;
   }, [propPeople, trackingCtx?.people, dbPeople]);
 
-  // Raw API Data State
-  const [rawRecords, setRawRecords] = useState<RawApiHistoryRecord[]>([]);
-  const [totalSystemCount, setTotalSystemCount] = useState<number>(0);
-  const [isLoading, setIsLoading] = useState<boolean>(true);
+// Session & in-memory cache for instant 0ms transitions
+let _incidentsCacheMemory: { records: RawApiHistoryRecord[]; count: number; timestamp: number } | null = null;
+const INCIDENTS_SESSION_CACHE_KEY = 'aperture_incidents_history_cache_v1';
+
+function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: number; timestamp: number } | null {
+  if (_incidentsCacheMemory && Array.isArray(_incidentsCacheMemory.records) && _incidentsCacheMemory.records.length > 0) {
+    return _incidentsCacheMemory;
+  }
+  if (typeof window !== 'undefined') {
+    try {
+      const saved = sessionStorage.getItem(INCIDENTS_SESSION_CACHE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.records) && parsed.records.length > 0) {
+          _incidentsCacheMemory = parsed;
+          return parsed;
+        }
+      }
+    } catch {}
+  }
+  return null;
+}
+
+  const initialCache = useMemo(() => getInitialIncidentsCache(), []);
+
+  // Raw API Data State - preloaded from cache for INSTANT 0ms rendering
+  const [rawRecords, setRawRecords] = useState<RawApiHistoryRecord[]>(() => initialCache?.records || []);
+  const [totalSystemCount, setTotalSystemCount] = useState<number>(() => initialCache?.count || 0);
+  const [isLoading, setIsLoading] = useState<boolean>(() => !initialCache || initialCache.records.length === 0);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [apiError, setApiError] = useState<string | null>(null);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(() => initialCache ? new Date(initialCache.timestamp) : null);
   const [fetchBatchSize, setFetchBatchSize] = useState<number>(200);
 
   // Active View Tab
@@ -124,6 +149,11 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
 
   // MongoDB Atlas Persistence State
   const [mongoIncidentMeta, setMongoIncidentMeta] = useState<Record<string, { status?: string; notes?: string }>>({});
+  const mongoIncidentMetaRef = useRef(mongoIncidentMeta);
+  useEffect(() => {
+    mongoIncidentMetaRef.current = mongoIncidentMeta;
+  }, [mongoIncidentMeta]);
+
   const [isMongoSynced, setIsMongoSynced] = useState<boolean>(false);
   const [actionToast, setActionToast] = useState<string | null>(null);
 
@@ -150,11 +180,14 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
   }, []);
 
   /**
-   * 1. Fetch Real Data from People-Tracking API
+   * 1. Fetch Real Data from People-Tracking API with Stale-While-Revalidate
    */
   const loadApiData = useCallback(async (take: number = fetchBatchSize, showRefreshingState = false) => {
-    if (showRefreshingState) setIsRefreshing(true);
-    else setIsLoading(true);
+    if (showRefreshingState) {
+      setIsRefreshing(true);
+    } else if (rawRecords.length === 0) {
+      setIsLoading(true);
+    }
     setApiError(null);
 
     try {
@@ -163,17 +196,31 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
         gaoApi.getHistoryTotalCount()
       ]);
 
-      setRawRecords(Array.isArray(records) ? records : []);
-      setTotalSystemCount(count || records.length);
+      const validRecords = Array.isArray(records) ? records : [];
+      const totalCount = count || validRecords.length;
+
+      setRawRecords(validRecords);
+      setTotalSystemCount(totalCount);
       setLastUpdated(new Date());
+
+      // Save to memory and sessionStorage cache for instant 0ms next load
+      if (validRecords.length > 0) {
+        const cachePayload = { records: validRecords, count: totalCount, timestamp: Date.now() };
+        _incidentsCacheMemory = cachePayload;
+        try {
+          sessionStorage.setItem(INCIDENTS_SESSION_CACHE_KEY, JSON.stringify(cachePayload));
+        } catch {}
+      }
     } catch (err: any) {
       console.error('[IncidentsTab] Failed to fetch API records:', err);
-      setApiError(err.message || 'Unable to connect to people tracking API endpoint.');
+      if (rawRecords.length === 0) {
+        setApiError(err.message || 'Unable to connect to people tracking API endpoint.');
+      }
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [fetchBatchSize]);
+  }, [fetchBatchSize, rawRecords.length]);
 
   useEffect(() => {
     loadApiData(fetchBatchSize);
@@ -195,7 +242,7 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
     });
   }, [rawRecords, activeIndustry, activeSubIndustry, zoneLabel, personnelSingular, personnelPlural, siteLabel, peopleRegistry]);
 
-  // 2.1 Auto-sync detected anomalies from real API telemetry to MongoDB Atlas in a single batch
+  // 2.1 Auto-sync detected anomalies from real API telemetry to MongoDB Atlas in background
   const lastSyncedAnomaliesHashRef = useRef<string>('');
   useEffect(() => {
     if (analyzedEvents.length === 0) return;
@@ -206,34 +253,39 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
     if (lastSyncedAnomaliesHashRef.current === hash) return;
     lastSyncedAnomaliesHashRef.current = hash;
 
-    const docsToSync = anomalies.map(evt => {
-      const docId = `inc_${evt.id}`;
-      return {
-        id: docId,
-        eventId: evt.id,
-        tagId: evt.tagId,
-        personName: evt.personName,
-        zone: evt.locationName,
-        eventType: evt.eventType,
-        severity: evt.severity,
-        severityScore: evt.severityScore,
-        enterTime: evt.enterTime,
-        leaveTime: evt.leaveTime,
-        durationFormatted: evt.durationFormatted,
-        anomalyReason: evt.anomalyReason,
-        isAnomaly: true,
-        source: 'REAL_TIME_API_HISTORY',
-        status: mongoIncidentMeta[evt.id]?.status || 'OPEN',
-        updatedAt: new Date().toISOString()
-      };
-    });
+    // Run in background timeout so initial page render is instantaneous and smooth
+    const timer = setTimeout(() => {
+      const docsToSync = anomalies.map(evt => {
+        const docId = `inc_${evt.id}`;
+        return {
+          id: docId,
+          eventId: evt.id,
+          tagId: evt.tagId,
+          personName: evt.personName,
+          zone: evt.locationName,
+          eventType: evt.eventType,
+          severity: evt.severity,
+          severityScore: evt.severityScore,
+          enterTime: evt.enterTime,
+          leaveTime: evt.leaveTime,
+          durationFormatted: evt.durationFormatted,
+          anomalyReason: evt.anomalyReason,
+          isAnomaly: true,
+          source: 'REAL_TIME_API_HISTORY',
+          status: mongoIncidentMetaRef.current[evt.id]?.status || 'OPEN',
+          updatedAt: new Date().toISOString()
+        };
+      });
 
-    batchSetDocs('incidents', docsToSync).then(() => {
-      setIsMongoSynced(true);
-    }).catch(err => {
-      console.warn('[IncidentsTab] batchSetDocs anomalies error:', err);
-    });
-  }, [analyzedEvents, mongoIncidentMeta]);
+      batchSetDocs('incidents', docsToSync).then(() => {
+        setIsMongoSynced(true);
+      }).catch(err => {
+        console.warn('[IncidentsTab] batchSetDocs anomalies error:', err);
+      });
+    }, 1200);
+
+    return () => clearTimeout(timer);
+  }, [analyzedEvents]);
 
   /**
    * 3. Distinct Zones & Personnel for Filter Dropdowns

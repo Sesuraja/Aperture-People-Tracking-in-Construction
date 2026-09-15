@@ -398,7 +398,7 @@ export default function MongoDbConfigurationSection() {
             MongoDB Storage Maintenance & Retention Policy
           </h4>
           <p className="text-xs text-slate-500">
-            Enforce automatic 10-day data retention cleanup on live tracking telemetry or export an offline JSON snapshot of all MongoDB collections.
+            Enforce automatic 7-day data retention cleanup on live tracking telemetry or export an offline JSON snapshot of all MongoDB collections.
           </p>
         </div>
 

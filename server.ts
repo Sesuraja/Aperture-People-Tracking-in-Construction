@@ -179,7 +179,7 @@ async function startServer() {
   // Initialize DB asynchronously without blocking HTTP server startup
   initDatabase().then(async () => {
     startRealTimeTagsCleanupJob(15, 60);
-    startDataRetentionCleanupJob(10, 60);
+    startDataRetentionCleanupJob(7, 60);
     startPeopleTrackingPolling(Number(process.env.PEOPLE_TRACKING_POLL_INTERVAL_SECONDS) || 20);
     await bootstrapAdminUser();
   }).catch((e) => {

@@ -61,7 +61,7 @@ test.describe('Settings Page User Journey', () => {
     const companyInput = page.locator('input[type="text"]').first();
     await expect(companyInput).toBeVisible();
     const originalName = await companyInput.inputValue();
-    await companyInput.fill('Aperture Global Systems UTC');
+    await companyInput.fill('People Tracking in Construction');
 
     // Click Save General Settings
     const saveGeneralBtn = page.getByRole('button', { name: /Save General Settings/i });
@@ -72,7 +72,7 @@ test.describe('Settings Page User Journey', () => {
     await expect(page.locator('text=Settings successfully saved')).toBeVisible({ timeout: 10000 });
 
     // Restore or confirm value persisted
-    await companyInput.fill(originalName || 'Aperture Construction Systems');
+    await companyInput.fill(originalName || 'People Tracking in Construction');
     await saveGeneralBtn.click();
     await expect(page.locator('text=Settings successfully saved')).toBeVisible({ timeout: 10000 });
 

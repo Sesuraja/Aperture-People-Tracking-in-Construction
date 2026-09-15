@@ -11,6 +11,12 @@ import { useGaoHistory } from '../lib/useGaoApi';
 import { collection, getDocs, onSnapshot, db, doc, setDoc } from '../lib/db';
 import { exportToCSV, generatePDFReport } from '../lib/exportUtils';
 import { useTracking, useTerminology } from '../context/TrackingContext';
+import { 
+  useSystemTimezone, 
+  formatHistoryTimestamp, 
+  matchesCalendarDate, 
+  formatUtcDate 
+} from '../lib/dateTimeUtils';
 
 // Helper function to format duration strictly in minutes
 function formatDurationMinutes(enterTimeStr?: string, leaveTimeStr?: string, fallbackDuration?: number | string): string {
@@ -45,27 +51,6 @@ function formatDurationMinutes(enterTimeStr?: string, leaveTimeStr?: string, fal
   }
 
   return '—';
-}
-
-// Helper to check if record falls on a target date string (YYYY-MM-DD)
-function matchesCalendarDate(dateTarget: string, ...dateCandidates: (string | Date | undefined)[]): boolean {
-  if (!dateTarget) return true;
-  for (const cand of dateCandidates) {
-    if (!cand) continue;
-    const str = String(cand);
-    if (str.startsWith(dateTarget) || str.includes(dateTarget)) return true;
-    try {
-      const d = new Date(cand);
-      if (!isNaN(d.getTime())) {
-        const iso = d.toISOString().split('T')[0];
-        if (iso === dateTarget) return true;
-        // Also check local date
-        const local = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-        if (local === dateTarget) return true;
-      }
-    } catch {}
-  }
-  return false;
 }
 
 // Helper function to extract normalized keys for any person, tag, or visitor
@@ -220,11 +205,12 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
     organizationType 
   } = useTerminology();
 
+  const { rawSetting: systemTzSetting, label: systemTzLabel } = useSystemTimezone();
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'workers' | 'visitors' | 'equipment' | 'vehicles' | 'readers'>('all');
   const [selectedZoneFilter, setSelectedZoneFilter] = useState<string>('all');
-  const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
-  const [filterByDateEnabled, setFilterByDateEnabled] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string>(() => formatUtcDate(new Date(), { format: 'iso' }));
+  const [dateFilterMode, setDateFilterMode] = useState<'7days' | 'single' | 'all'>('7days');
   const [isAiSummaryOpen, setIsAiSummaryOpen] = useState(false);
   const [aiSummaryContent, setAiSummaryContent] = useState<string | null>(null);
   const [isGeneratingAi, setIsGeneratingAi] = useState(false);
@@ -347,7 +333,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
         getDocs(collection(db, 'registered_people')),
         getDocs(collection(db, 'people')),
         getDocs(collection(db, 'visitors')),
-        fetch('/api/GetHistoryRecords/0/150').then(r => r.ok ? r.json() : [])
+        fetch(`/api/GetHistoryRecords/0/150?timezone=${encodeURIComponent(systemTzSetting)}`).then(r => r.ok ? r.json() : [])
       ]);
 
       // Build local people lookup
@@ -577,9 +563,13 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
   // Filter records based on selected calendar date, category, search query, and zone
   const filteredRecords = useMemo(() => {
     return allRecords.filter(r => {
-      // 1. Calendar Date filter
-      if (filterByDateEnabled && selectedDate) {
-        const match = matchesCalendarDate(selectedDate, r.EnterTimeStr, r.LeaveTimeStr, r.rawDate);
+      // 1. Date filter (7-Day MongoDB retention window, single calendar date, or all)
+      if (dateFilterMode === '7days') {
+        const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const recordTime = r.rawDate ? new Date(r.rawDate).getTime() : (r.EnterTimeStr ? new Date(r.EnterTimeStr).getTime() : 0);
+        if (recordTime > 0 && recordTime < sevenDaysAgo) return false;
+      } else if (dateFilterMode === 'single' && selectedDate) {
+        const match = matchesCalendarDate(selectedDate, systemTzSetting, r.EnterTimeStr, r.LeaveTimeStr, r.rawDate);
         if (!match) return false;
       }
 
@@ -608,7 +598,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
 
       return true;
     });
-  }, [allRecords, selectedCategory, selectedZoneFilter, searchQuery, selectedDate, filterByDateEnabled, registeredPeopleMap, personnelSingular]);
+  }, [allRecords, selectedCategory, selectedZoneFilter, searchQuery, selectedDate, dateFilterMode, registeredPeopleMap, personnelSingular]);
 
   // Paginated records
   const totalPages = Math.max(1, Math.ceil(filteredRecords.length / pageSize));
@@ -620,7 +610,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
   // Reset page when filters change
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, selectedCategory, selectedZoneFilter, selectedDate, filterByDateEnabled]);
+  }, [searchQuery, selectedCategory, selectedZoneFilter, selectedDate, dateFilterMode]);
 
   // Summary Metrics
   const activeCount = useMemo(() => {
@@ -645,7 +635,7 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
 
       setAiSummaryContent(`
 📊 **Aperture Spatial Intelligence & Historical Telemetry Report**
-• **Date Replayed:** ${filterByDateEnabled ? selectedDate : 'All Historical Dates'}
+• **Date Scope:** ${dateFilterMode === '7days' ? 'Last 7 Days (Real-Time Retention)' : dateFilterMode === 'single' ? selectedDate : 'All Historical Dates'}
 • **Site Selected:** ${siteName}
 • **Total Filtered Event Logs:** ${filteredRecords.length} historical entries (${uniquePersonnelCount} distinct ${personnelPlural.toLowerCase()}).
 • **Active On-Site Status:** ${activeCount} entities currently active or in-zone.
@@ -670,8 +660,8 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
         Role: role,
         Category: entity.isVisitor ? 'Visitor' : 'Employee/Contractor',
         Zone: r.LocationName,
-        EnterTime: r.EnterTimeStr,
-        ExitTime: r.LeaveTimeStr,
+        EnterTime: formatHistoryTimestamp(r.EnterTimeStr, systemTzSetting),
+        ExitTime: formatHistoryTimestamp(r.LeaveTimeStr, systemTzSetting),
         Duration: r.Duration
       };
     });
@@ -697,8 +687,8 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
         name: name,
         role: role,
         zone: r.LocationName,
-        time: r.EnterTimeStr,
-        exit: r.LeaveTimeStr,
+        time: formatHistoryTimestamp(r.EnterTimeStr, systemTzSetting),
+        exit: formatHistoryTimestamp(r.LeaveTimeStr, systemTzSetting),
         duration: r.Duration
       };
     });
@@ -716,7 +706,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
       ],
       data,
       [
-        { label: 'Report Date', value: filterByDateEnabled ? selectedDate : 'All Dates' },
+        { label: 'Report Scope', value: dateFilterMode === '7days' ? 'Last 7 Days (Real-Time Retention)' : dateFilterMode === 'single' ? selectedDate : 'All Historical Dates' },
         { label: 'Site Location', value: siteName },
         { label: 'Total Events Logged', value: filteredRecords.length },
         { label: 'Unique Entities', value: uniquePersonnelCount },
@@ -742,39 +732,57 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                   Historical Telemetry & Access Ledger
                 </h2>
                 <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-[#007BC4]/10 text-[#007BC4] border border-[#007BC4]/20">
-                  MongoDB Sync
+                  MongoDB 7-Day Retention
                 </span>
               </div>
               <p className="text-slate-500 dark:text-slate-400 text-xs font-medium mt-0.5">
-                Audit historical {personnelSingular.toLowerCase()} access, zone transitions & dwell times in minutes for <span className="font-semibold text-slate-700 dark:text-slate-300">{siteName}</span>
+                Audit real-time & historical {personnelSingular.toLowerCase()} access, zone transitions & dwell times in minutes for <span className="font-semibold text-slate-700 dark:text-slate-300">{siteName}</span>
               </p>
             </div>
           </div>
         </div>
         
         <div className="flex items-center gap-3 flex-wrap">
-          {/* Date Range Picker with All Dates Toggle */}
-          <div className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 px-3 py-1.5 rounded-xl shadow-xs">
-            <Calendar size={14} className="text-[#007BC4]" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={e => {
-                setSelectedDate(e.target.value);
-                setFilterByDateEnabled(true);
-              }}
-              className="text-xs font-bold text-slate-800 dark:text-slate-200 bg-transparent focus:outline-none cursor-pointer"
-            />
+          {/* Date Filter Controls with 7-Day Quick Filter */}
+          <div className="flex items-center gap-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 p-1 rounded-xl shadow-xs">
             <button
-              onClick={() => setFilterByDateEnabled(!filterByDateEnabled)}
-              className={`text-[10px] px-2 py-0.5 rounded-lg font-bold transition ${
-                filterByDateEnabled 
-                  ? 'bg-[#007BC4]/10 text-[#007BC4] hover:bg-[#007BC4]/20' 
-                  : 'bg-slate-100 dark:bg-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-white'
+              onClick={() => setDateFilterMode('7days')}
+              className={`text-xs px-2.5 py-1 rounded-lg font-bold transition flex items-center gap-1.5 ${
+                dateFilterMode === '7days'
+                  ? 'bg-[#007BC4] text-white shadow-xs'
+                  : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
               }`}
-              title={filterByDateEnabled ? 'Click to show all historical dates' : 'Click to filter by selected calendar date'}
+              title="Show real-time history within MongoDB 7-day retention period"
             >
-              {filterByDateEnabled ? 'Date Filter: ON' : 'All Dates'}
+              <Calendar size={13} />
+              7 Days History
+            </button>
+            <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 mx-0.5" />
+            <div className="flex items-center gap-1 px-1.5 py-0.5">
+              <input
+                type="date"
+                value={selectedDate}
+                onChange={e => {
+                  setSelectedDate(e.target.value);
+                  setDateFilterMode('single');
+                }}
+                className={`text-xs font-semibold bg-transparent focus:outline-none cursor-pointer ${
+                  dateFilterMode === 'single' ? 'text-[#007BC4] font-bold' : 'text-slate-600 dark:text-slate-300'
+                }`}
+                title="Filter by specific calendar date"
+              />
+            </div>
+            <div className="h-4 w-px bg-slate-200 dark:bg-slate-700 mx-0.5" />
+            <button
+              onClick={() => setDateFilterMode('all')}
+              className={`text-xs px-2.5 py-1 rounded-lg font-bold transition ${
+                dateFilterMode === 'all'
+                  ? 'bg-slate-800 text-white dark:bg-slate-700 shadow-xs'
+                  : 'text-slate-500 hover:text-slate-800 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700'
+              }`}
+              title="Show all historical records"
+            >
+              All
             </button>
           </div>
 
@@ -966,8 +974,8 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                 <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest border-b border-[#005B92]">Employee / Visitor Info</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest border-b border-[#005B92]">{roleLabel}</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest border-b border-[#005B92]">{zoneLabel} Location</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest border-b border-[#005B92]">Enter Time</th>
-                <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest border-b border-[#005B92]">Leave Time</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest border-b border-[#005B92]">Enter Time ({systemTzLabel})</th>
+                <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest border-b border-[#005B92]">Leave Time ({systemTzLabel})</th>
                 <th className="py-3 px-4 text-[10px] font-black uppercase tracking-widest border-b border-[#005B92] text-right">Duration (Mins)</th>
               </tr>
             </thead>
@@ -987,8 +995,8 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                   <td colSpan={7} className="py-16 text-center text-slate-500 font-medium">
                     <div className="flex flex-col items-center justify-center gap-2">
                       <Search size={24} className="text-slate-400" />
-                      <span className="text-sm font-bold text-slate-700 dark:text-slate-300">No telemetry logs found for {filterByDateEnabled ? selectedDate : 'this query'}</span>
-                      <span className="text-xs text-slate-400">Try switching date or clicking &quot;All Dates&quot; above</span>
+                      <span className="text-sm font-bold text-slate-700 dark:text-slate-300">No telemetry logs found for {dateFilterMode === 'single' ? selectedDate : dateFilterMode === '7days' ? 'the last 7 days' : 'this query'}</span>
+                      <span className="text-xs text-slate-400">Try switching date or selecting &quot;All&quot; above</span>
                     </div>
                   </td>
                 </tr>
@@ -1031,7 +1039,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                       </span>
                     </td>
                     <td className="py-3.5 px-4 font-mono text-xs text-slate-600 dark:text-slate-400 font-semibold">
-                      {r.EnterTimeStr}
+                      {formatHistoryTimestamp(r.EnterTimeStr, systemTzSetting)}
                     </td>
                     <td className="py-3.5 px-4">
                       {isActive ? (
@@ -1040,7 +1048,7 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
                         </span>
                       ) : (
                         <span className="font-mono text-xs text-slate-600 dark:text-slate-400 font-semibold">
-                          {r.LeaveTimeStr}
+                          {formatHistoryTimestamp(r.LeaveTimeStr, systemTzSetting)}
                         </span>
                       )}
                     </td>

@@ -639,10 +639,10 @@ adminRouter.post('/purge-demo', requirePermission('settings'), async (req: AuthR
   }
 });
 
-// GET /api/admin/retention-policy - Returns 10-day retention status, TTL index verification, and collection breakdowns
+// GET /api/admin/retention-policy - Returns 7-day retention status, TTL index verification, and collection breakdowns
 adminRouter.get(['/retention-policy', '/data-retention/status'], async (req: AuthRequest, res: Response) => {
   try {
-    const status = await getDataRetentionStatus(10);
+    const status = await getDataRetentionStatus(7);
     return res.json({
       success: true,
       ...status
@@ -652,22 +652,22 @@ adminRouter.get(['/retention-policy', '/data-retention/status'], async (req: Aut
   }
 });
 
-// POST /api/admin/retention-policy/cleanup - Manually triggers the 10-day retention cleanup
+// POST /api/admin/retention-policy/cleanup - Manually triggers the 7-day retention cleanup
 adminRouter.post(['/retention-policy/cleanup', '/retention-policy/execute'], requirePermission('settings'), async (req: AuthRequest, res: Response) => {
   try {
-    const result = await cleanupExpiredRetentionData(10);
+    const result = await cleanupExpiredRetentionData(7);
     await logAuditEvent({
       userId: req.user?.id,
       userEmail: req.user?.email,
       organizationId: req.user?.organizationId || 'default',
-      action: 'ADMIN_MANUAL_10_DAY_RETENTION_CLEANUP',
+      action: 'ADMIN_MANUAL_7_DAY_RETENTION_CLEANUP',
       resource: 'data_retention',
       details: { ...result },
       ip: req.ip
     });
     return res.json({
       success: true,
-      message: `10-day retention cleanup completed: purged ${result.deletedCount} expired documents.`,
+      message: `7-day retention cleanup completed: purged ${result.deletedCount} expired documents.`,
       result
     });
   } catch (err: any) {
