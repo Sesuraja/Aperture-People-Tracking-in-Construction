@@ -1,0 +1,35 @@
+services:
+  - type: web
+    name: aperture-people-tracking
+    runtime: node
+    plan: starter
+    region: oregon
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: MONGODB_URI
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: PEOPLE_TRACKING_API_HOST
+        sync: false
+      - key: GAO_DEVICE_API_KEY
+        sync: false
+      - key: GAO_READER_MODE
+        value: mock
+      - key: GAO_SIMULATOR_ENABLED
+        value: false
+      - key: ADMIN_INITIAL_EMAIL
+        sync: false
+      - key: ADMIN_INITIAL_PASSWORD
+        sync: false

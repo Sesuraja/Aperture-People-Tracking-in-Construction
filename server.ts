@@ -90,12 +90,26 @@ async function startServer() {
     } catch {}
   }
 
+  if (process.env.RENDER_EXTERNAL_URL) {
+    try {
+      const renderOrigin = new URL(process.env.RENDER_EXTERNAL_URL).origin;
+      if (!configuredOrigins.includes(renderOrigin)) {
+        configuredOrigins.push(renderOrigin);
+      }
+    } catch {}
+  }
+
   const isProduction = process.env.NODE_ENV === 'production';
 
   app.use(cors({
     origin: (origin, callback) => {
       // Allow non-browser server-to-server or webhook calls (no Origin header)
       if (!origin) {
+        return callback(null, true);
+      }
+
+      // Automatically allow Render domains (*.onrender.com)
+      if (origin.endsWith('.onrender.com')) {
         return callback(null, true);
       }
 
@@ -169,6 +183,9 @@ async function startServer() {
     const distPath = path.join(process.cwd(), 'dist');
     app.use(express.static(distPath));
     app.get('*', (req, res) => {
+      if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ error: 'API endpoint not found', path: req.path });
+      }
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
@@ -186,8 +203,8 @@ async function startServer() {
     console.warn('[DB Service] Async DB initialization note:', e?.message);
   });
 
-  // Dual-stack server listen (supports both IPv4 and IPv6 localhost without 2000ms delay)
-  httpServer.listen(PORT, () => {
+  // Dual-stack server listen (explicitly bind to 0.0.0.0 for Render.com container routing)
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`\n=======================================================`);
     console.log(`🚀 Aperture Construction People Tracking System Ready!`);
     console.log(`🌐 Local Web Dashboard: http://localhost:${PORT}`);

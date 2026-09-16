@@ -15,6 +15,8 @@
  */
 
 import { resolvePersonName } from './movementAnalytics';
+import { parseDateInput, resolveIanaTimezone, getSystemTimezoneSetting } from './dateTimeUtils';
+
 
 export interface RawApiHistoryRecord {
   TagID?: string;
@@ -150,47 +152,52 @@ export interface IndustryContextOptions {
   siteLabel?: string;
   people?: any[] | Map<string, any>;
   peopleRegistry?: any[] | Map<string, any>;
+  tzSetting?: string;
 }
 
 /**
  * Parses timestamp string or Date object into valid Date, returning null on invalid input.
+ * Accurately treats timezone-less API and database strings as UTC.
  */
 export function parseDateTime(raw?: any): Date | null {
   if (!raw) return null;
-  if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw;
-  if (typeof raw === 'number') {
-    const d = new Date(raw);
-    return isNaN(d.getTime()) ? null : d;
-  }
   if (typeof raw === 'string') {
     const trimmed = raw.trim();
-    if (!trimmed || trimmed === 'ACTIVE' || trimmed === 'Active') return null;
-    // Handle "yyyy-MM-dd HH:mm:ss" format by replacing space with 'T' if needed
-    const isoLike = trimmed.includes(' ') && !trimmed.includes('T') ? trimmed.replace(' ', 'T') : trimmed;
-    const d = new Date(isoLike);
-    if (!isNaN(d.getTime())) return d;
-    // Fallback standard parse
-    const direct = new Date(trimmed);
-    if (!isNaN(direct.getTime())) return direct;
+    if (!trimmed || trimmed === 'ACTIVE' || trimmed === 'Active' || trimmed === '—') return null;
   }
-  return null;
+  const d = parseDateInput(raw);
+  return isNaN(d.getTime()) ? null : d;
 }
 
 /**
  * Format a Date or timestamp string nicely into "YYYY-MM-DD HH:mm:ss"
+ * converted according to the active software/system timezone setting.
  */
-export function formatTimestampDisplay(d?: Date | string | null): string {
+export function formatTimestampDisplay(d?: Date | string | null, tzSetting?: string): string {
   if (!d) return 'Active / In Zone';
   const dateObj = typeof d === 'string' ? parseDateTime(d) : d;
   if (!dateObj || isNaN(dateObj.getTime())) return typeof d === 'string' ? d : 'Unknown';
   
-  const YYYY = dateObj.getFullYear();
-  const MM = String(dateObj.getMonth() + 1).padStart(2, '0');
-  const DD = String(dateObj.getDate()).padStart(2, '0');
-  const hh = String(dateObj.getHours()).padStart(2, '0');
-  const mm = String(dateObj.getMinutes()).padStart(2, '0');
-  const ss = String(dateObj.getSeconds()).padStart(2, '0');
-  return `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}`;
+  const resolved = resolveIanaTimezone(tzSetting || getSystemTimezoneSetting());
+  try {
+    const dateStr = dateObj.toLocaleDateString('en-CA', { timeZone: resolved.iana });
+    const timeStr = dateObj.toLocaleTimeString('en-US', {
+      timeZone: resolved.iana,
+      hour12: false,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    });
+    return `${dateStr} ${timeStr}`;
+  } catch {
+    const YYYY = dateObj.getUTCFullYear();
+    const MM = String(dateObj.getUTCMonth() + 1).padStart(2, '0');
+    const DD = String(dateObj.getUTCDate()).padStart(2, '0');
+    const hh = String(dateObj.getUTCHours()).padStart(2, '0');
+    const mm = String(dateObj.getUTCMinutes()).padStart(2, '0');
+    const ss = String(dateObj.getUTCSeconds()).padStart(2, '0');
+    return `${YYYY}-${MM}-${DD} ${hh}:${mm}:${ss}`;
+  }
 }
 
 /**
@@ -258,7 +265,8 @@ export function normalizeApiRecord(
   rec: RawApiHistoryRecord, 
   index: number = 0,
   peopleRegistry?: any[] | Map<string, any> | null,
-  fallbackPersonnelSingular: string = 'Personnel'
+  fallbackPersonnelSingular: string = 'Personnel',
+  tzSetting?: string
 ): {
   id: string;
   tagId: string;
@@ -309,8 +317,8 @@ export function normalizeApiRecord(
   );
 
   const durationFormatted = formatDuration(durationMinutes);
-  const enterTimeFormatted = formatTimestampDisplay(enterDate);
-  const leaveTimeFormatted = leaveDate ? formatTimestampDisplay(leaveDate) : 'Active';
+  const enterTimeFormatted = formatTimestampDisplay(enterDate, tzSetting);
+  const leaveTimeFormatted = leaveDate ? formatTimestampDisplay(leaveDate, tzSetting) : 'Active';
 
   const id = `evt_${tagId}_${enterDate.getTime()}_${index}`;
 
@@ -574,9 +582,12 @@ export function analyzeApiEvents(
   }
 
   const registry = options.people || options.peopleRegistry;
+  const tzSetting = options.tzSetting;
 
   // 1. Normalize all records
-  const normalized = rawRecords.map((r, idx) => normalizeApiRecord(r, idx, registry, options.personnelSingular));
+  const normalized = rawRecords.map((r, idx) => 
+    normalizeApiRecord(r, idx, registry, options.personnelSingular, tzSetting)
+  );
 
   // Sort chronologically ascending to evaluate sequential movements
   const sortedChronological = [...normalized].sort(
@@ -727,23 +738,36 @@ export function calculateKPIs(events: NormalizedEvent[]): IntelligenceKPIs {
  */
 export function buildPersonMovementTimeline(
   events: NormalizedEvent[],
-  targetTagId: string
+  targetTagId: string,
+  tzSetting?: string
 ): PersonTimelineStep[] {
   const personEvents = events
     .filter(e => e.tagId.toLowerCase() === targetTagId.toLowerCase())
     .sort((a, b) => a.enterDate.getTime() - b.enterDate.getTime());
 
   const steps: PersonTimelineStep[] = [];
+  const resolved = resolveIanaTimezone(tzSetting || getSystemTimezoneSetting());
 
   for (let i = 0; i < personEvents.length; i++) {
     const evt = personEvents[i];
     const prevEvt = i > 0 ? personEvents[i - 1] : null;
 
-    // Time string e.g. 07:06:21
-    const hh = String(evt.enterDate.getHours()).padStart(2, '0');
-    const mm = String(evt.enterDate.getMinutes()).padStart(2, '0');
-    const ss = String(evt.enterDate.getSeconds()).padStart(2, '0');
-    const timeString = `${hh}:${mm}:${ss}`;
+    // Time string in active system timezone e.g. 07:06:21
+    let timeString = '';
+    try {
+      timeString = evt.enterDate.toLocaleTimeString('en-US', {
+        timeZone: resolved.iana,
+        hour12: false,
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit'
+      });
+    } catch {
+      const hh = String(evt.enterDate.getUTCHours()).padStart(2, '0');
+      const mm = String(evt.enterDate.getUTCMinutes()).padStart(2, '0');
+      const ss = String(evt.enterDate.getUTCSeconds()).padStart(2, '0');
+      timeString = `${hh}:${mm}:${ss}`;
+    }
 
     // Gap between previous exit and this entry
     let transitGapMinutes: number | undefined;

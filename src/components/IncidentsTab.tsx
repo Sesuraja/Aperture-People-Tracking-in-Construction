@@ -13,6 +13,7 @@ import { useTerminology, useTracking } from '../context/TrackingContext';
 import { gaoApi, HistoryRecord } from '../lib/gaoApi';
 import { exportToCSV, ExportColumn } from '../lib/exportUtils';
 import { db, doc, setDoc, batchSetDocs, collection, onSnapshot, serverTimestamp } from '../lib/db';
+import { useSystemTimezone, formatUtcDate, resolveIanaTimezone } from '../lib/dateTimeUtils';
 import {
   RawApiHistoryRecord,
   NormalizedEvent,
@@ -43,6 +44,8 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
     personnelPlural = 'Personnel',
     siteLabel = 'Facility'
   } = useTerminology();
+
+  const { rawSetting: systemTzSetting, label: systemTzLabel } = useSystemTimezone();
 
   const activeIndustry = intelligenceProfile?.industry || config?.industryId || 'construction';
   const activeSubIndustry = intelligenceProfile?.subIndustry || config?.subIndustry || config?.industryName || 'General Operations';
@@ -238,9 +241,10 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
       personnelSingular,
       personnelPlural,
       siteLabel,
-      people: peopleRegistry
+      people: peopleRegistry,
+      tzSetting: systemTzSetting
     });
-  }, [rawRecords, activeIndustry, activeSubIndustry, zoneLabel, personnelSingular, personnelPlural, siteLabel, peopleRegistry]);
+  }, [rawRecords, activeIndustry, activeSubIndustry, zoneLabel, personnelSingular, personnelPlural, siteLabel, peopleRegistry, systemTzSetting]);
 
   // 2.1 Auto-sync detected anomalies from real API telemetry to MongoDB Atlas in background
   const lastSyncedAnomaliesHashRef = useRef<string>('');
@@ -319,10 +323,11 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
    * 5. Filter Engine (Operates strictly on actual normalized API data)
    */
   const filteredEvents = useMemo(() => {
-    const todayStr = new Date().toISOString().slice(0, 10);
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    const yesterdayStr = yesterday.toISOString().slice(0, 10);
+    const now = new Date();
+    const todayStr = formatUtcDate(now, { format: 'iso', tzSetting: systemTzSetting });
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const yesterdayStr = formatUtcDate(yesterday, { format: 'iso', tzSetting: systemTzSetting });
+    const resolvedTz = resolveIanaTimezone(systemTzSetting);
 
     return analyzedEvents.filter(event => {
       // Date filter
@@ -334,9 +339,13 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
         if (!event.enterTime.startsWith(customDate)) return false;
       }
 
-      // Time / Shift filter (based on EnterTime hour)
+      // Time / Shift filter (based on EnterTime hour in active system timezone)
       if (shiftFilter !== 'all') {
-        const hour = event.enterDate.getHours();
+        let hour = event.enterDate.getUTCHours();
+        try {
+          hour = parseInt(new Intl.DateTimeFormat('en-US', { timeZone: resolvedTz.iana, hour: 'numeric', hourCycle: 'h23' }).format(event.enterDate), 10);
+        } catch {}
+
         if (shiftFilter === 'morning' && (hour < 6 || hour >= 14)) return false;
         if (shiftFilter === 'afternoon' && (hour < 14 || hour >= 22)) return false;
         if (shiftFilter === 'night' && (hour >= 6 && hour < 22)) return false;
@@ -404,7 +413,8 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
     severityFilter,
     eventTypeFilter,
     anomalyStatusFilter,
-    searchQuery
+    searchQuery,
+    systemTzSetting
   ]);
 
   /**
@@ -445,8 +455,8 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
    */
   const personTimelineSteps = useMemo(() => {
     if (!selectedPersonTagId) return [];
-    return buildPersonMovementTimeline(analyzedEvents, selectedPersonTagId);
-  }, [analyzedEvents, selectedPersonTagId]);
+    return buildPersonMovementTimeline(analyzedEvents, selectedPersonTagId, systemTzSetting);
+  }, [analyzedEvents, selectedPersonTagId, systemTzSetting]);
 
   const selectedPersonMeta = useMemo(() => {
     if (!selectedPersonTagId) return null;
@@ -527,8 +537,8 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
       { key: 'Person', label: 'Person' },
       { key: 'TagID', label: 'Tag ID' },
       { key: 'Zone', label: `${zoneLabel} Name` },
-      { key: 'EnterTime', label: 'Enter Time' },
-      { key: 'LeaveTime', label: 'Leave Time' },
+      { key: 'EnterTime', label: `Enter Time (${systemTzLabel})` },
+      { key: 'LeaveTime', label: `Leave Time (${systemTzLabel})` },
       { key: 'DurationFormatted', label: 'Duration' },
       { key: 'IsAnomaly', label: 'AI Anomaly' },
       { key: 'AIConfidence', label: 'Confidence' },
@@ -1096,8 +1106,8 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
                     <TableHead>{personnelSingular}</TableHead>
                     <TableHead className="w-36">Tag ID</TableHead>
                     <TableHead>{zoneLabel}</TableHead>
-                    <TableHead>Enter Time</TableHead>
-                    <TableHead>Leave Time</TableHead>
+                    <TableHead>Enter Time ({systemTzLabel})</TableHead>
+                    <TableHead>Leave Time ({systemTzLabel})</TableHead>
                     <TableHead className="text-right">Duration</TableHead>
                     <TableHead className="w-32">AI Status</TableHead>
                     <TableHead className="w-20 text-center">Actions</TableHead>
@@ -1651,13 +1661,13 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
             {/* Time & Duration Breakdown */}
             <div className="grid grid-cols-3 gap-3 text-xs">
               <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60">
-                <span className="text-slate-400 block text-[10px] uppercase font-semibold">Entry Timestamp</span>
+                <span className="text-slate-400 block text-[10px] uppercase font-semibold">Entry Timestamp ({systemTzLabel})</span>
                 <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-xs mt-0.5 block">
                   {selectedEvent.enterTime}
                 </span>
               </div>
               <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/60">
-                <span className="text-slate-400 block text-[10px] uppercase font-semibold">Exit Timestamp</span>
+                <span className="text-slate-400 block text-[10px] uppercase font-semibold">Exit Timestamp ({systemTzLabel})</span>
                 <span className="font-mono font-bold text-slate-800 dark:text-slate-200 text-xs mt-0.5 block">
                   {selectedEvent.leaveTime}
                 </span>

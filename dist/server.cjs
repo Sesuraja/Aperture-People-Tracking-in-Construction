@@ -4421,6 +4421,7 @@ function startPeopleTrackingPolling(intervalSeconds = 5) {
 
 // src/server/middleware/auth.ts
 var import_jsonwebtoken = __toESM(require("jsonwebtoken"), 1);
+var import_crypto2 = __toESM(require("crypto"), 1);
 
 // src/constants/permissions.ts
 var DEFAULT_ROLE_PERMISSIONS = [
@@ -4451,8 +4452,9 @@ var isProduction = process.env.NODE_ENV === "production";
 var jwtSecret = process.env.JWT_SECRET?.trim();
 if (isProduction) {
   if (!jwtSecret || jwtSecret === "aperture-jwt-secret-change-in-production" || jwtSecret.length < 16) {
-    throw new Error(
-      "[FATAL AUTH CONFIG] JWT_SECRET must be set to a secure, persistent key (at least 16 characters) in production to ensure consistent authentication across serverless cold starts and instances."
+    jwtSecret = process.env.JWT_SECRET_FALLBACK || import_crypto2.default.randomBytes(32).toString("hex");
+    console.warn(
+      "[SECURITY WARNING] JWT_SECRET was not configured or is too short in production. A secure ephemeral secret was generated. Please configure JWT_SECRET in your Render environment variables dashboard for persistent login sessions across restarts."
     );
   }
 } else if (!jwtSecret) {
@@ -9100,10 +9102,22 @@ async function startServer() {
     } catch {
     }
   }
+  if (process.env.RENDER_EXTERNAL_URL) {
+    try {
+      const renderOrigin = new URL(process.env.RENDER_EXTERNAL_URL).origin;
+      if (!configuredOrigins.includes(renderOrigin)) {
+        configuredOrigins.push(renderOrigin);
+      }
+    } catch {
+    }
+  }
   const isProduction2 = process.env.NODE_ENV === "production";
   app.use((0, import_cors.default)({
     origin: (origin, callback) => {
       if (!origin) {
+        return callback(null, true);
+      }
+      if (origin.endsWith(".onrender.com")) {
         return callback(null, true);
       }
       if (configuredOrigins.includes(origin)) {
@@ -9160,6 +9174,9 @@ async function startServer() {
     const distPath = import_path.default.join(process.cwd(), "dist");
     app.use(import_express12.default.static(distPath));
     app.get("*", (req, res) => {
+      if (req.path.startsWith("/api/")) {
+        return res.status(404).json({ error: "API endpoint not found", path: req.path });
+      }
       res.sendFile(import_path.default.join(distPath, "index.html"));
     });
   }
@@ -9172,7 +9189,7 @@ async function startServer() {
   }).catch((e) => {
     console.warn("[DB Service] Async DB initialization note:", e?.message);
   });
-  httpServer.listen(PORT, () => {
+  httpServer.listen(PORT, "0.0.0.0", () => {
     console.log(`
 =======================================================`);
     console.log(`\u{1F680} Aperture Construction People Tracking System Ready!`);

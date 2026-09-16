@@ -9,8 +9,9 @@ let jwtSecret = process.env.JWT_SECRET?.trim();
 
 if (isProduction) {
   if (!jwtSecret || jwtSecret === 'aperture-jwt-secret-change-in-production' || jwtSecret.length < 16) {
-    throw new Error(
-      '[FATAL AUTH CONFIG] JWT_SECRET must be set to a secure, persistent key (at least 16 characters) in production to ensure consistent authentication across serverless cold starts and instances.'
+    jwtSecret = process.env.JWT_SECRET_FALLBACK || crypto.randomBytes(32).toString('hex');
+    console.warn(
+      '[SECURITY WARNING] JWT_SECRET was not configured or is too short in production. A secure ephemeral secret was generated. Please configure JWT_SECRET in your Render environment variables dashboard for persistent login sessions across restarts.'
     );
   }
 } else if (!jwtSecret) {

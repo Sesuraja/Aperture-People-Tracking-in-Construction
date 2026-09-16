@@ -15,8 +15,86 @@ import { db, collection, addDoc, updateDoc, setDoc, doc, onSnapshot, getDocs } f
 import DailyReportingTaskModal from './DailyReportingTaskModal';
 import { useTracking, useTerminology } from '../context/TrackingContext';
 import webSocketService from '../lib/webSocketService';
-import { formatEdtTime, formatEdtDate, formatEdtDateTime } from '../lib/dateTimeUtils';
+import { 
+  useSystemTimezone, 
+  useSystemClock, 
+  formatUtcTime, 
+  formatUtcDate, 
+  formatUtcDateTime, 
+  formatHistoryTimestamp, 
+  parseDateInput, 
+  resolveIanaTimezone 
+} from '../lib/dateTimeUtils';
 
+export interface ShiftDefinition {
+  id: string;
+  name: string;
+  code: string;
+  startTime: string; // "07:00"
+  endTime: string;   // "15:30"
+  gracePeriodMins: number; // 15
+  description: string;
+  color: 'amber' | 'emerald' | 'blue' | 'indigo' | 'purple' | 'rose' | string;
+  isOvertimeShift?: boolean;
+  otMultiplier?: number;
+}
+
+export const DEFAULT_SHIFTS: ShiftDefinition[] = [
+  {
+    id: 'shift_day',
+    name: 'Day Shift (07:00-15:30)',
+    code: 'DAY',
+    startTime: '07:00',
+    endTime: '15:30',
+    gracePeriodMins: 15,
+    description: 'Standard civil engineering, structural scaffolding, and core operations.',
+    color: 'amber'
+  },
+  {
+    id: 'shift_morning',
+    name: 'Morning Shift (06:00-14:30)',
+    code: 'MORN',
+    startTime: '06:00',
+    endTime: '14:30',
+    gracePeriodMins: 15,
+    description: 'Early concrete pours, surveying, logistics gate reception, and plant prep.',
+    color: 'emerald'
+  },
+  {
+    id: 'shift_swing',
+    name: 'Swing OT (15:00-23:30)',
+    code: 'SWING',
+    startTime: '15:00',
+    endTime: '23:30',
+    gracePeriodMins: 15,
+    description: 'Pre-approved overtime hours for milestone completion. Requires supervisor authorization.',
+    color: 'blue',
+    isOvertimeShift: true,
+    otMultiplier: 1.5
+  },
+  {
+    id: 'shift_night',
+    name: 'Night Shift (19:00-03:30)',
+    code: 'NIGHT',
+    startTime: '19:00',
+    endTime: '03:30',
+    gracePeriodMins: 15,
+    description: 'Tunnel shaft excavation, heavy crane rigging, and high-voltage cable splicing.',
+    color: 'indigo'
+  },
+  {
+    id: 'shift_general',
+    name: 'General Shift (09:00-17:30)',
+    code: 'GEN',
+    startTime: '09:00',
+    endTime: '17:30',
+    gracePeriodMins: 15,
+    description: 'Administration, engineering inspection, safety audits, and project management.',
+    color: 'purple'
+  }
+];
+
+export const SHIFT_OPTIONS = DEFAULT_SHIFTS.map(s => s.name);
 
 export interface AttendanceRecord {
   id: string;
@@ -26,7 +104,7 @@ export interface AttendanceRecord {
   company: string;
   department: string;
   siteZone: string;
-  shift: 'Day Shift (07:00-15:30)' | 'Night Shift (19:00-03:30)' | 'Swing OT (15:00-23:30)';
+  shift: string;
   firstIn: string;
   lastOut: string;
   breakDurationMins: number;
@@ -65,17 +143,11 @@ export interface ShiftScheduleRecord {
   personId: string;
   name: string;
   department: string;
-  shift: 'Day Shift (07:00-15:30)' | 'Night Shift (19:00-03:30)' | 'Swing OT (15:00-23:30)';
+  shift: string;
   overtimeAuthorized: boolean;
   maxOtHours: number;
   notes: string;
 }
-
-const SHIFT_OPTIONS: Array<'Day Shift (07:00-15:30)' | 'Night Shift (19:00-03:30)' | 'Swing OT (15:00-23:30)'> = [
-  'Day Shift (07:00-15:30)',
-  'Night Shift (19:00-03:30)',
-  'Swing OT (15:00-23:30)'
-];
 
 export interface SiteHoliday {
   id?: string;
@@ -95,13 +167,38 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   const [siteHolidays, setSiteHolidays] = useState<SiteHoliday[]>([]);
   const [dbLoading, setDbLoading] = useState(true);
 
+  // Active Software / System Timezone Hooks
+  const { rawSetting: systemTzSetting, label: systemTzLabel } = useSystemTimezone();
+  const systemClock = useSystemClock(systemTzSetting);
+
+  // Dynamic Shift Definitions
+  const [customShifts, setCustomShifts] = useState<ShiftDefinition[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem('gao_custom_shifts');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        }
+      } catch {}
+    }
+    return DEFAULT_SHIFTS;
+  });
+
   // Filters
   const [searchTerm, setSearchTerm] = useState('');
   const [departmentFilter, setDepartmentFilter] = useState('All');
   const [shiftFilter, setShiftFilter] = useState('All');
   const [statusFilter, setStatusFilter] = useState('All');
   const [selectedDateFilter, setSelectedDateFilter] = useState<string>('Today');
-  const [selectedCalendarDay, setSelectedCalendarDay] = useState<number>(19);
+  const [selectedCalendarDay, setSelectedCalendarDay] = useState<number>(() => {
+    try {
+      const parts = formatUtcDate(new Date(), { format: 'iso', tzSetting: systemTzSetting }).split('-');
+      return parseInt(parts[2] || '1', 10);
+    } catch {
+      return 1;
+    }
+  });
   const [leaveStatusFilter, setLeaveStatusFilter] = useState<'ALL' | 'PENDING' | 'APPROVED' | 'REJECTED'>('ALL');
 
   // Manual Attendance Modal
@@ -115,20 +212,42 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   const [isLeaveModalOpen, setIsLeaveModalOpen] = useState(false);
   const [selectedPersonForLeave, setSelectedPersonForLeave] = useState<Person | null>(null);
   const [leaveType, setLeaveType] = useState<LeaveRecord['type']>('Medical Leave');
-  const [leaveStartDate, setLeaveStartDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [leaveStartDate, setLeaveStartDate] = useState(() => formatUtcDate(new Date(), { format: 'iso', tzSetting: systemTzSetting }));
   const [leaveEndDate, setLeaveEndDate] = useState(() => {
     const d = new Date();
     d.setDate(d.getDate() + 2);
-    return d.toISOString().split('T')[0];
+    return formatUtcDate(d, { format: 'iso', tzSetting: systemTzSetting });
   });
   const [leaveReasonText, setLeaveReasonText] = useState('Physiotherapy Session');
 
-  // Shift Edit Modal
+  // Shift Assignment Modal
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [selectedPersonForShift, setSelectedPersonForShift] = useState<Person | null>(null);
-  const [assignedShift, setAssignedShift] = useState<'Day Shift (07:00-15:30)' | 'Night Shift (19:00-03:30)' | 'Swing OT (15:00-23:30)'>('Day Shift (07:00-15:30)');
+  const [assignedShift, setAssignedShift] = useState<string>(DEFAULT_SHIFTS[0].name);
   const [otAuthorized, setOtAuthorized] = useState(true);
   const [maxOtHoursVal, setMaxOtHoursVal] = useState(4);
+
+  // Create Custom Shift Modal
+  const [isCreateShiftModalOpen, setIsCreateShiftModalOpen] = useState(false);
+  const [newShiftName, setNewShiftName] = useState('');
+  const [newShiftCode, setNewShiftCode] = useState('');
+  const [newShiftStart, setNewShiftStart] = useState('08:00');
+  const [newShiftEnd, setNewShiftEnd] = useState('16:30');
+  const [newShiftGrace, setNewShiftGrace] = useState(15);
+  const [newShiftDesc, setNewShiftDesc] = useState('');
+  const [newShiftColor, setNewShiftColor] = useState<string>('amber');
+  const [newShiftIsOt, setNewShiftIsOt] = useState(false);
+
+  // Bulk Department Shift Assignment Modal
+  const [isBulkShiftModalOpen, setIsBulkShiftModalOpen] = useState(false);
+  const [bulkShiftDept, setBulkShiftDept] = useState('All');
+  const [bulkTargetShift, setBulkTargetShift] = useState(DEFAULT_SHIFTS[0].name);
+  const [bulkOtAuth, setBulkOtAuth] = useState(true);
+  const [bulkMaxOtHours, setBulkMaxOtHours] = useState(4);
+
+  // Shift Management Search & Filter
+  const [shiftSearchQuery, setShiftSearchQuery] = useState('');
+  const [shiftTabFilter, setShiftTabFilter] = useState('All');
 
   // Rate Editing Modal
   const [isRateModalOpen, setIsRateModalOpen] = useState(false);
@@ -187,6 +306,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     let unsubscribeLeave = () => {};
     let unsubscribeShifts = () => {};
     let unsubscribeHolidays = () => {};
+    let unsubscribeDefinitions = () => {};
 
     const syncAttendanceData = async () => {
       setDbLoading(true);
@@ -227,6 +347,24 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           setSiteHolidays(hols);
         });
 
+        // Listen to shift_definitions for dynamic custom shifts
+        unsubscribeDefinitions = onSnapshot(collection(db, 'shift_definitions'), (snapshot) => {
+          if (!snapshot.empty) {
+            const list: ShiftDefinition[] = [];
+            snapshot.forEach(docSnap => {
+              list.push({ id: docSnap.id, ...docSnap.data() } as ShiftDefinition);
+            });
+            const map = new Map<string, ShiftDefinition>();
+            DEFAULT_SHIFTS.forEach(s => map.set(s.id, s));
+            list.forEach(s => map.set(s.id, s));
+            const combined = Array.from(map.values());
+            setCustomShifts(combined);
+            try {
+              localStorage.setItem('gao_custom_shifts', JSON.stringify(combined));
+            } catch {}
+          }
+        });
+
       } catch (err) {
         console.warn('Error subscribing to attendance collections:', err);
       } finally {
@@ -241,6 +379,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
       unsubscribeLeave();
       unsubscribeShifts();
       unsubscribeHolidays();
+      unsubscribeDefinitions();
     };
   }, [people]);
 
@@ -280,7 +419,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
   // Combine real-time database logs with live moving personnel from TrackingContext, GAO Live RFID API & MongoDB
   const attendanceData = useMemo<AttendanceRecord[]>(() => {
-    const todayDateStr = new Date().toISOString().split('T')[0];
+    const todayDateStr = formatUtcDate(new Date(), { format: 'iso', tzSetting: systemTzSetting });
 
     // 1. Build authoritative directory from registered workforce
     const directory = new Map<string, any>();
@@ -406,37 +545,57 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
       const liveZone = liveTag?.LocationName || liveTag?.Location || p.currentZone || mongoLog?.siteZone || 'Tower Core L2';
 
-      // Compute first in time in EDT
+      // Compute first in time in system timezone
       let firstIn = mongoLog?.firstIn || '--:--';
       if (firstIn === '--:--' && (isLiveActive || p.lastSeen || liveTag)) {
         if (liveTag?.EnterTime) {
-          firstIn = formatEdtTime(liveTag.EnterTime, { includeSeconds: false, includeSuffix: false });
+          firstIn = formatUtcTime(liveTag.EnterTime, { includeSeconds: false, includeSuffix: false, tzSetting: systemTzSetting });
         } else if (p.lastSeen) {
-          firstIn = formatEdtTime(p.lastSeen, { includeSeconds: false, includeSuffix: false });
+          firstIn = formatUtcTime(p.lastSeen, { includeSeconds: false, includeSuffix: false, tzSetting: systemTzSetting });
         } else {
           firstIn = '07:30';
         }
       }
 
-      // Compute last out time in EDT
-      const lastOut = isLiveActive ? 'ACTIVE' : (mongoLog?.lastOut || (p.lastSeen ? formatEdtTime(p.lastSeen, { includeSeconds: false, includeSuffix: false }) : '--:--'));
+      // Compute last out time in system timezone
+      const lastOut = isLiveActive ? 'ACTIVE' : (mongoLog?.lastOut || (p.lastSeen ? formatUtcTime(p.lastSeen, { includeSeconds: false, includeSuffix: false, tzSetting: systemTzSetting }) : '--:--'));
+
+      // Assigned shift matching with customShifts
+      const defaultShiftName = customShifts[0]?.name || DEFAULT_SHIFTS[0].name;
+      const assignedShiftName = shiftSchedule?.shift || (idx % 3 === 0 ? (customShifts[3]?.name || DEFAULT_SHIFTS[3].name) : (idx % 4 === 0 ? (customShifts[2]?.name || DEFAULT_SHIFTS[2].name) : defaultShiftName));
+      const shiftDef = customShifts.find(s => s.name === assignedShiftName || assignedShiftName.includes(s.code)) || customShifts[0] || DEFAULT_SHIFTS[0];
+
+      // Shift-aware late evaluation
+      let isLate = false;
+      if (firstIn && firstIn !== '--:--' && shiftDef) {
+        const [sH, sM] = (shiftDef.startTime || '07:00').split(':').map(Number);
+        const [iH, iM] = firstIn.split(':').map(Number);
+        if (!isNaN(sH) && !isNaN(iH)) {
+          const shiftStartMins = sH * 60 + (sM || 0);
+          const graceLimit = shiftStartMins + (shiftDef.gracePeriodMins || 15);
+          const firstInMins = iH * 60 + (iM || 0);
+          if (firstInMins > graceLimit && firstInMins < shiftStartMins + 360) {
+            isLate = true;
+          }
+        }
+      }
+
+      const isOvertime = Boolean(mongoLog?.isOvertime || (shiftSchedule?.overtimeAuthorized && shiftSchedule.maxOtHours > 0) || shiftDef?.isOvertimeShift);
 
       // Determine attendance status
       let status: AttendanceRecord['status'] = 'ABSENT';
       if (approvedLeave) {
         status = 'ON_LEAVE';
       } else if (isLiveActive || mongoLog?.status === 'PRESENT' || mongoLog?.status === 'LATE' || mongoLog?.status === 'OVERTIME') {
-        const isLate = mongoLog?.isLate || (firstIn !== '--:--' && firstIn > '07:35' && (!shiftSchedule || shiftSchedule.shift.includes('Day')));
-        if (mongoLog?.isOvertime || (shiftSchedule?.overtimeAuthorized && shiftSchedule.maxOtHours > 0)) {
+        if (isOvertime) {
           status = 'OVERTIME';
-        } else if (isLate) {
+        } else if (isLate || mongoLog?.status === 'LATE') {
           status = 'LATE';
         } else {
           status = 'PRESENT';
         }
       }
 
-      const assignedShiftName = shiftSchedule?.shift || (idx % 3 === 0 ? 'Night Shift (19:00-03:30)' : (idx % 4 === 0 ? 'Swing OT (15:00-23:30)' : 'Day Shift (07:00-15:30)'));
       const isOutOfBounds = liveZone.toLowerCase().includes('restricted') || liveZone.toLowerCase().includes('danger') || liveZone.toLowerCase().includes('shaft');
 
       resultMap.set(canonicalId.toLowerCase(), {
@@ -447,7 +606,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
         company: p.tradeCompany || (p as any).company || organizationType || 'Operations Partner',
         department: (p as any).department || p.role || 'Operations',
         siteZone: liveZone,
-        shift: assignedShiftName as any,
+        shift: assignedShiftName,
         firstIn,
         lastOut,
         breakDurationMins: mongoLog?.breakDurationMins !== undefined ? mongoLog.breakDurationMins : 45,
@@ -455,7 +614,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
         totalMins: status === 'PRESENT' || status === 'LATE' || status === 'OVERTIME' ? (mongoLog?.totalMins || 495) : 0,
         overtimeHours: status === 'OVERTIME' ? (mongoLog?.overtimeHours || 1.5) : 0,
         isLate: status === 'LATE',
-        isOvertime: status === 'OVERTIME',
+        isOvertime,
         rfidTagId: tagId || `HH-${canonicalId}`,
         geoStatus: isOutOfBounds ? 'OUT_OF_BOUNDS' : 'IN_GEO_FENCE',
         status,
@@ -471,7 +630,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     Array.from(directory.values()).forEach((p, idx) => processPerson(p, idx));
 
     return Array.from(resultMap.values());
-  }, [attendanceLogs, people, trackingCtx?.people, trackingCtx?.liveTags, dbPeople, leaveRequests, shiftSchedules, organizationType]);
+  }, [attendanceLogs, people, trackingCtx?.people, trackingCtx?.liveTags, dbPeople, leaveRequests, shiftSchedules, organizationType, systemTzSetting, customShifts]);
 
   // Filtered Roster
   const filteredRoster = useMemo(() => {
@@ -505,7 +664,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   // Handle Real RFID Gate Tap Record & Save to DB
   const handleRfidBadgeTap = async (record: AttendanceRecord) => {
     const now = new Date();
-    const currentTimeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    const currentTimeStr = formatUtcTime(now, { includeSeconds: false, includeSuffix: false, tzSetting: systemTzSetting });
     
     // Update or add log in MongoDB
     try {
@@ -527,7 +686,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           updatedAt: now.toISOString()
         });
       }
-      setNotification(`⚡ RFID Sensor Gate 1 Triggered! Hardhat Tag ${record.rfidTagId} (${record.name}) scanned at ${currentTimeStr}. Document synced to MongoDB.`);
+      setNotification(`⚡ RFID Sensor Gate 1 Triggered! Hardhat Tag ${record.rfidTagId} (${record.name}) scanned at ${currentTimeStr} (${systemTzLabel}). Synced to MongoDB.`);
     } catch (err) {
       console.warn('Error updating RFID tap in DB:', err);
       setNotification(`⚡ RFID Sensor Gate 1 Triggered for ${record.name}! (Local update)`);
@@ -539,8 +698,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   const handleSaveManualPunch = async () => {
     if (!selectedPersonForPunch) return;
     const now = new Date();
-    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-    const todayDateStr = now.toISOString().split('T')[0];
+    const timeStr = formatUtcTime(now, { includeSeconds: false, includeSuffix: false, tzSetting: systemTzSetting });
+    const todayDateStr = formatUtcDate(now, { format: 'iso', tzSetting: systemTzSetting });
 
     const existing = attendanceData.find(a => a.personId === selectedPersonForPunch.id || a.name === selectedPersonForPunch.name);
 
@@ -562,7 +721,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           company: selectedPersonForPunch.tradeCompany || organizationType || 'Operations Partner',
           department: (selectedPersonForPunch as any).department || selectedPersonForPunch.role || 'Operations',
           siteZone: selectedPersonForPunch.currentZone || 'Main Gate 1',
-          shift: 'Day Shift (07:00-15:30)',
+          shift: customShifts[0]?.name || DEFAULT_SHIFTS[0].name,
           firstIn: manualPunchType === 'IN' ? timeStr : '08:00',
           lastOut: manualPunchType === 'OUT' ? timeStr : '17:00',
           breakDurationMins: 45,
@@ -581,7 +740,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           updatedAt: now.toISOString()
         });
       }
-      setNotification(`✅ Manual Override Punch (${manualPunchType}) saved to MongoDB for ${selectedPersonForPunch.name}. Location: ${manualGateLocation}. Reason: ${manualReason}.`);
+      setNotification(`✅ Manual Override Punch (${manualPunchType}) saved to MongoDB for ${selectedPersonForPunch.name}. Time: ${timeStr} (${systemTzLabel}). Location: ${manualGateLocation}.`);
     } catch (err) {
       console.warn('Error saving manual punch to DB:', err);
       setNotification(`✅ Manual Override Punch (${manualPunchType}) logged for ${selectedPersonForPunch.name}.`);
@@ -654,6 +813,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
     if (!selectedPersonForShift) return;
 
     try {
+      const nowStr = formatUtcDate(new Date(), { tzSetting: systemTzSetting });
       await addDoc(collection(db, 'shift_schedules'), {
         personId: selectedPersonForShift.id,
         name: selectedPersonForShift.name,
@@ -661,7 +821,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
         shift: assignedShift,
         overtimeAuthorized: otAuthorized,
         maxOtHours: maxOtHoursVal,
-        notes: `Updated on ${formatEdtDate(new Date())}`
+        notes: `Updated on ${nowStr} (${systemTzLabel})`
       });
 
       // Also update existing attendance log if present
@@ -672,7 +832,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
         });
       }
 
-      setNotification(`⏱️ Shift updated to ${assignedShift} for ${selectedPersonForShift.name} and persisted to MongoDB.`);
+      setNotification(`⏱️ Shift updated to "${assignedShift}" for ${selectedPersonForShift.name} and persisted to MongoDB.`);
     } catch (err) {
       console.warn('Error updating shift schedule:', err);
       setNotification(`⏱️ Shift assigned to ${selectedPersonForShift.name}.`);
@@ -680,6 +840,88 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
     setIsShiftModalOpen(false);
     setSelectedPersonForShift(null);
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  // Create Custom Shift Definition & Save to MongoDB + localStorage
+  const handleCreateCustomShift = async () => {
+    if (!newShiftName.trim() || !newShiftCode.trim()) {
+      setNotification('❌ Shift Name and Shift Code are required.');
+      setTimeout(() => setNotification(null), 3000);
+      return;
+    }
+
+    const shiftId = `shift_${newShiftCode.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${Date.now()}`;
+    const newShift: ShiftDefinition = {
+      id: shiftId,
+      name: `${newShiftName.trim()} (${newShiftStart}-${newShiftEnd})`,
+      code: newShiftCode.trim().toUpperCase(),
+      startTime: newShiftStart,
+      endTime: newShiftEnd,
+      gracePeriodMins: Number(newShiftGrace) || 15,
+      description: newShiftDesc.trim() || 'Custom site operational shift',
+      color: newShiftColor || 'amber',
+      isOvertimeShift: newShiftIsOt,
+      otMultiplier: newShiftIsOt ? 1.5 : 1.0
+    };
+
+    try {
+      await setDoc(doc(db, 'shift_definitions', shiftId), newShift);
+      const updated = [...customShifts, newShift];
+      setCustomShifts(updated);
+      try {
+        localStorage.setItem('gao_custom_shifts', JSON.stringify(updated));
+      } catch {}
+      setNotification(`✅ Custom Shift "${newShift.name}" created and synced to MongoDB.`);
+    } catch (err) {
+      console.warn('Error saving custom shift to DB:', err);
+      const updated = [...customShifts, newShift];
+      setCustomShifts(updated);
+      setNotification(`✅ Custom Shift "${newShift.name}" created.`);
+    }
+
+    setIsCreateShiftModalOpen(false);
+    setNewShiftName('');
+    setNewShiftCode('');
+    setNewShiftDesc('');
+    setTimeout(() => setNotification(null), 4000);
+  };
+
+  // Bulk Department Shift Assignment
+  const handleBulkAssignShift = async () => {
+    const targets = attendanceData.filter(a => bulkShiftDept === 'All' || a.department === bulkShiftDept);
+    if (targets.length === 0) {
+      setNotification(`⚠️ No workers found for department "${bulkShiftDept}".`);
+      setTimeout(() => setNotification(null), 3000);
+      return;
+    }
+
+    try {
+      const nowStr = formatUtcDate(new Date(), { tzSetting: systemTzSetting });
+      for (const worker of targets) {
+        await addDoc(collection(db, 'shift_schedules'), {
+          personId: worker.personId || worker.id,
+          name: worker.name,
+          department: worker.department,
+          shift: bulkTargetShift,
+          overtimeAuthorized: bulkOtAuth,
+          maxOtHours: bulkMaxOtHours,
+          notes: `Bulk assigned for ${bulkShiftDept} on ${nowStr} (${systemTzLabel})`
+        });
+
+        if (worker.id) {
+          await updateDoc(doc(db, 'attendance_logs', worker.id), {
+            shift: bulkTargetShift
+          }).catch(() => {});
+        }
+      }
+      setNotification(`✅ Bulk Shift updated: ${targets.length} workers in "${bulkShiftDept}" assigned to ${bulkTargetShift}. Synced to MongoDB.`);
+    } catch (err) {
+      console.warn('Error bulk assigning shifts:', err);
+      setNotification(`✅ Bulk Shift updated for ${targets.length} workers.`);
+    }
+
+    setIsBulkShiftModalOpen(false);
     setTimeout(() => setNotification(null), 4000);
   };
 
@@ -708,7 +950,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   // Bulk Clock-In All Present
   const handleBulkClockIn = async () => {
     const now = new Date();
-    const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    const timeStr = formatUtcTime(now, { includeSeconds: false, includeSuffix: false, tzSetting: systemTzSetting });
 
     try {
       for (const rec of filteredRoster) {
@@ -720,7 +962,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           });
         }
       }
-      setNotification(`⚡ Bulk Clock-In executed for ${filteredRoster.length} workers! Updated in MongoDB.`);
+      setNotification(`⚡ Bulk Clock-In executed for ${filteredRoster.length} workers at ${timeStr} (${systemTzLabel})! Updated in MongoDB.`);
     } catch (err) {
       console.warn('Bulk clock in error:', err);
       setNotification(`⚡ Bulk Clock-In processed for ${filteredRoster.length} workers.`);
@@ -739,8 +981,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
         Department: a.department,
         Contractor: a.company,
         Shift: a.shift,
-        FirstIn: `${a.firstIn} AM`,
-        LastOut: `${a.lastOut} PM`,
+        FirstIn: a.firstIn !== '--:--' ? a.firstIn : '--:--',
+        LastOut: a.lastOut,
         BreakMins: `${a.breakDurationMins}m`,
         BaseHours: baseHours,
         OvertimeHours: a.overtimeHours,
@@ -755,8 +997,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
       { key: 'Department', label: 'DEPARTMENT' },
       { key: 'Contractor', label: 'CONTRACTOR' },
       { key: 'Shift', label: 'SHIFT SCHEDULE' },
-      { key: 'FirstIn', label: 'FIRST IN' },
-      { key: 'LastOut', label: 'LAST OUT' },
+      { key: 'FirstIn', label: `FIRST IN (${systemTzLabel})` },
+      { key: 'LastOut', label: `LAST OUT (${systemTzLabel})` },
       { key: 'BreakMins', label: 'BREAK' },
       { key: 'BaseHours', label: 'WORK HOURS' },
       { key: 'OvertimeHours', label: 'OT HOURS' },
@@ -780,13 +1022,13 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
     generatePDFReport(
       'Aperture Enterprise Attendance & Shift Audit Report',
-      'Official Turnstile Scan & Timesheet Summary',
+      `Official Turnstile Scan & Timesheet Summary - System Timezone: ${systemTzLabel}`,
       [
         { key: 'tag', label: 'Tag ID' },
         { key: 'name', label: 'Worker Name' },
         { key: 'dept', label: 'Department' },
         { key: 'shift', label: 'Shift' },
-        { key: 'inOut', label: 'First In / Last Out' },
+        { key: 'inOut', label: `First In / Last Out (${systemTzLabel})` },
         { key: 'hours', label: 'Hours Worked' },
         { key: 'ot', label: 'Overtime' },
         { key: 'status', label: 'Status' }
@@ -812,6 +1054,10 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
               <Clock className="w-7 h-7 text-[#007BC4]" />
               Enterprise Attendance Management
             </h2>
+            <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800">
+              <Clock size={13} className="text-[#007BC4]" />
+              <span>System Time ({systemTzLabel}): <span className="font-mono font-black">{systemClock.timeNoSuffix}</span></span>
+            </span>
             {mongoStatus.connected ? (
               <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
@@ -994,12 +1240,16 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
               className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 px-2.5 py-1.5 outline-none"
             >
               <option value="All">All Shifts</option>
-              {SHIFT_OPTIONS.map(s => <option key={s} value={s}>{s.split(' ')[0]}</option>)}
+              {customShifts.map(s => (
+                <option key={s.id} value={s.name}>
+                  {s.name.split(' (')[0]} ({s.startTime}-{s.endTime})
+                </option>
+              ))}
             </select>
 
             <button
               onClick={handleBulkClockIn}
-              className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 text-xs font-bold rounded-xl transition flex items-center gap-1"
+              className="px-2.5 py-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 text-xs font-bold rounded-xl transition flex items-center gap-1 cursor-pointer"
               title="Clock in all filtered workers instantly"
             >
               <Zap size={13} /> Bulk Clock-In
@@ -1090,7 +1340,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                       </div>
 
                       <div className="flex items-center justify-between pt-1 border-t border-slate-200/50 dark:border-slate-700/50 font-mono text-[11px]">
-                        <span className="text-slate-400 font-sans">First In / Last Out:</span>
+                        <span className="text-slate-400 font-sans">First In / Last Out ({systemTzLabel}):</span>
                         <span className="font-bold text-slate-800 dark:text-slate-200">{item.firstIn} - {item.lastOut}</span>
                       </div>
 
@@ -1138,7 +1388,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                 <TableHead className="font-bold">Personnel & RFID Tag</TableHead>
                 <TableHead className="font-bold">Department / Contractor</TableHead>
                 <TableHead className="font-bold">Shift Schedule</TableHead>
-                <TableHead className="font-bold">First In / Last Out</TableHead>
+                <TableHead className="font-bold">First In / Last Out ({systemTzLabel})</TableHead>
                 <TableHead className="font-bold">Net Work Hours</TableHead>
                 <TableHead className="font-bold">Gate & Geo Status</TableHead>
                 <TableHead className="font-bold text-center">Status</TableHead>
@@ -1168,8 +1418,8 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                   </TableCell>
 
                   <TableCell className="text-xs font-mono text-slate-700 dark:text-slate-300">
-                    <div>In: <strong>{item.firstIn} AM</strong></div>
-                    <div>Out: <strong>{item.lastOut} PM</strong></div>
+                    <div>In: <strong>{item.firstIn}</strong></div>
+                    <div>Out: <strong>{item.lastOut}</strong></div>
                   </TableCell>
 
                   <TableCell className="text-xs">
@@ -1260,7 +1510,9 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                 </div>
 
                 <div className="text-right space-y-0.5">
-                  <div className="font-mono font-bold text-[#007BC4]">{a.firstIn} AM</div>
+                  <div className="font-mono font-bold text-[#007BC4]">
+                    {a.firstIn} <span className="text-[10px] text-slate-400 font-sans font-normal">({systemTzLabel})</span>
+                  </div>
                   <Badge variant="outline" className={a.geoStatus === 'IN_GEO_FENCE' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'}>
                     {a.geoStatus}
                   </Badge>
@@ -1292,6 +1544,15 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           return parseInt((h.date || '').split('-')[2] || '0', 10) === selectedCalendarDay;
         });
 
+        const todayDayNum = (() => {
+          try {
+            const parts = formatUtcDate(new Date(), { format: 'iso', tzSetting: systemTzSetting }).split('-');
+            return parseInt(parts[2] || '1', 10);
+          } catch {
+            return 1;
+          }
+        })();
+
         return (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-in fade-in duration-300">
             {/* Left 2 Cols: Interactive Calendar Matrix */}
@@ -1301,7 +1562,7 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                   <div>
                     <h3 className="font-extrabold text-slate-900 dark:text-white text-base flex items-center gap-2">
                       <CalendarIcon size={18} className="text-[#007BC4]" />
-                      August 2026 Workforce Attendance & Leave Matrix
+                      Workforce Attendance & Leave Matrix ({systemTzLabel})
                     </h3>
                     <p className="text-xs text-slate-500 mt-0.5">
                       Click any day to view scheduled shifts, holiday downtime, and approved workforce leaves.
@@ -1310,10 +1571,10 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
 
                   <div className="flex items-center gap-2">
                     <button
-                      onClick={() => setSelectedCalendarDay(19)}
+                      onClick={() => setSelectedCalendarDay(todayDayNum)}
                       className="px-3 py-1 bg-blue-50 text-[#007BC4] hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-300 rounded-lg text-xs font-bold transition cursor-pointer"
                     >
-                      Today (Aug 19)
+                      Today ({formatUtcDate(new Date(), { tzSetting: systemTzSetting })})
                     </button>
                   </div>
                 </div>
@@ -1619,69 +1880,324 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
       })()}
 
       {/* 4. SHIFT ROSTER & OVERTIME */}
-      {activeSubTab === 'shifts' && (
-        <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm p-5 space-y-5">
-          <div className="flex items-center justify-between">
+      {activeSubTab === 'shifts' && (() => {
+        const filteredShiftPersonnel = attendanceData.filter(a => {
+          const matchesQuery = !shiftSearchQuery || 
+            (a.name || '').toLowerCase().includes(shiftSearchQuery.toLowerCase()) ||
+            (a.rfidTagId || '').toLowerCase().includes(shiftSearchQuery.toLowerCase()) ||
+            (a.department || '').toLowerCase().includes(shiftSearchQuery.toLowerCase());
+          const matchesShift = shiftTabFilter === 'All' || a.shift === shiftTabFilter || (a.shift && a.shift.includes(shiftTabFilter));
+          return matchesQuery && matchesShift;
+        });
+
+        return (
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl shadow-sm p-5 space-y-6 animate-in fade-in duration-300">
+            {/* Shifts Header */}
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-100 dark:border-slate-700 pb-4">
+              <div>
+                <h3 className="font-extrabold text-slate-900 dark:text-white text-base flex items-center gap-2">
+                  <Clock size={18} className="text-[#007BC4]" />
+                  Enterprise Shift Management & Overtime Matrix
+                </h3>
+                <p className="text-xs text-slate-500 font-medium mt-0.5">
+                  Real-time shift schedules, grace periods, and overtime authorizations evaluated in system timezone: <strong className="text-slate-700 dark:text-slate-300">{systemTzLabel}</strong>.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => setIsCreateShiftModalOpen(true)}
+                  className="px-3.5 py-2 bg-gradient-to-r from-[#007BC4] to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Plus size={14} /> Create Custom Shift
+                </button>
+
+                <button
+                  onClick={() => setIsBulkShiftModalOpen(true)}
+                  className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold rounded-xl shadow-sm transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Layers size={14} /> Bulk Assign by Dept
+                </button>
+
+                <button
+                  onClick={() => {
+                    if (people.length > 0) {
+                      setSelectedPersonForShift(people[0]);
+                      setIsShiftModalOpen(true);
+                    }
+                  }}
+                  className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-slate-700 dark:hover:bg-slate-600 text-slate-800 dark:text-slate-200 text-xs font-bold rounded-xl transition flex items-center gap-1.5 cursor-pointer"
+                >
+                  <Edit3 size={14} /> Assign Shift
+                </button>
+              </div>
+            </div>
+
+            {/* Configured Shifts Cards Grid */}
             <div>
-              <h3 className="font-bold text-slate-900 dark:text-white text-base flex items-center gap-2">
-                <Clock size={18} className="text-[#007BC4]" />
-                Shift Allocation & Overtime Authorization Matrix
-              </h3>
-              <p className="text-xs text-slate-500 font-medium">Configure day, night, and swing overtime shifts for trade contractors.</p>
-            </div>
-            <button
-              onClick={() => {
-                if (people.length > 0) {
-                  setSelectedPersonForShift(people[0]);
-                  setIsShiftModalOpen(true);
-                }
-              }}
-              className="px-3.5 py-2 bg-[#007BC4] hover:bg-blue-700 text-white text-xs font-bold rounded-xl transition flex items-center gap-1.5"
-            >
-              <Edit3 size={14} /> Assign / Reassign Shift
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-4 bg-amber-50/60 dark:bg-slate-900 border border-amber-200 dark:border-amber-800/50 rounded-2xl space-y-2">
-              <div className="flex justify-between items-center font-bold text-amber-900 dark:text-amber-200">
-                <span className="flex items-center gap-1.5"><Sun size={16} /> Day Shift (07:00 - 15:30)</span>
-                <span className="px-2 py-0.5 bg-amber-200 text-amber-900 rounded-full text-xs font-black">28 Workers</span>
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                  Configured Site Shifts ({customShifts.length})
+                </h4>
+                {shiftTabFilter !== 'All' && (
+                  <button
+                    onClick={() => setShiftTabFilter('All')}
+                    className="text-xs text-[#007BC4] font-bold hover:underline cursor-pointer"
+                  >
+                    Clear Filter ({shiftTabFilter})
+                  </button>
+                )}
               </div>
-              <p className="text-xs text-amber-800 dark:text-amber-300">Standard civil engineering, structural scaffolding, and concrete pouring operations.</p>
-            </div>
 
-            <div className="p-4 bg-indigo-50/60 dark:bg-slate-900 border border-indigo-200 dark:border-indigo-800/50 rounded-2xl space-y-2">
-              <div className="flex justify-between items-center font-bold text-indigo-900 dark:text-indigo-200">
-                <span className="flex items-center gap-1.5"><Moon size={16} /> Night Shift (19:00 - 03:30)</span>
-                <span className="px-2 py-0.5 bg-indigo-200 text-indigo-900 rounded-full text-xs font-black">8 Workers</span>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {customShifts.map(s => {
+                  const assignedCount = attendanceData.filter(a => a.shift === s.name || (a.shift && a.shift.includes(s.code))).length;
+                  const onSiteCount = attendanceData.filter(a => (a.shift === s.name || (a.shift && a.shift.includes(s.code))) && (a.status === 'PRESENT' || a.status === 'OVERTIME' || a.status === 'LATE')).length;
+                  const lateCount = attendanceData.filter(a => (a.shift === s.name || (a.shift && a.shift.includes(s.code))) && a.isLate).length;
+                  const compliancePct = assignedCount > 0 ? Math.round(((onSiteCount - lateCount) / assignedCount) * 100) : 100;
+                  const isSelected = shiftTabFilter === s.name;
+
+                  const colorStyles: Record<string, { card: string; badge: string; iconColor: string }> = {
+                    amber: {
+                      card: 'bg-amber-50/50 dark:bg-slate-900 border-amber-200 dark:border-amber-800/40',
+                      badge: 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200',
+                      iconColor: 'text-amber-500'
+                    },
+                    emerald: {
+                      card: 'bg-emerald-50/50 dark:bg-slate-900 border-emerald-200 dark:border-emerald-800/40',
+                      badge: 'bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200',
+                      iconColor: 'text-emerald-500'
+                    },
+                    blue: {
+                      card: 'bg-blue-50/50 dark:bg-slate-900 border-blue-200 dark:border-blue-800/40',
+                      badge: 'bg-blue-100 text-blue-900 dark:bg-blue-950 dark:text-blue-200',
+                      iconColor: 'text-blue-500'
+                    },
+                    indigo: {
+                      card: 'bg-indigo-50/50 dark:bg-slate-900 border-indigo-200 dark:border-indigo-800/40',
+                      badge: 'bg-indigo-100 text-indigo-900 dark:bg-indigo-950 dark:text-indigo-200',
+                      iconColor: 'text-indigo-500'
+                    },
+                    purple: {
+                      card: 'bg-purple-50/50 dark:bg-slate-900 border-purple-200 dark:border-purple-800/40',
+                      badge: 'bg-purple-100 text-purple-900 dark:bg-purple-950 dark:text-purple-200',
+                      iconColor: 'text-purple-500'
+                    },
+                    rose: {
+                      card: 'bg-rose-50/50 dark:bg-slate-900 border-rose-200 dark:border-rose-800/40',
+                      badge: 'bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-200',
+                      iconColor: 'text-rose-500'
+                    }
+                  };
+
+                  const theme = colorStyles[s.color] || colorStyles.amber;
+
+                  return (
+                    <div
+                      key={s.id}
+                      onClick={() => setShiftTabFilter(shiftTabFilter === s.name ? 'All' : s.name)}
+                      className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-3 relative hover:shadow-md ${theme.card} ${
+                        isSelected ? 'ring-2 ring-[#007BC4] shadow-md' : ''
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5 font-extrabold text-slate-900 dark:text-white text-sm">
+                            {s.code === 'NIGHT' ? (
+                              <Moon size={15} className={theme.iconColor} />
+                            ) : s.isOvertimeShift ? (
+                              <Zap size={15} className={theme.iconColor} />
+                            ) : (
+                              <Sun size={15} className={theme.iconColor} />
+                            )}
+                            <span>{s.name.split(' (')[0]}</span>
+                          </div>
+                          <div className="text-[10px] font-mono text-slate-500 font-semibold">
+                            Code: <strong className="text-slate-800 dark:text-slate-200">{s.code}</strong> • Window: <strong className="text-slate-800 dark:text-slate-200">{s.startTime} - {s.endTime}</strong>
+                          </div>
+                        </div>
+
+                        <div className="flex flex-col items-end gap-1">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${theme.badge}`}>
+                            {assignedCount} Assigned
+                          </span>
+                          {s.isOvertimeShift && (
+                            <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200 text-[9px] font-bold rounded">
+                              {s.otMultiplier || 1.5}x OT
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-2">
+                        {s.description}
+                      </p>
+
+                      <div className="pt-2 border-t border-slate-200/60 dark:border-slate-800 grid grid-cols-4 gap-2 text-center text-[10px]">
+                        <div className="bg-white/70 dark:bg-slate-800 p-1.5 rounded-lg">
+                          <span className="text-slate-400 block font-medium">Grace</span>
+                          <span className="font-mono font-bold text-slate-700 dark:text-slate-300">{s.gracePeriodMins}m</span>
+                        </div>
+                        <div className="bg-white/70 dark:bg-slate-800 p-1.5 rounded-lg">
+                          <span className="text-slate-400 block font-medium">Active</span>
+                          <span className="font-mono font-bold text-emerald-600">{onSiteCount}</span>
+                        </div>
+                        <div className="bg-white/70 dark:bg-slate-800 p-1.5 rounded-lg">
+                          <span className="text-slate-400 block font-medium">Late</span>
+                          <span className={`font-mono font-bold ${lateCount > 0 ? 'text-amber-600' : 'text-slate-500'}`}>{lateCount}</span>
+                        </div>
+                        <div className="bg-white/70 dark:bg-slate-800 p-1.5 rounded-lg">
+                          <span className="text-slate-400 block font-medium">Punctual</span>
+                          <span className="font-mono font-bold text-[#007BC4]">{compliancePct}%</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-              <p className="text-xs text-indigo-800 dark:text-indigo-300">Tunnel shaft excavation, heavy crane rigging, and high-voltage cable splicing.</p>
             </div>
 
-            <div className="p-4 bg-blue-50/60 dark:bg-slate-900 border border-blue-200 dark:border-blue-800/50 rounded-2xl space-y-2">
-              <div className="flex justify-between items-center font-bold text-blue-900 dark:text-blue-200">
-                <span className="flex items-center gap-1.5"><Zap size={16} /> Swing Overtime (1.5x Rate)</span>
-                <span className="px-2 py-0.5 bg-blue-200 text-blue-900 rounded-full text-xs font-black">{metrics.overtime} Active</span>
-              </div>
-              <p className="text-xs text-blue-800 dark:text-blue-300">Pre-approved overtime hours for milestone completion. Requires EHS supervisor authorization.</p>
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <h4 className="font-bold text-slate-900 dark:text-white text-sm mb-3">Shift Assignments (MongoDB Synced)</h4>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-              {attendanceData.slice(0, 9).map(a => (
-                <div key={a.id} className="p-3 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1 text-xs">
-                  <div className="font-bold text-slate-900 dark:text-white">{a.name}</div>
-                  <div className="text-slate-500 text-[11px]">{a.department}</div>
-                  <div className="text-[#007BC4] font-bold font-mono text-[11px]">{a.shift}</div>
+            {/* Shift Allocation & Workforce Roster Table */}
+            <div className="space-y-3 pt-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="font-bold text-slate-900 dark:text-white text-sm">
+                    Shift Allocation Ledger & Overtime Authorization ({filteredShiftPersonnel.length} Personnel)
+                  </h4>
+                  <p className="text-xs text-slate-500">Live MongoDB synced worker shift assignments and punctuality tracking.</p>
                 </div>
-              ))}
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <div className="relative w-48 sm:w-64">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 size-3.5" />
+                    <input
+                      type="text"
+                      placeholder="Search name, tag, department..."
+                      value={shiftSearchQuery}
+                      onChange={e => setShiftSearchQuery(e.target.value)}
+                      className="w-full pl-8 pr-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs outline-none focus:ring-2 focus:ring-[#007BC4]"
+                    />
+                  </div>
+
+                  <select
+                    value={shiftTabFilter}
+                    onChange={e => setShiftTabFilter(e.target.value)}
+                    className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-bold text-slate-700 dark:text-slate-300 px-2.5 py-1.5 outline-none"
+                  >
+                    <option value="All">All Shifts</option>
+                    {customShifts.map(s => (
+                      <option key={s.id} value={s.name}>{s.name.split(' (')[0]}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div className="border border-slate-200 dark:border-slate-700 rounded-xl overflow-hidden">
+                <Table>
+                  <TableHeader className="bg-slate-50 dark:bg-slate-900">
+                    <TableRow>
+                      <TableHead className="font-bold">Worker & RFID Tag</TableHead>
+                      <TableHead className="font-bold">Department / Contractor</TableHead>
+                      <TableHead className="font-bold">Assigned Shift</TableHead>
+                      <TableHead className="font-bold">First In / Last Out ({systemTzLabel})</TableHead>
+                      <TableHead className="font-bold text-center">Status</TableHead>
+                      <TableHead className="font-bold text-center">OT Authorized</TableHead>
+                      <TableHead className="font-bold text-right">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredShiftPersonnel.map(worker => {
+                      const shiftDef = customShifts.find(s => s.name === worker.shift || (worker.shift && worker.shift.includes(s.code))) || customShifts[0];
+
+                      return (
+                        <TableRow key={worker.id} className="border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50/70 dark:hover:bg-slate-800/50">
+                          <TableCell>
+                            <div className="font-bold text-slate-900 dark:text-white text-xs">{worker.name}</div>
+                            <div className="text-[11px] font-mono text-[#007BC4] font-bold">{worker.rfidTagId} • <span className="text-slate-400 font-sans">{worker.role}</span></div>
+                          </TableCell>
+
+                          <TableCell className="text-xs">
+                            <div className="font-semibold text-slate-800 dark:text-slate-200">{worker.department}</div>
+                            <div className="text-[10px] text-slate-500">{worker.company}</div>
+                          </TableCell>
+
+                          <TableCell className="text-xs">
+                            <div className="flex items-center gap-1.5 font-bold text-slate-800 dark:text-slate-200">
+                              {shiftDef?.code === 'NIGHT' ? (
+                                <Moon size={12} className="text-indigo-500" />
+                              ) : shiftDef?.isOvertimeShift ? (
+                                <Zap size={12} className="text-blue-500" />
+                              ) : (
+                                <Sun size={12} className="text-amber-500" />
+                              )}
+                              <span>{worker.shift}</span>
+                            </div>
+                            <div className="text-[10px] font-mono text-slate-400">
+                              Hours: {shiftDef?.startTime || '07:00'} - {shiftDef?.endTime || '15:30'} (Grace: {shiftDef?.gracePeriodMins || 15}m)
+                            </div>
+                          </TableCell>
+
+                          <TableCell className="text-xs font-mono text-slate-700 dark:text-slate-300">
+                            <div>In: <strong>{worker.firstIn}</strong></div>
+                            <div>Out: <strong>{worker.lastOut}</strong></div>
+                          </TableCell>
+
+                          <TableCell className="text-center">
+                            {worker.status === 'PRESENT' && <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200 text-[10px]">Present</Badge>}
+                            {worker.status === 'OVERTIME' && <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200 text-[10px]">OT (+{worker.overtimeHours}h)</Badge>}
+                            {worker.status === 'LATE' && <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200 text-[10px]">Late</Badge>}
+                            {worker.status === 'ABSENT' && <Badge variant="outline" className="bg-rose-50 text-rose-700 border-rose-200 text-[10px]">Absent</Badge>}
+                            {worker.status === 'ON_LEAVE' && <Badge variant="outline" className="bg-indigo-50 text-indigo-700 border-indigo-200 text-[10px]">On Leave</Badge>}
+                          </TableCell>
+
+                          <TableCell className="text-center">
+                            {worker.isOvertime ? (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                                Approved (1.5x)
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-full text-[10px] font-medium text-slate-400 border border-slate-200 dark:border-slate-700">
+                                Standard
+                              </span>
+                            )}
+                          </TableCell>
+
+                          <TableCell className="text-right">
+                            <button
+                              onClick={() => {
+                                const found = people.find(p => p.id === worker.personId || p.name === worker.name) || {
+                                  id: worker.personId || worker.id,
+                                  name: worker.name,
+                                  role: worker.role,
+                                  department: worker.department
+                                } as any;
+                                setSelectedPersonForShift(found);
+                                setAssignedShift(worker.shift || customShifts[0].name);
+                                setIsShiftModalOpen(true);
+                              }}
+                              className="px-2.5 py-1 bg-slate-100 dark:bg-slate-700 hover:bg-[#007BC4] hover:text-white text-slate-800 dark:text-slate-200 text-xs font-bold rounded-lg transition cursor-pointer"
+                            >
+                              Reassign
+                            </button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+
+                    {filteredShiftPersonnel.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={7} className="text-center py-8 text-slate-400 text-xs font-semibold">
+                          No workers found matching current shift search or filter.
+                        </TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* 5. ATTENDANCE HEATMAP */}
       {activeSubTab === 'heatmap' && (
@@ -2075,7 +2591,11 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                   onChange={e => setAssignedShift(e.target.value as any)}
                   className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-[#007BC4]"
                 >
-                  {SHIFT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                  {customShifts.map(s => (
+                    <option key={s.id} value={s.name}>
+                      {s.name} [{s.code}] ({s.startTime} - {s.endTime})
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -2106,6 +2626,248 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
                   className="px-4 py-2 bg-[#007BC4] text-white rounded-xl font-bold"
                 >
                   Save Shift to MongoDB
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Create Custom Shift Modal */}
+      {isCreateShiftModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl rounded-2xl w-full max-w-md p-6 relative animate-in fade-in zoom-in-95 duration-150">
+            <button
+              onClick={() => setIsCreateShiftModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            >
+              <X size={18} />
+            </button>
+            <div className="flex items-center gap-2 mb-2">
+              <Clock className="w-5 h-5 text-[#007BC4]" />
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">Create Custom Shift Definition</h3>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Configure operational hours, grace windows, and overtime parameters synced to MongoDB.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Shift Name *</label>
+                  <input
+                    type="text"
+                    value={newShiftName}
+                    onChange={e => setNewShiftName(e.target.value)}
+                    placeholder="e.g. Afternoon Pour"
+                    className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Shift Code *</label>
+                  <input
+                    type="text"
+                    value={newShiftCode}
+                    onChange={e => setNewShiftCode(e.target.value.toUpperCase())}
+                    placeholder="e.g. AFTN"
+                    maxLength={6}
+                    className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono font-bold uppercase"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Start Time</label>
+                  <input
+                    type="time"
+                    value={newShiftStart}
+                    onChange={e => setNewShiftStart(e.target.value)}
+                    className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">End Time</label>
+                  <input
+                    type="time"
+                    value={newShiftEnd}
+                    onChange={e => setNewShiftEnd(e.target.value)}
+                    className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono font-bold"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Grace (mins)</label>
+                  <input
+                    type="number"
+                    min={0}
+                    max={60}
+                    value={newShiftGrace}
+                    onChange={e => setNewShiftGrace(Number(e.target.value))}
+                    className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Theme Color</label>
+                  <select
+                    value={newShiftColor}
+                    onChange={e => setNewShiftColor(e.target.value)}
+                    className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold"
+                  >
+                    <option value="amber">Amber (Day / Civil)</option>
+                    <option value="emerald">Emerald (Morning / Logistics)</option>
+                    <option value="blue">Blue (Swing / OT)</option>
+                    <option value="indigo">Indigo (Night / Mechanical)</option>
+                    <option value="purple">Purple (General / Engineering)</option>
+                    <option value="rose">Rose (Critical / Safety)</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center pt-5">
+                  <label className="flex items-center gap-2 cursor-pointer font-bold text-slate-700 dark:text-slate-300">
+                    <input
+                      type="checkbox"
+                      checked={newShiftIsOt}
+                      onChange={e => setNewShiftIsOt(e.target.checked)}
+                      className="w-4 h-4 text-[#007BC4] rounded"
+                    />
+                    <span>Overtime Shift (1.5x)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Description & Scope</label>
+                <input
+                  type="text"
+                  value={newShiftDesc}
+                  onChange={e => setNewShiftDesc(e.target.value)}
+                  placeholder="e.g. Scaffolding maintenance, structural inspection"
+                  className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-blue-50 dark:bg-slate-900/80 border border-blue-100 dark:border-slate-700 text-[11px] text-blue-900 dark:text-blue-300">
+                Punctuality will be evaluated against <strong>{newShiftStart}</strong> + <strong>{newShiftGrace}m grace</strong> in system timezone (<strong>{systemTzLabel}</strong>).
+              </div>
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsCreateShiftModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateCustomShift}
+                  className="px-4 py-2 bg-[#007BC4] hover:bg-blue-700 text-white rounded-xl font-bold cursor-pointer"
+                >
+                  Save Shift to MongoDB
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Department Shift Assignment Modal */}
+      {isBulkShiftModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 shadow-2xl rounded-2xl w-full max-w-md p-6 relative animate-in fade-in zoom-in-95 duration-150">
+            <button
+              onClick={() => setIsBulkShiftModalOpen(false)}
+              className="absolute top-4 right-4 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+            >
+              <X size={18} />
+            </button>
+            <div className="flex items-center gap-2 mb-2">
+              <Layers className="w-5 h-5 text-emerald-600" />
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">Bulk Department Shift Assignment</h3>
+            </div>
+            <p className="text-xs text-slate-500 mb-4">
+              Reassign all workforce personnel in a department to a designated shift schedule in one operation.
+            </p>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Target Department</label>
+                <select
+                  value={bulkShiftDept}
+                  onChange={e => setBulkShiftDept(e.target.value)}
+                  className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-white"
+                >
+                  <option value="All">All Departments (Entire Active Site Workforce)</option>
+                  <option value="Civil Engineering">Civil Engineering</option>
+                  <option value="Electrical & Utilities">Electrical & Utilities</option>
+                  <option value="Safety & EHS">Safety & EHS</option>
+                  <option value="Heavy Equipment Ops">Heavy Equipment Ops</option>
+                  <option value="Structure & Scaffolding">Structure & Scaffolding</option>
+                </select>
+                <div className="text-[11px] text-slate-500 mt-1">
+                  Affects <strong>{attendanceData.filter(a => bulkShiftDept === 'All' || a.department === bulkShiftDept).length}</strong> workforce personnel.
+                </div>
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Target Shift Schedule</label>
+                <select
+                  value={bulkTargetShift}
+                  onChange={e => setBulkTargetShift(e.target.value)}
+                  className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-[#007BC4]"
+                >
+                  {customShifts.map(s => (
+                    <option key={s.id} value={s.name}>
+                      {s.name} [{s.code}] ({s.startTime} - {s.endTime})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div>
+                  <div className="font-bold text-slate-800 dark:text-slate-200">Authorize Overtime for Batch</div>
+                  <div className="text-[10px] text-slate-500">Allow personnel to log overtime hours beyond shift end</div>
+                </div>
+                <input
+                  type="checkbox"
+                  checked={bulkOtAuth}
+                  onChange={e => setBulkOtAuth(e.target.checked)}
+                  className="w-4 h-4 text-[#007BC4] rounded"
+                />
+              </div>
+
+              {bulkOtAuth && (
+                <div>
+                  <label className="font-bold text-slate-700 dark:text-slate-300 block mb-1">Max Daily OT Limit (Hours)</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    value={bulkMaxOtHours}
+                    onChange={e => setBulkMaxOtHours(Number(e.target.value))}
+                    className="w-full p-2 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-mono font-bold"
+                  />
+                </div>
+              )}
+
+              <div className="pt-2 flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkShiftModalOpen(false)}
+                  className="px-4 py-2 bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-200 rounded-xl font-bold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleBulkAssignShift}
+                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <Check size={14} /> Apply Bulk Shift
                 </button>
               </div>
             </div>
