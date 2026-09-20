@@ -191,6 +191,46 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
   }, []);
 
   useEffect(() => {
+    const fetchRegisteredPeople = () => {
+      fetch('/api/data/registered_people')
+        .then(res => res.ok ? res.json() : [])
+        .then((peopleList: any[]) => {
+          if (Array.isArray(peopleList) && peopleList.length > 0) {
+            const map: Record<string, { name: string; role: string }> = {};
+            peopleList.forEach(p => {
+              const entry = { name: p.name, role: p.role };
+              if (p.id) {
+                map[p.id] = entry;
+                map[p.id.toLowerCase()] = entry;
+                map[p.id.toUpperCase()] = entry;
+              }
+              if (p.hardhatTagId) {
+                map[p.hardhatTagId] = entry;
+                map[p.hardhatTagId.toLowerCase()] = entry;
+                map[p.hardhatTagId.toUpperCase()] = entry;
+              }
+              if (p.tagId) {
+                map[p.tagId] = entry;
+                map[p.tagId.toLowerCase()] = entry;
+                map[p.tagId.toUpperCase()] = entry;
+              }
+            });
+            registeredPeopleRef.current = map;
+          }
+        })
+        .catch(() => {});
+    };
+
+    fetchRegisteredPeople();
+    window.addEventListener('gao_data_updated', fetchRegisteredPeople);
+    window.addEventListener('gao_refresh_data', fetchRegisteredPeople);
+    return () => {
+      window.removeEventListener('gao_data_updated', fetchRegisteredPeople);
+      window.removeEventListener('gao_refresh_data', fetchRegisteredPeople);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!mode) return;
     
     let isMounted = true;

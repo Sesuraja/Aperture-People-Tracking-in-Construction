@@ -373,6 +373,92 @@ authRouter.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   });
 });
 
+const updateProfileSchema = z.object({
+  name: z.string().min(1, 'Name cannot be empty').optional(),
+  currentPassword: z.string().optional(),
+  newPassword: z.string().min(6, 'New password must be at least 6 characters').optional()
+});
+
+// PUT /api/auth/me - Update user profile (name, password)
+authRouter.put('/me', requireAuth, async (req: AuthRequest, res: Response) => {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required' });
+  }
+
+  const parseResult = updateProfileSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({
+      error: 'Invalid profile input',
+      details: parseResult.error.issues
+    });
+  }
+
+  const { name, currentPassword, newPassword } = parseResult.data;
+
+  try {
+    const allUsers = await getCollectionDocs('users');
+    const userDoc = allUsers.find((u: any) => u.id === req.user?.id || u.email?.toLowerCase() === req.user?.email?.toLowerCase());
+
+    if (!userDoc) {
+      return res.status(404).json({ error: 'User profile not found in database' });
+    }
+
+    if (newPassword) {
+      if (userDoc.passwordHash) {
+        if (!currentPassword) {
+          return res.status(400).json({ error: 'Current password is required to set a new password' });
+        }
+        const isMatch = await bcrypt.compare(currentPassword, userDoc.passwordHash);
+        if (!isMatch) {
+          return res.status(400).json({ error: 'Current password does not match' });
+        }
+      }
+      userDoc.passwordHash = await bcrypt.hash(newPassword, 10);
+    }
+
+    if (name && name.trim()) {
+      userDoc.name = name.trim();
+      userDoc.displayName = name.trim();
+    }
+
+    userDoc.updatedAt = new Date().toISOString();
+    const targetOrg = userDoc.organizationId || req.user.organizationId || 'default';
+    await upsertDoc('users', userDoc, targetOrg);
+
+    const updatedToken = generateToken({
+      id: userDoc.id,
+      email: userDoc.email,
+      name: userDoc.name,
+      role: userDoc.role,
+      organizationId: targetOrg,
+      isPlatformAdmin: Boolean(userDoc.isPlatformAdmin),
+      tokenVersion: userDoc.tokenVersion || 1
+    });
+
+    await logAuditEvent({
+      userId: userDoc.id,
+      userEmail: userDoc.email,
+      organizationId: targetOrg,
+      action: 'USER_PROFILE_UPDATED',
+      resource: 'auth',
+      details: {
+        nameUpdated: Boolean(name),
+        passwordUpdated: Boolean(newPassword)
+      },
+      ip: req.ip
+    });
+
+    return res.json({
+      message: 'Profile updated successfully',
+      user: sanitizeUser(userDoc),
+      token: updatedToken
+    });
+  } catch (err: any) {
+    console.error('[Auth Route] Update profile error:', err);
+    return res.status(500).json({ error: 'Failed to update profile' });
+  }
+});
+
 // GET /api/auth/organization
 authRouter.get('/organization', requireAuth, async (req: AuthRequest, res: Response) => {
   const orgId = req.user?.organizationId || 'default';

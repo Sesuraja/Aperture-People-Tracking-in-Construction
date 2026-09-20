@@ -374,7 +374,7 @@ export function getAiRulesCatalogForIndustry(
 function getRulesForIndustry(industryId: string = 'construction', profileInput?: any): AlertRule[] {
   const profile = profileInput || INDUSTRY_PRESET_PROFILES[industryId as keyof typeof INDUSTRY_PRESET_PROFILES] || INDUSTRY_PRESET_PROFILES.construction;
   const officers = getOfficersForIndustry(profile, industryId);
-  return (profile.alertRuleTemplates || []).map((t: any, idx: number) => ({
+  return (profile.alertRuleTemplates || []).map((t: any) => ({
     id: t.id,
     name: t.name,
     category: (t.category as AlertCategory) || 'Safety',
@@ -386,7 +386,7 @@ function getRulesForIndustry(industryId: string = 'construction', profileInput?:
     triggerSiren: Boolean(t.triggerSiren),
     notifySmsEmail: Boolean(t.notifySmsEmail),
     enabled: true,
-    triggerCount: 4 + idx * 3
+    triggerCount: 0
   }));
 }
 
@@ -667,7 +667,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
     let incAlerts: AIAlert[] = [];
 
     const mergeAndSetAlerts = () => {
-      const baseAlerts = [...entAlerts, ...stdAlerts, ...incAlerts];
+      const baseAlerts = [...(_propAlerts || []), ...entAlerts, ...stdAlerts, ...incAlerts];
 
       // Deduplicate alerts with same tag and title, keeping the newest timestamp
       const dedupMap = new Map<string, AIAlert>();
@@ -770,7 +770,7 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
       unsubRules();
       unsubBroadcasts();
     };
-  }, []);
+  }, [_propAlerts, activeIndustry]);
 
   // Filtered Alert Roster
   const filteredAlerts = useMemo(() => {
@@ -2224,8 +2224,12 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
                 </div>
 
                 <div className="pt-2 border-t border-slate-100 dark:border-slate-700 flex justify-between items-center text-[11px] text-slate-400 font-mono">
-                  <span>Triggers: {rule.triggerCount} times</span>
-                  <span>Last: {rule.lastTriggered || 'Never'}</span>
+                  <span>Triggers: {alertList.filter(a => 
+                    (a.category && a.category.toLowerCase() === rule.category?.toLowerCase()) || 
+                    (a.priority && a.priority.toLowerCase() === rule.priorityThreshold?.toLowerCase()) ||
+                    (rule.targetZone && a.evidence?.locationZone?.toLowerCase().includes(rule.targetZone.toLowerCase()))
+                  ).length} times</span>
+                  <span>Last: {rule.lastTriggered || 'Recent'}</span>
                 </div>
               </div>
             ))}

@@ -1,6 +1,7 @@
 import { GoogleGenAI } from '@google/genai';
 import { z } from 'zod';
 import { getTenantIntelligenceProfile, evaluateDeterministicRules } from './industryIntelligenceEngine.js';
+import { isRealCustomWorker } from './db.js';
 
 export type AIProviderName = 'gemini' | 'chatgpt' | 'openai' | 'claude' | 'anthropic' | 'auto';
 
@@ -368,9 +369,13 @@ export async function analyzeTelemetryItemWithAI(
       .some((id: string) => String(id).toLowerCase() === tagId.toLowerCase())
   ) || null;
 
-  const firstName = item.firstName || matchedPerson?.firstName || matchedPerson?.name?.split(' ')[0] || '';
-  const lastName = item.lastName || matchedPerson?.lastName || matchedPerson?.name?.split(' ').slice(1).join(' ') || '';
-  const fullName = item.fullName || `${firstName} ${lastName}`.trim() || 'Field Personnel';
+  const hasCustomMatchedName = isRealCustomWorker(matchedPerson);
+  const rawItemFn = String(item.firstName || item.FirstName || '').trim();
+  const rawItemLn = String(item.lastName || item.LastName || '').trim();
+  const rawItemName = (rawItemFn || rawItemLn) ? `${rawItemFn} ${rawItemLn}`.trim() : (item.fullName || matchedPerson?.name || 'Field Personnel');
+  const fullName = hasCustomMatchedName ? matchedPerson.name : (item.fullName && !item.fullName.startsWith('Personnel ') && item.fullName !== 'John' ? item.fullName : rawItemName);
+  const firstName = hasCustomMatchedName ? fullName.split(' ')[0] : (rawItemFn || matchedPerson?.firstName || '');
+  const lastName = hasCustomMatchedName ? fullName.split(' ').slice(1).join(' ') : (rawItemLn || matchedPerson?.lastName || '');
 
   // 1. Initial baseline from Deterministic Rule Engine
   const tenantProfile = await getTenantIntelligenceProfile(orgId);

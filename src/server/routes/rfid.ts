@@ -63,7 +63,7 @@ const scanSchema = realtimeTagSchema.extend({
 
 // High-performance in-memory cache for external RFID history & count
 const HISTORY_CACHE_TTL_MS = 15000; // 15 seconds fresh cache
-const FAST_UPSTREAM_TIMEOUT_MS = 2000; // 2 seconds fast race timeout for snappy UI
+const FAST_UPSTREAM_TIMEOUT_MS = 15000; // 15 seconds upstream race timeout
 const historyRecordsCache = new Map<string, { timestamp: number; data: any[] }>();
 let historyCountCache: { timestamp: number; count: number } | null = null;
 let cachedGlobalTz: { tz: string; timestamp: number } | null = null;
@@ -82,11 +82,11 @@ const handleGetTotalCount = async (req: Request, res: Response) => {
   }
 
   try {
-    // 1. Check live external cloud server first (with 2-second fast race)
+    // 1. Check live external cloud server first (with 15-second upstream race)
     try {
       const upstream = await Promise.race([
         fetchHistoryTotalCount(),
-        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Upstream total count timeout after 2000ms')), FAST_UPSTREAM_TIMEOUT_MS))
+        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Upstream total count timeout after 15000ms')), FAST_UPSTREAM_TIMEOUT_MS))
       ]);
       if (upstream && typeof upstream.totalCount === 'number' && upstream.totalCount > 0) {
         historyCountCache = { timestamp: Date.now(), count: upstream.totalCount };
@@ -249,11 +249,11 @@ const handleGetHistory = async (req: Request, res: Response) => {
       return 0.5;
     };
 
-    // 1. Check live external cloud server first (with 2.5-second fast timeout race)
+    // 1. Check live external cloud server first (with 15-second upstream race)
     try {
       const liveRecords = await Promise.race([
         fetchHistoryRecords(skipCount, takeCount),
-        new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Upstream API timeout after 2500ms')), 2500))
+        new Promise<any[]>((_, reject) => setTimeout(() => reject(new Error('Upstream API timeout after 15000ms')), 15000))
       ]);
 
       if (Array.isArray(liveRecords) && liveRecords.length > 0) {
@@ -262,27 +262,31 @@ const handleGetHistory = async (req: Request, res: Response) => {
           const tagKey = String(rec.TagID || rec.tagId || '').toLowerCase();
           const matched = personMap.get(tagKey);
 
-          const matchedFirst = String(matched?.firstName || matched?.FirstName || rec.FirstName || rec.firstName || '').trim();
-          const matchedLast = String(matched?.lastName || matched?.LastName || rec.LastName || rec.lastName || '').trim();
           let fullName = '';
-          if (matchedFirst && matchedLast) {
-            fullName = `${matchedFirst} ${matchedLast}`;
-          } else if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown') {
+          let fName = '';
+          let lName = '';
+          if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown' && matched.name !== 'John') {
             fullName = matched.name.trim();
+            fName = matched.firstName || fullName.split(' ')[0] || '';
+            lName = matched.lastName || fullName.split(' ').slice(1).join(' ') || '';
+          } else if (matched?.firstName && matched?.lastName) {
+            fName = matched.firstName;
+            lName = matched.lastName;
+            fullName = `${fName} ${lName}`;
           } else if (rec.FirstName && rec.LastName) {
+            fName = rec.FirstName;
+            lName = rec.LastName;
             fullName = `${rec.FirstName} ${rec.LastName}`.trim();
           } else if (rec.name && rec.name.trim() && rec.name !== 'Personnel' && rec.name !== 'Unknown') {
             fullName = rec.name.trim();
-          } else if (matchedFirst) {
-            fullName = matchedFirst;
-          } else if (matchedLast) {
-            fullName = matchedLast;
+            fName = fullName.split(' ')[0] || '';
+            lName = fullName.split(' ').slice(1).join(' ') || '';
+          } else if (rec.FirstName || rec.firstName) {
+            fName = rec.FirstName || rec.firstName;
+            fullName = fName;
           } else {
             fullName = `Personnel ${rec.TagID || ''}`;
           }
-
-          const fName = matchedFirst;
-          const lName = matchedLast;
           const role = matched?.role || (matched?.badgeId || matched?.isVisitor ? 'Visitor' : (rec.role || 'Field Personnel'));
           const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes('visitor'));
 
@@ -362,27 +366,31 @@ const handleGetHistory = async (req: Request, res: Response) => {
       const tagKey = String(item.TagID || item.tagId || item.epc || '').toLowerCase();
       const matched = personMap.get(tagKey);
 
-      const matchedFirst = String(matched?.firstName || matched?.FirstName || item.FirstName || item.firstName || '').trim();
-      const matchedLast = String(matched?.lastName || matched?.LastName || item.LastName || item.lastName || '').trim();
       let fullName = '';
-      if (matchedFirst && matchedLast) {
-        fullName = `${matchedFirst} ${matchedLast}`;
-      } else if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown') {
+      let firstName = '';
+      let lastName = '';
+      if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown' && matched.name !== 'John') {
         fullName = matched.name.trim();
+        firstName = matched.firstName || fullName.split(' ')[0] || '';
+        lastName = matched.lastName || fullName.split(' ').slice(1).join(' ') || '';
+      } else if (matched?.firstName && matched?.lastName) {
+        firstName = matched.firstName;
+        lastName = matched.lastName;
+        fullName = `${firstName} ${lastName}`;
       } else if (item.FirstName && item.LastName) {
+        firstName = item.FirstName;
+        lastName = item.LastName;
         fullName = `${item.FirstName} ${item.LastName}`.trim();
       } else if (item.name && item.name.trim() && item.name !== 'Personnel' && item.name !== 'Unknown') {
         fullName = item.name.trim();
-      } else if (matchedFirst) {
-        fullName = matchedFirst;
-      } else if (matchedLast) {
-        fullName = matchedLast;
+        firstName = fullName.split(' ')[0] || '';
+        lastName = fullName.split(' ').slice(1).join(' ') || '';
+      } else if (item.FirstName || item.firstName) {
+        firstName = item.FirstName || item.firstName;
+        fullName = firstName;
       } else {
-        fullName = `Personnel ${item.TagID || item.id || ''}`;
+        fullName = `Personnel ${item.TagID || item.tagId || ''}`;
       }
-
-      const firstName = matchedFirst;
-      const lastName = matchedLast;
       const role = matched?.role || item.role || (matched?.badgeId || matched?.isVisitor ? 'Visitor' : 'Field Personnel');
       const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes('visitor'));
 
@@ -488,19 +496,29 @@ const handleGetRealtime = async (req: Request, res: Response) => {
       const ts = item.Timestamp || item.timestamp || item.lastSeen || new Date().toISOString();
       const tagKey = String(item.TagID || item.tagId || item.epc || '').toLowerCase();
       const matched = personMap.get(tagKey);
-      const fn = String(matched?.firstName || matched?.FirstName || item.FirstName || item.firstName || '').trim();
-      const ln = String(matched?.lastName || matched?.LastName || item.LastName || item.lastName || '').trim();
       let fullName = '';
-      if (fn && ln) {
-        fullName = `${fn} ${ln}`;
-      } else if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown') {
+      let fn = '';
+      let ln = '';
+      if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown' && matched.name !== 'John') {
         fullName = matched.name.trim();
+        fn = matched.firstName || fullName.split(' ')[0] || '';
+        ln = matched.lastName || fullName.split(' ').slice(1).join(' ') || '';
+      } else if (matched?.firstName && matched?.lastName) {
+        fn = matched.firstName;
+        ln = matched.lastName;
+        fullName = `${fn} ${ln}`;
       } else if (item.personName && item.personName.trim()) {
         fullName = item.personName.trim();
+        fn = fullName.split(' ')[0] || '';
+        ln = fullName.split(' ').slice(1).join(' ') || '';
       } else if (item.name && item.name.trim()) {
         fullName = item.name.trim();
-      } else if (fn) {
-        fullName = fn;
+        fn = fullName.split(' ')[0] || '';
+        ln = fullName.split(' ').slice(1).join(' ') || '';
+      } else if (item.FirstName || item.firstName) {
+        fn = String(item.FirstName || item.firstName).trim();
+        ln = String(item.LastName || item.lastName || '').trim();
+        fullName = ln ? `${fn} ${ln}` : fn;
       } else {
         fullName = `Tag ${item.TagID || item.tagId || ''}`;
       }

@@ -388,8 +388,9 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
   useEffect(() => {
     const loadDbPeople = async () => {
       try {
-        const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
-        const headers = { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' };
+        const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
+        const headers: Record<string, string> = { 'Accept': 'application/json' };
+        if (token) { headers['Authorization'] = `Bearer ${token}`; }
         const [regRes, peopleRes] = await Promise.allSettled([
           fetch('/api/data/registered_people', { headers }).then(r => r.ok ? r.json() : []),
           fetch('/api/data/people', { headers }).then(r => r.ok ? r.json() : [])

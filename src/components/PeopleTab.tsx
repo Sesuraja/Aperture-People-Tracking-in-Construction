@@ -1194,29 +1194,34 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       const newWorkerData: DBWorker = {
         id: tagId,
         hardhatTagId: tagId,
+        tagId: tagId,
         name: formData.name.trim(),
+        firstName: formData.name.trim().split(' ')[0] || '',
+        lastName: formData.name.trim().split(' ').slice(1).join(' ') || '',
+        isCustomProfile: true,
         role: finalRole,
         tradeCompany: finalCompany,
-        company: finalCompany,
-        phone: formData.phone || '+1 (555) 019-2831',
-        email: formData.email || `${formData.name.toLowerCase().replace(/\s+/g, '.')}@enterprise.com`,
+        phone: formData.phone || '',
+        email: formData.email || '',
         emergencyContact: formData.emergencyContact || '',
-        certifications: formData.certifications || 'Enterprise Standard Clearance',
+        certifications: formData.certifications || '',
         ppeStatus: formData.ppeStatus || 'COMPLIANT',
         shiftStatus: formData.shiftStatus || 'ON_SITE',
         trainingStatus: formData.trainingStatus || 'COMPLIANT',
-        lastTrainingDate: formData.lastTrainingDate || formatEdtDate(new Date(), { format: 'iso' }),
-        trainingCourse: formData.trainingCourse || `${config?.appTitle || 'Enterprise'} Safety Induction`,
-        trainingExpiry: formData.trainingExpiry || '2027-05-15',
+        lastTrainingDate: formData.lastTrainingDate || '',
+        trainingCourse: formData.trainingCourse || '',
+        trainingExpiry: formData.trainingExpiry || '',
         department: formData.department || finalCompany,
-        supervisor: formData.supervisor || 'Operations Lead',
+        supervisor: formData.supervisor || '',
         currentZone: formData.currentZone || (availableZones[0] || 'Main Portal'),
         safetyScore: 95,
         notes: formData.notes || '',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
       };
 
       await setDoc(doc(db, 'registered_people', tagId), newWorkerData);
+      await setDoc(doc(db, 'people', tagId), newWorkerData);
       await fetch('/api/data/registered_people', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1281,31 +1286,30 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         hardhatTagId: tagId,
         tagId: tagId,
         name: formData.name.trim(),
+        firstName: formData.name.trim().split(' ')[0] || '',
+        lastName: formData.name.trim().split(' ').slice(1).join(' ') || '',
+        isCustomProfile: true,
         role: finalRole,
         tradeCompany: finalCompany,
         company: finalCompany,
         department: formData.department || finalCompany,
+        phone: formData.phone || '',
+        email: formData.email || '',
+        emergencyContact: formData.emergencyContact || '',
+        supervisor: formData.supervisor || '',
+        notes: formData.notes || '',
         currentZone: formData.currentZone,
         location: formData.currentZone,
+        shiftStatus: formData.shiftStatus || 'ON_SITE',
+        ppeStatus: formData.ppeStatus || 'COMPLIANT',
         trainingStatus: formData.trainingStatus || 'COMPLIANT',
         certifications: formData.certifications || '',
-        updatedAt: serverTimestamp()
+        updatedAt: new Date().toISOString()
       } as any;
 
       // Update both registered_people AND people collections in MongoDB
       await setDoc(doc(db, 'registered_people', tagId), updatedRecord, { merge: true });
       await setDoc(doc(db, 'people', tagId), updatedRecord, { merge: true });
-
-      fetch(`/api/data/registered_people/${encodeURIComponent(tagId)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedRecord)
-      }).catch(() => {});
-      fetch(`/api/data/people/${encodeURIComponent(tagId)}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updatedRecord)
-      }).catch(() => {});
 
       if (rawId && rawId.toUpperCase() !== tagId) {
         await setDoc(doc(db, 'registered_people', rawId), updatedRecord, { merge: true });
@@ -1497,18 +1501,18 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       name: '',
       role: availableRoles[0] || 'Staff',
       tradeCompany: availableCompanies[0] || 'General Organization',
-      phone: '+1 (555) 019-2831',
+      phone: '',
       email: '',
-      emergencyContact: 'Emergency Contact (+1 555-992-1100)',
-      certifications: 'Standard Compliance & Safety',
+      emergencyContact: '',
+      certifications: '',
       ppeStatus: 'COMPLIANT',
       shiftStatus: 'ON_SITE',
       trainingStatus: 'COMPLIANT',
-      lastTrainingDate: formatEdtDate(new Date(), { format: 'iso' }),
-      trainingCourse: `${config?.appTitle || 'Enterprise'} Safety Induction`,
-      trainingExpiry: '2027-05-15',
+      lastTrainingDate: '',
+      trainingCourse: '',
+      trainingExpiry: '',
       department: availableCompanies[0] || 'Operations',
-      supervisor: 'Operations Lead',
+      supervisor: '',
       currentZone: availableZones[0] || 'Main Area',
       notes: ''
     });
@@ -1610,18 +1614,18 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       name: person.name || '',
       role: person.role || availableRoles[0] || 'Staff',
       tradeCompany: person.tradeCompany || person.company || availableCompanies[0] || 'General Organization',
-      phone: person.phone || '+1 (555) 019-2831',
+      phone: person.phone || '',
       email: person.email || '',
       emergencyContact: person.emergencyContact || '',
-      certifications: person.certifications || 'Standard Compliance & Safety',
+      certifications: person.certifications || '',
       ppeStatus: person.ppeStatus || 'COMPLIANT',
       shiftStatus: person.shiftStatus || 'ON_SITE',
       trainingStatus: person.trainingStatus || 'COMPLIANT',
-      lastTrainingDate: person.lastTrainingDate || '2026-05-15',
-      trainingCourse: person.trainingCourse || `${config?.appTitle || 'Enterprise'} Induction`,
-      trainingExpiry: person.trainingExpiry || '2027-05-15',
+      lastTrainingDate: person.lastTrainingDate || '',
+      trainingCourse: person.trainingCourse || '',
+      trainingExpiry: person.trainingExpiry || '',
       department: person.department || person.tradeCompany || availableCompanies[0] || 'Operations',
-      supervisor: person.supervisor || 'Operations Lead',
+      supervisor: person.supervisor || '',
       currentZone: person.currentZone || (availableZones[0] || 'Main Area'),
       notes: person.notes || ''
     });
@@ -3037,6 +3041,93 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                 </select>
               </div>
 
+              {/* Contact Information (Phone & Email) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                    Phone Number
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="+1 (555) 019-2831"
+                    value={formData.phone || ''}
+                    onChange={e => setFormData({...formData, phone: e.target.value})}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                    Email Address
+                  </label>
+                  <input
+                    type="email"
+                    placeholder="worker@company.com"
+                    value={formData.email || ''}
+                    onChange={e => setFormData({...formData, email: e.target.value})}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Operations Directives (Emergency Contact & Supervisor) */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                    Emergency Contact
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Jane Doe (+1 555-992-1100)"
+                    value={formData.emergencyContact || ''}
+                    onChange={e => setFormData({...formData, emergencyContact: e.target.value})}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                    Assigned Supervisor
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Operations Duty Lead"
+                    value={formData.supervisor || ''}
+                    onChange={e => setFormData({...formData, supervisor: e.target.value})}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  />
+                </div>
+              </div>
+
+              {/* Department & Shift Status */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                    Department
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Operations / Civil"
+                    value={formData.department || ''}
+                    onChange={e => setFormData({...formData, department: e.target.value})}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  />
+                </div>
+                <div>
+                  <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                    Shift Status
+                  </label>
+                  <select
+                    value={formData.shiftStatus || 'ON_SITE'}
+                    onChange={e => setFormData({...formData, shiftStatus: e.target.value as any})}
+                    className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                  >
+                    <option value="ON_SITE">🟢 On-Site (Active)</option>
+                    <option value="OFF_SITE">⚪ Off-Site</option>
+                    <option value="ON_LEAVE">🟡 On Leave</option>
+                    <option value="SUSPENDED">🔴 Suspended</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
                 <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
                   Certifications & Clearances
@@ -3046,6 +3137,19 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                   value={formData.certifications}
                   onChange={e => setFormData({...formData, certifications: e.target.value})}
                   className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="font-bold text-slate-600 dark:text-slate-300 block mb-1">
+                  Notes & Special Directives
+                </label>
+                <textarea
+                  rows={2}
+                  placeholder="Additional profile remarks, medical notes, or badge directives..."
+                  value={formData.notes || ''}
+                  onChange={e => setFormData({...formData, notes: e.target.value})}
+                  className="w-full p-2.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl outline-none font-medium resize-none"
                 />
               </div>
 

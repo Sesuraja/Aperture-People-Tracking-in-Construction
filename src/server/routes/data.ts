@@ -7,7 +7,8 @@ import {
   isMongoConnected,
   logAuditEvent,
   getPlaybackFrames,
-  bulkUpsertDocs
+  bulkUpsertDocs,
+  DEFAULT_ORGS
 } from '../services/db.js';
 import { requireAuth, optionalAuth, AuthRequest } from '../middleware/auth.js';
 import { broadcastWebSocketEvent } from '../services/websocket.js';
@@ -290,6 +291,14 @@ const handleCollectionUpsert = async (req: AuthRequest, res: Response) => {
       }
     }
 
+    if (collection === 'registered_people' || collection === 'people') {
+      body.isCustomProfile = true;
+      if (body.name) {
+        body.firstName = body.name.trim().split(' ')[0] || body.firstName || '';
+        body.lastName = body.name.trim().split(' ').slice(1).join(' ') || body.lastName || '';
+      }
+    }
+
     const saved = await upsertDoc(collection, body, orgId);
 
     // Sync dual workforce collections: registered_people <-> people in MongoDB
@@ -399,15 +408,22 @@ const handleCollectionItemUpsert = async (req: AuthRequest, res: Response) => {
   if (!isGlobalOrSystemConfig) {
     const existingDoc = await getDocById(collection, id, orgId);
     const allExisting = await getDocById(collection, id, 'ALL');
-    const DEFAULT_ORGS = ['default', 'demo', 'org_main', 'org_aperture_default'];
-    const isBothDefault = DEFAULT_ORGS.includes(allExisting?.organizationId) && DEFAULT_ORGS.includes(orgId);
-    if (allExisting && !existingDoc && !isBothDefault && allExisting.organizationId && allExisting.organizationId !== orgId) {
+    const isAdmin = user?.role === 'admin' || Boolean(user?.isPlatformAdmin);
+    const isBothDefault = (DEFAULT_ORGS.includes(allExisting?.organizationId) || !allExisting?.organizationId) && DEFAULT_ORGS.includes(orgId);
+    if (!isAdmin && allExisting && !existingDoc && !isBothDefault && allExisting.organizationId && allExisting.organizationId !== orgId) {
       return res.status(404).json({ error: 'Document not found or belongs to another organization' });
     }
   }
 
   const body = req.body || {};
   body.id = id;
+  if (collection === 'registered_people' || collection === 'people') {
+    body.isCustomProfile = true;
+    if (body.name) {
+      body.firstName = body.name.trim().split(' ')[0] || body.firstName || '';
+      body.lastName = body.name.trim().split(' ').slice(1).join(' ') || body.lastName || '';
+    }
+  }
 
   try {
     // If updating map_configurations without explicit zones, preserve existing zones

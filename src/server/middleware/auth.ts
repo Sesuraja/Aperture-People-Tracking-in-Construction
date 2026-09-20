@@ -104,15 +104,7 @@ export async function getGooglePublicCerts(projectId: string = FIREBASE_PROJECT_
 export function verifyToken(token: string): AuthenticatedUser | null {
   if (!token) return null;
   if (token === 'demo' || token === 'viewer') {
-    return {
-      id: 'demo_user',
-      email: 'demo@aperture.io',
-      name: 'Aperture User',
-      role: token === 'demo' ? 'admin' : 'viewer',
-      organizationId: 'default',
-      isPlatformAdmin: false,
-      tokenVersion: 1
-    };
+    return null;
   }
 
   try {
@@ -281,9 +273,8 @@ export async function requireAuth(req: AuthRequest, res: Response, next: NextFun
         user.name = userDoc.name || userDoc.displayName || user.name;
         user.id = userDoc.id || user.id;
       } else {
-        // If the user is authenticated in Firebase but doesn't exist in local DB, bootstrap them
-        const isInitialAdmin = user.email?.toLowerCase() === 'sigmund.t.d@gaostaff.com' || user.email?.endsWith('@gaostaff.com');
-        const role = isInitialAdmin ? 'admin' : 'viewer';
+        const isInitialAdmin = user.email?.endsWith('@gaostaff.com');
+        const role = isInitialAdmin ? 'admin' : (user.role || 'viewer');
         const orgId = user.organizationId || 'default';
         user.role = role;
         user.organizationId = orgId;

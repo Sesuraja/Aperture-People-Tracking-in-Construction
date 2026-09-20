@@ -61,11 +61,14 @@ export default function MongoDbConfigurationSection() {
   }, []);
 
   const getAuthHeaders = (): Record<string, string> => {
-    const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
-    return {
-      "Content-Type": "application/json",
-      "Authorization": `Bearer ${token}`
+    const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json"
     };
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+    return headers;
   };
 
   const handleTestConnection = async () => {

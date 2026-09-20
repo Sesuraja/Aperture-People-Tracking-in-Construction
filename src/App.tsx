@@ -32,6 +32,7 @@ import Login from './components/Login';
 import ApertureLogo, { ApertureLogoMark } from './components/ApertureLogo';
 import { startGaoSync, stopGaoSync } from './lib/gaoSyncService';
 import { doc, getDoc, setDoc, db } from './lib/db';
+import { safeStorage } from './lib/safeStorage';
 
 import { TrackingProvider } from './context/TrackingContext';
 
@@ -89,8 +90,7 @@ const ProtectedRoute = ({
 export default function App() {
   const [mode, setMode] = useState<AppMode>(() => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
-    const savedMode = typeof window !== 'undefined' ? localStorage.getItem('gao_app_mode') : null;
-    if (token) return 'real';
+    if (token && token !== 'demo' && token !== 'viewer') return 'real';
     return null;
   });
 
@@ -104,21 +104,37 @@ export default function App() {
     }
   };
 
-  const handleLogout = async () => {
+  const handleLogout = () => {
     try {
-      await fetch('/api/auth/logout', { method: 'POST' });
-    } catch {
-      // ignore network errors during logout
-    }
-    localStorage.removeItem('gao_jwt_token');
-    localStorage.removeItem('gao_app_mode');
+      fetch('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    } catch {}
+    const keysToRemove = [
+      'gao_jwt_token',
+      'gao_app_mode',
+      'token',
+      'auth_token',
+      'aperture_token',
+      'gao_active_organization',
+      'gao_active_project',
+      'gao_company_name'
+    ];
+    keysToRemove.forEach(k => {
+      safeStorage.removeItem(k);
+      try { localStorage.removeItem(k); } catch {}
+      try { sessionStorage.removeItem(k); } catch {}
+    });
     setMode(null);
+    window.location.href = '/';
   };
 
   useEffect(() => {
     const token = localStorage.getItem('gao_jwt_token');
-    if (token && mode !== 'real') {
+    if (token && token !== 'demo' && token !== 'viewer' && mode !== 'real') {
       changeMode('real');
+    } else if (token === 'demo' || token === 'viewer') {
+      localStorage.removeItem('gao_jwt_token');
+      localStorage.removeItem('gao_app_mode');
+      setMode(null);
     }
   }, []);
 
@@ -154,7 +170,11 @@ export default function App() {
         <AppModeContext.Provider value={{ mode }}>
           <TrackingProvider>
             {!mode ? (
-              <Login onLoginSuccess={changeMode} />
+              <Routes>
+                <Route path="/login" element={<Login onLoginSuccess={changeMode} />} />
+                <Route path="/" element={<Login onLoginSuccess={changeMode} />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
             ) : (
               <AppContent onLogout={handleLogout} />
             )}
@@ -456,17 +476,8 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
         <div className="flex-1 overflow-y-auto relative min-h-0 w-full flex flex-col">
           <div className="min-h-full flex flex-col w-full flex-1">
             <Routes>
-              <Route path="/" element={
-                 <ProtectedRoute 
-                   element={<DashboardTab people={people || []} alerts={alerts || []} zones={ZONES || []} highlightedPersonId={highlightedPersonId} vehicles={vehicles || []} assets={assets || []} />}
-                   userRole={userRole}
-                   userUid="default"
-                   permissionKey="dashboard"
-                   permissions={permissions}
-                   userPagePermissions={userPagePermissions}
-                   featureName="Dashboard Telemetry"
-                 />
-              } />
+              <Route path="/" element={<Navigate to="/dashboard" replace />} />
+              <Route path="/login" element={<Navigate to="/dashboard" replace />} />
               <Route path="/dashboard" element={
                  <ProtectedRoute 
                    element={<DashboardTab people={people || []} alerts={alerts || []} zones={ZONES || []} highlightedPersonId={highlightedPersonId} vehicles={vehicles || []} assets={assets || []} />}
@@ -639,7 +650,17 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
         </div>
       </main>
 
-      <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} onLogout={onLogout} />
+      <ProfileModal 
+        isOpen={isProfileModalOpen} 
+        onClose={() => setIsProfileModalOpen(false)} 
+        onLogout={onLogout}
+        onUserUpdated={(updatedUser) => {
+          if (updatedUser) {
+            setCurrentUser(updatedUser);
+            if (updatedUser.role) setUserRole(updatedUser.role);
+          }
+        }}
+      />
 
       <CommandPaletteModal
         isOpen={isCommandPaletteOpen}

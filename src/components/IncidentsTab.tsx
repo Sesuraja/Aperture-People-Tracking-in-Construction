@@ -227,6 +227,23 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
 
   useEffect(() => {
     loadApiData(fetchBatchSize);
+
+    const interval = setInterval(() => {
+      loadApiData(fetchBatchSize, false);
+    }, 12000);
+
+    const handleDataRefresh = () => {
+      loadApiData(fetchBatchSize, false);
+    };
+
+    window.addEventListener('gao_data_updated', handleDataRefresh);
+    window.addEventListener('gao_refresh_data', handleDataRefresh);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('gao_data_updated', handleDataRefresh);
+      window.removeEventListener('gao_refresh_data', handleDataRefresh);
+    };
   }, [loadApiData, fetchBatchSize]);
 
   /**

@@ -44,13 +44,14 @@ export function getAuthHeaders(): Record<string, string> {
     'Accept': 'application/json',
     'Content-Type': 'application/json'
   };
-  let token = 'demo';
   if (typeof window !== 'undefined') {
-    token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || 'demo';
+    const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token');
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
     const targetHost = localStorage.getItem('gao_api_url');
     if (targetHost) headers['x-gao-target-host'] = targetHost;
   }
-  headers['Authorization'] = `Bearer ${token}`;
   return headers;
 }
 
@@ -77,7 +78,7 @@ class GaoApi {
    */
   async getHistoryTotalCount(): Promise<number> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 3500);
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
       const response = await fetch('/api/GetHistoryTotalCount', {
         headers: getAuthHeaders(),
@@ -121,7 +122,7 @@ class GaoApi {
    */
   async getHistoryRecords(skip: number, take: number): Promise<HistoryRecord[]> {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 4000);
+    const timeout = setTimeout(() => controller.abort(), 15000);
     const tz = typeof window !== 'undefined' ? (localStorage.getItem('gao_system_timezone') || '') : '';
     const url = `/api/GetHistoryRecords/${skip}/${take}${tz ? `?timezone=${encodeURIComponent(tz)}` : ''}`;
     try {

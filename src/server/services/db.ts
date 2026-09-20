@@ -262,13 +262,15 @@ export async function initDatabaseIndexes(): Promise<void> {
     'visitor_access_logs', 'visitor_security_list', 'visitor_access_tokens'
   ];
 
-  for (const col of coreCollections) {
+  await Promise.all(coreCollections.map(async (col) => {
     try {
-      await mongoDb.collection(col).createIndex({ organizationId: 1 }, { background: true });
-      await mongoDb.collection(col).createIndex({ id: 1 }, { background: true });
-      await mongoDb.collection(col).createIndex({ organizationId: 1, createdAt: -1 }, { background: true });
+      await Promise.all([
+        mongoDb!.collection(col).createIndex({ organizationId: 1 }, { background: true }).catch(() => {}),
+        mongoDb!.collection(col).createIndex({ id: 1 }, { background: true }).catch(() => {}),
+        mongoDb!.collection(col).createIndex({ organizationId: 1, createdAt: -1 }, { background: true }).catch(() => {})
+      ]);
     } catch {}
-  }
+  }));
 
   console.log('[DB Service] MongoDB deduplication, uniqueness, and 7-day retention TTL indexes initialized.');
 
@@ -311,16 +313,12 @@ export async function initDatabase(customUri?: string): Promise<void> {
 
     console.log(`[DB Service] Successfully connected to MongoDB Atlas database (DATA_MODE=${getDataMode()}).`);
 
-    // Initialize database deduplication indexes (safe, non-data-creating)
-    await initDatabaseIndexes();
+    // Run index initialization and maintenance non-blockingly in background
+    void initDatabaseIndexes();
 
     if (!cleanupsInitialized) {
       cleanupsInitialized = true;
-      // Prune legacy bloated duplicate alerts to keep MongoDB query latency ultra-low
-      await pruneDuplicateAlerts();
-
-      // Purge legacy sample worker documents (Staff User, John Miller, etc.) that do not belong to real API/database
-      await purgeLegacySampleWorkers();
+      void pruneDuplicateAlerts();
     }
   } catch (err: any) {
     console.error('[DB Service] Failed to connect to MongoDB:', err.message);
@@ -328,12 +326,16 @@ export async function initDatabase(customUri?: string): Promise<void> {
     mongoClient = null;
     mongoDb = null;
   } finally {
-    await bootstrapMapAndZoneDefinitions();
+    void bootstrapMapAndZoneDefinitions();
   }
 }
 
 export function isMongoConnected(): boolean {
   return mongoDb !== null;
+}
+
+export function getMongoDb(): Db | null {
+  return mongoDb;
 }
 
 export function getDbStatus() {
@@ -500,11 +502,9 @@ export async function getCollectionDocs(
       if (organizationId && organizationId !== 'ALL' && colName !== 'organizations' && colName !== 'settings') {
         const isSpatialConfig = ['map_configurations', 'zones', 'geofences', 'projects', 'sites', 'floorplans', 'settings', 'organizations'].includes(colName);
         if (!isSpatialConfig) {
-          if (organizationId === 'default' || organizationId === 'org_main' || organizationId === 'org_aperture_default') {
+          if (DEFAULT_ORGS.includes(organizationId)) {
             query.$or = [
-              { organizationId: 'default' },
-              { organizationId: 'org_main' },
-              { organizationId: 'org_aperture_default' },
+              ...DEFAULT_ORGS.map(org => ({ organizationId: org })),
               { organizationId: { $exists: false } },
               { organizationId: null },
               { organizationId: '' }
@@ -543,8 +543,8 @@ export async function getCollectionDocs(
   let result = items;
   if (organizationId && organizationId !== 'ALL' && colName !== 'organizations' && colName !== 'settings') {
     result = items.filter((item: any) => 
-      (organizationId === 'default' || organizationId === 'org_main' || organizationId === 'org_aperture_default')
-        ? (!item.organizationId || item.organizationId === 'default' || item.organizationId === 'org_main' || item.organizationId === 'org_aperture_default')
+      DEFAULT_ORGS.includes(organizationId)
+        ? (!item.organizationId || DEFAULT_ORGS.includes(item.organizationId))
         : item.organizationId === organizationId
     );
   }
@@ -562,11 +562,9 @@ export async function countCollectionDocs(
       const isSpatialConfig = ['map_configurations', 'zones', 'geofences', 'projects', 'sites', 'floorplans', 'settings', 'organizations'].includes(colName);
       const query: any = {};
       if (organizationId && organizationId !== 'ALL' && !isSpatialConfig) {
-        if (organizationId === 'default' || organizationId === 'org_main' || organizationId === 'org_aperture_default') {
+        if (DEFAULT_ORGS.includes(organizationId)) {
           query.$or = [
-            { organizationId: 'default' },
-            { organizationId: 'org_main' },
-            { organizationId: 'org_aperture_default' },
+            ...DEFAULT_ORGS.map(org => ({ organizationId: org })),
             { organizationId: { $exists: false } },
             { organizationId: null },
             { organizationId: '' }
@@ -587,20 +585,40 @@ export async function countCollectionDocs(
   return items.length;
 }
 
-export const DEFAULT_ORGS = ['default', 'org_main', 'org_aperture_default'];
+export const DEFAULT_ORGS = ['default', 'demo', 'org_main', 'org_aperture_default'];
 
 export async function getDocById(colName: string, id: string, organizationId?: string): Promise<any | null> {
   if (mongoDb) {
     try {
       const idStr = String(id || '').trim();
+      const isSingletonCollection = [
+        'registered_people',
+        'people',
+        'live_tags',
+        'real_time_tags',
+        'devices',
+        'hardware_readers'
+      ].includes(colName);
+
       const orClauses: any[] = [
         { id: idStr },
         { id: idStr.toUpperCase() },
-        { id: idStr.toLowerCase() },
-        { hardhatTagId: idStr },
-        { hardhatTagId: idStr.toUpperCase() },
-        { hardhatTagId: idStr.toLowerCase() }
+        { id: idStr.toLowerCase() }
       ];
+
+      if (isSingletonCollection) {
+        orClauses.push(
+          { hardhatTagId: idStr },
+          { hardhatTagId: idStr.toUpperCase() },
+          { hardhatTagId: idStr.toLowerCase() },
+          { tagId: idStr },
+          { tagId: idStr.toUpperCase() },
+          { tagId: idStr.toLowerCase() },
+          { TagID: idStr },
+          { TagID: idStr.toUpperCase() },
+          { TagID: idStr.toLowerCase() }
+        );
+      }
       if (ObjectId.isValid(idStr) && idStr.length === 24) {
         try {
           orClauses.push({ _id: new ObjectId(idStr) });
@@ -696,14 +714,62 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
   if (mongoDb) {
     try {
       const idStr = String(cleanDoc.id || '').trim();
+      const hardhatStr = String(cleanDoc.hardhatTagId || '').trim();
+      const tagIdStr = String(cleanDoc.tagId || cleanDoc.TagID || '').trim();
+      const isSingletonCollection = [
+        'registered_people',
+        'people',
+        'live_tags',
+        'real_time_tags',
+        'devices',
+        'hardware_readers'
+      ].includes(colName);
+
       const orClauses: any[] = [
         { id: idStr },
         { id: idStr.toUpperCase() },
-        { id: idStr.toLowerCase() },
-        { hardhatTagId: idStr },
-        { hardhatTagId: idStr.toUpperCase() },
-        { hardhatTagId: idStr.toLowerCase() }
+        { id: idStr.toLowerCase() }
       ];
+
+      if (isSingletonCollection) {
+        orClauses.push(
+          { hardhatTagId: idStr },
+          { hardhatTagId: idStr.toUpperCase() },
+          { hardhatTagId: idStr.toLowerCase() },
+          { tagId: idStr },
+          { tagId: idStr.toUpperCase() },
+          { tagId: idStr.toLowerCase() },
+          { TagID: idStr },
+          { TagID: idStr.toUpperCase() },
+          { TagID: idStr.toLowerCase() }
+        );
+        if (hardhatStr) {
+          orClauses.push(
+            { hardhatTagId: hardhatStr },
+            { hardhatTagId: hardhatStr.toUpperCase() },
+            { hardhatTagId: hardhatStr.toLowerCase() },
+            { id: hardhatStr },
+            { id: hardhatStr.toUpperCase() },
+            { id: hardhatStr.toLowerCase() },
+            { tagId: hardhatStr },
+            { TagID: hardhatStr }
+          );
+        }
+        if (tagIdStr) {
+          orClauses.push(
+            { tagId: tagIdStr },
+            { tagId: tagIdStr.toUpperCase() },
+            { tagId: tagIdStr.toLowerCase() },
+            { TagID: tagIdStr },
+            { TagID: tagIdStr.toUpperCase() },
+            { TagID: tagIdStr.toLowerCase() },
+            { id: tagIdStr },
+            { id: tagIdStr.toUpperCase() },
+            { id: tagIdStr.toLowerCase() },
+            { hardhatTagId: tagIdStr }
+          );
+        }
+      }
       if (ObjectId.isValid(idStr) && idStr.length === 24) {
         try {
           orClauses.push({ _id: new ObjectId(idStr) });
@@ -748,17 +814,43 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
           { _id: existingInDb._id },
           { $set: cleanDoc }
         );
-      } else {
-        const insertFilter: any = { id: cleanDoc.id };
-        if (cleanDoc.organizationId && colName !== 'organizations') {
-          insertFilter.organizationId = cleanDoc.organizationId;
+        if (colName === 'registered_people' || colName === 'people') {
+          const idClauses = orClauses.length > 0 ? orClauses : [{ id: cleanDoc.id }];
+          await mongoDb.collection(colName).updateMany(
+            { $or: idClauses },
+            { $set: cleanDoc }
+          ).catch(() => {});
         }
-        await mongoDb.collection(colName).updateOne(
-          insertFilter,
-          { $set: cleanDoc },
-          { upsert: true }
-        );
+      } else {
+        const fallbackById = cleanDoc.id ? await mongoDb.collection(colName).findOne({ id: cleanDoc.id }) : null;
+        if (fallbackById) {
+          if (fallbackById.organizationId) {
+            cleanDoc.organizationId = fallbackById.organizationId;
+          }
+          await mongoDb.collection(colName).updateOne(
+            { _id: fallbackById._id },
+            { $set: cleanDoc }
+          );
+          if (colName === 'registered_people' || colName === 'people') {
+            const idClauses = orClauses.length > 0 ? orClauses : [{ id: cleanDoc.id }];
+            await mongoDb.collection(colName).updateMany(
+              { $or: idClauses },
+              { $set: cleanDoc }
+            ).catch(() => {});
+          }
+        } else {
+          const insertFilter: any = { id: cleanDoc.id };
+          if (cleanDoc.organizationId && colName !== 'organizations') {
+            insertFilter.organizationId = cleanDoc.organizationId;
+          }
+          await mongoDb.collection(colName).updateOne(
+            insertFilter,
+            { $set: cleanDoc },
+            { upsert: true }
+          );
+        }
       }
+      invalidateCollectionCache(colName);
       return cleanDoc;
     } catch (err) {
       console.error(`[DB Service] Error upserting doc in ${colName}:`, err);
@@ -769,8 +861,17 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
     inMemoryStore[colName] = [];
   }
   const idLower = String(cleanDoc.id || '').toLowerCase().trim();
+  const hardhatLower = String(cleanDoc.hardhatTagId || '').toLowerCase().trim();
+  const tagLower = String(cleanDoc.tagId || cleanDoc.TagID || '').toLowerCase().trim();
+  const targetIds = [idLower, hardhatLower, tagLower].filter(Boolean);
+
   const idx = inMemoryStore[colName].findIndex((item: any) => {
-    const sameId = item.id === cleanDoc.id || String(item.id || '').toLowerCase().trim() === idLower;
+    const itemIds = [
+      String(item.id || '').toLowerCase().trim(),
+      String(item.hardhatTagId || '').toLowerCase().trim(),
+      String(item.tagId || item.TagID || '').toLowerCase().trim()
+    ].filter(Boolean);
+    const sameId = targetIds.some(tid => itemIds.includes(tid));
     if (colName !== 'organizations' && cleanDoc.organizationId) {
       return sameId && item.organizationId === cleanDoc.organizationId;
     }
@@ -1695,7 +1796,7 @@ export async function purgeAllDemoAndTestData(): Promise<{ deletedCounts: Record
     ];
 
     const fakeTagRegex = /^(TEST_|BATCH-|UHF-REAL-|TAG_DIAG|DIAG_|TAG_HIST_|TAG_RT_|TAG_RAW_|TAG_API_|TAG_HAZARD_|TAG_SAFE_|att_TEST_|att_BATCH-|att_UHF-REAL-|att_TAG_)/i;
-    const fakeOrgRegex = /^(safety_org_|ai_workflow_org_|test_|demo$)/i;
+    const fakeOrgRegex = /^(safety_org_|ai_workflow_org_|test_)/i;
     const fakeNames = [
       'Staff User', 'John Miller', 'Marcus Vance', 'Alice Smith',
       'Sarah Jenkins', 'David Wilson', 'WebSocket Tester', 'MQTT Tester'
@@ -1717,7 +1818,6 @@ export async function purgeAllDemoAndTestData(): Promise<{ deletedCounts: Record
         { personId: { $regex: fakeTagRegex } },
         { rfidTagId: { $regex: fakeTagRegex } },
         { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: 'demo' },
         { name: { $in: fakeNames } },
         { personName: { $in: fakeNames } }
       ]
@@ -1743,7 +1843,6 @@ export async function purgeAllDemoAndTestData(): Promise<{ deletedCounts: Record
         { TagID: { $in: fakeIds } },
         { TagID: { $regex: fakeTagRegex } },
         { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: 'demo' },
         { personName: { $in: fakeNames } }
       ]
     };
@@ -1761,29 +1860,25 @@ export async function purgeAllDemoAndTestData(): Promise<{ deletedCounts: Record
         { 'tags.TagID': { $in: fakeIds } },
         { 'tags.tagId': { $regex: fakeTagRegex } },
         { 'tags.TagID': { $regex: fakeTagRegex } },
-        { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: 'demo' }
+        { organizationId: { $regex: fakeOrgRegex } }
       ]
     });
     deletedCounts['playback_history'] = playbackRes.deletedCount || 0;
 
-    // 4. Clean demo / test organizations
+    // 4. Clean test organizations
     const orgRes = await mongoDb.collection('organizations').deleteMany({
       $or: [
-        { id: { $regex: fakeOrgRegex } },
-        { id: 'demo' },
-        { organizationId: 'demo' }
+        { id: { $regex: fakeOrgRegex } }
       ]
     });
     deletedCounts['organizations'] = orgRes.deletedCount || 0;
 
-    // 5. Clean demo / test users
+    // 5. Clean test users
     const userRes = await mongoDb.collection('users').deleteMany({
       $or: [
-        { id: { $in: ['usr_viewer', 'usr_admin', 'demo_user'] } },
-        { email: { $in: ['viewer@example.com', 'admin@gaostaff.com', 'demo@aperture.io', 'forged_admin@gaostaff.com'] } },
-        { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: 'demo' }
+        { id: { $in: ['usr_viewer', 'usr_admin'] } },
+        { email: { $in: ['viewer@example.com', 'admin@gaostaff.com', 'forged_admin@gaostaff.com'] } },
+        { organizationId: { $regex: fakeOrgRegex } }
       ]
     });
     deletedCounts['users'] = userRes.deletedCount || 0;
@@ -1830,6 +1925,25 @@ export async function purgeAllDemoAndTestData(): Promise<{ deletedCounts: Record
  */
 export async function purgeLegacySampleWorkers(): Promise<void> {
   await purgeAllDemoAndTestData();
+}
+
+/**
+ * Checks if a worker profile is a real custom profile (not a default raw tag or generic John placeholder)
+ */
+export function isRealCustomWorker(p: any): boolean {
+  if (!p || typeof p !== 'object') return false;
+  const name = String(p.name || '').trim();
+  const lower = name.toLowerCase();
+  if (
+    !name || 
+    lower === 'john' || 
+    lower === 'john site lead' || 
+    name.startsWith('Personnel ') || 
+    name.startsWith('Tag ')
+  ) {
+    return false;
+  }
+  return Boolean(p.isCustomProfile || (name && lower !== 'john'));
 }
 
 

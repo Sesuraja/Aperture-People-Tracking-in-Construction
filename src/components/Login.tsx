@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { db, doc, setDoc } from '../lib/db';
 import { ShieldAlert, Loader2, Mail, Lock, User, Shield, LogIn, UserPlus, Building2 } from 'lucide-react';
 import ApertureLogo, { ApertureLogoMark } from './ApertureLogo';
@@ -9,6 +10,7 @@ interface LoginProps {
 }
 
 export default function Login({ onLoginSuccess }: LoginProps) {
+  const navigate = useNavigate();
   const [isSignUp, setIsSignUp] = useState(false);
   const [fullName, setFullName] = useState('');
   const [organizationName, setOrganizationName] = useState('');
@@ -112,6 +114,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         safeStorage.setItem('gao_app_mode', 'real');
       }
       onLoginSuccess('real');
+      navigate('/dashboard', { replace: true });
     } catch (err: any) {
       console.error('Backend Auth Error:', err);
       setError(err.message || 'Authentication failed');
@@ -238,7 +241,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                   value={email}
                   onChange={e => setEmail(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition"
-                  placeholder="admin@domain.com"
+                  placeholder="name@company.com"
                 />
               </div>
             </div>

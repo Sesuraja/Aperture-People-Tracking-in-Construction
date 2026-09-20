@@ -18,12 +18,15 @@ import { safeStorage } from '../lib/safeStorage';
 import { optimizeFloorMapFile } from '../lib/imageOptimizer';
 
 function getAuthHeaders(): Record<string, string> {
-  const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
-  return {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
+  const headers: Record<string, string> = {
     'Accept': 'application/json',
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
+    'Content-Type': 'application/json'
   };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
 }
 
 export interface MapLayerConfig {

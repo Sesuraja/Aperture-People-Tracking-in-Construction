@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { upsertDoc, getCollectionDocs, getDocById } from './db.js';
+import { upsertDoc, getCollectionDocs, getDocById, isRealCustomWorker } from './db.js';
 import { generateEventHash, validateTelemetrySource, isRealTelemetryTag } from './dataPolicy.js';
 import {
   analyzeTelemetryBatchWithAI,
@@ -108,9 +108,13 @@ export async function processTelemetryWithAI(
         .some((id: string) => String(id).toLowerCase() === tagId.toLowerCase())
     ) || null;
 
-    const firstName = String(item.FirstName || item.firstName || matchedPerson?.firstName || matchedPerson?.name?.split(' ')[0] || '');
-    const lastName = String(item.LastName || item.lastName || matchedPerson?.lastName || matchedPerson?.name?.split(' ').slice(1).join(' ') || '');
-    const fullName = `${firstName} ${lastName}`.trim();
+    const hasCustomMatchedName = isRealCustomWorker(matchedPerson);
+    const rawTelemetryFn = String(item.FirstName || item.firstName || '').trim();
+    const rawTelemetryLn = String(item.LastName || item.lastName || '').trim();
+    const rawTelemetryName = (rawTelemetryFn || rawTelemetryLn) ? `${rawTelemetryFn} ${rawTelemetryLn}`.trim() : (matchedPerson?.name || 'Personnel');
+    const fullName = hasCustomMatchedName ? matchedPerson.name : rawTelemetryName;
+    const firstName = hasCustomMatchedName ? (fullName.split(' ')[0] || matchedPerson?.firstName || '') : rawTelemetryFn;
+    const lastName = hasCustomMatchedName ? (fullName.split(' ').slice(1).join(' ') || matchedPerson?.lastName || '') : rawTelemetryLn;
 
     contextItems.push({
       ...item,
@@ -163,15 +167,35 @@ export async function processTelemetryWithAI(
 
     analyzedResults.push(analysis);
 
+    // Resolve workforce identity and preserve custom profiles
+    const existingPerson = (await getDocById('registered_people', tagId, orgId)) || 
+                           (await getDocById('people', tagId, orgId)) ||
+                           (await getDocById('registered_people', tagId, 'ALL')) ||
+                           (await getDocById('people', tagId, 'ALL'));
+    const hasCustomExistingName = isRealCustomWorker(existingPerson);
+    const rawTagFn = String(item.FirstName || item.firstName || '').trim();
+    const rawTagLn = String(item.LastName || item.lastName || '').trim();
+    const rawTagName = (rawTagFn || rawTagLn) ? `${rawTagFn} ${rawTagLn}`.trim() : (item.personName || item.name || `Tag ${tagId}`);
+    const personName = (existingPerson && existingPerson.name && existingPerson.name !== 'John' && !existingPerson.name.startsWith('Tag ')) 
+      ? existingPerson.name 
+      : (hasCustomExistingName ? existingPerson.name : rawTagName);
+    const personRole = (hasCustomExistingName && existingPerson?.role) ? existingPerson.role : (existingPerson?.role || (item.role && item.role !== 'General Staff' ? item.role : 'Field Personnel'));
+    const personCompany = (hasCustomExistingName && (existingPerson?.tradeCompany || existingPerson?.company)) ? (existingPerson.tradeCompany || existingPerson.company) : (existingPerson?.tradeCompany || existingPerson?.company || item.company || 'External API / RFID');
+    const resolvedFirstName = hasCustomExistingName ? (personName.split(' ')[0] || existingPerson?.firstName || rawTagFn) : (rawTagFn || existingPerson?.firstName || '');
+    const resolvedLastName = hasCustomExistingName ? (personName.split(' ').slice(1).join(' ') || existingPerson?.lastName || rawTagLn) : (rawTagLn || '');
+
     const tagDocument = {
       id: tagId,
       organizationId: orgId,
       TagID: tagId,
+      name: personName,
       Timestamp: item.timestamp,
       Location: item.location,
       LocationName: item.location,
-      FirstName: item.firstName,
-      LastName: item.lastName,
+      FirstName: resolvedFirstName,
+      LastName: resolvedLastName,
+      firstName: resolvedFirstName,
+      lastName: resolvedLastName,
       sourceProtocol,
       readerId: item.readerId,
       rssi: item.rssi,
@@ -193,22 +217,25 @@ export async function processTelemetryWithAI(
       recentTagLocationHistory.set(tagId, { location: item.location, timestamp: Date.now() });
 
       await upsertDoc('rfid_realtime_events', {
+        ...tagDocument,
         id: `evt_${tagId}_${eventHash}`,
         eventId: eventHash,
-        ...tagDocument,
         receivedAt: nowIso,
         createdAt: now,
         expireAt: sevenDaysLater
       }, orgId);
 
       await upsertDoc('tag_history', {
+        ...tagDocument,
         id: `hist_${tagId}_${eventHash}`,
         eventId: eventHash,
         organizationId: orgId,
         TagID: tagId,
-        FirstName: item.firstName,
-        LastName: item.lastName,
-        name: `${item.firstName || ''} ${item.lastName || ''}`.trim() || item.fullName || `Tag ${tagId}`,
+        FirstName: resolvedFirstName,
+        LastName: resolvedLastName,
+        firstName: resolvedFirstName,
+        lastName: resolvedLastName,
+        name: personName,
         LocationName: item.location,
         Location: item.location,
         EnterTime: item.timestamp,
@@ -218,47 +245,60 @@ export async function processTelemetryWithAI(
         Duration: 'Active',
         role: item.role || 'Field Personnel',
         category: (item.role && String(item.role).toLowerCase().includes('visitor')) ? 'visitors' : 'workers',
-        ...tagDocument,
         createdAt: now,
         expireAt: sevenDaysLater
       }, orgId);
     }
 
     // 3b. Dynamically sync workforce registry: update or register personnel from real API telemetry
-    const existingPerson = (await getDocById('registered_people', tagId, orgId)) || (await getDocById('people', tagId, orgId));
-    const fn = String(item.FirstName || item.firstName || existingPerson?.firstName || '').trim();
-    const ln = String(item.LastName || item.lastName || existingPerson?.lastName || '').trim();
-    const personName = (fn || ln)
-      ? `${fn} ${ln}`.trim()
-      : (existingPerson?.name || item.personName || item.name || `Tag ${tagId}`);
-    const personRole = existingPerson?.role || (item.role && item.role !== 'General Staff' ? item.role : 'Field Personnel');
-    const personCompany = existingPerson?.tradeCompany || existingPerson?.company || item.company || 'External API / RFID';
-
     if (isRealTelemetryTag(tagId)) {
-      const personDoc = {
-        ...(existingPerson || {}),
-        id: tagId,
-        tagId,
-        hardhatTagId: tagId,
-        organizationId: orgId,
-        firstName: fn,
-        lastName: ln,
-        name: personName,
-        role: personRole,
-        company: personCompany,
-        tradeCompany: personCompany,
-        currentZone: item.location || existingPerson?.currentZone || 'Site Area',
-        location: item.location || existingPerson?.location || 'Site Area',
-        shiftStatus: existingPerson?.shiftStatus || 'ON_SITE',
-        presenceState: 'ACTIVE',
-        safetyScore: existingPerson?.safetyScore || 95,
-        ppeStatus: existingPerson?.ppeStatus || 'COMPLIANT',
-        trainingStatus: existingPerson?.trainingStatus || 'COMPLIANT',
-        lastSeen: item.timestamp || nowIso,
-        updatedAt: nowIso,
-        createdAt: existingPerson?.createdAt || nowIso,
-        expireAt: sevenDaysLater
-      };
+      let personDoc: any;
+      if (existingPerson) {
+        personDoc = {
+          ...existingPerson,
+          id: tagId,
+          tagId,
+          hardhatTagId: tagId,
+          currentZone: item.location || existingPerson.currentZone || 'Site Area',
+          location: item.location || existingPerson.location || 'Site Area',
+          lastSeen: item.timestamp || nowIso,
+          presenceState: 'ACTIVE',
+          shiftStatus: existingPerson.shiftStatus || 'ON_SITE',
+          updatedAt: nowIso
+        };
+      } else {
+        personDoc = {
+          id: tagId,
+          tagId,
+          hardhatTagId: tagId,
+          organizationId: orgId,
+          firstName: rawTagFn,
+          lastName: rawTagLn,
+          name: personName,
+          isCustomProfile: false,
+          role: personRole,
+          company: personCompany,
+          tradeCompany: personCompany,
+          department: personCompany,
+          phone: '',
+          email: '',
+          emergencyContact: '',
+          supervisor: '',
+          notes: '',
+          currentZone: item.location || 'Site Area',
+          location: item.location || 'Site Area',
+          shiftStatus: 'ON_SITE',
+          presenceState: 'ACTIVE',
+          safetyScore: 95,
+          ppeStatus: 'COMPLIANT',
+          trainingStatus: 'COMPLIANT',
+          certifications: 'Standard Compliance & Safety',
+          lastSeen: item.timestamp || nowIso,
+          updatedAt: nowIso,
+          createdAt: nowIso,
+          expireAt: sevenDaysLater
+        };
+      }
       await upsertDoc('registered_people', personDoc, orgId);
       await upsertDoc('people', personDoc, orgId);
     }

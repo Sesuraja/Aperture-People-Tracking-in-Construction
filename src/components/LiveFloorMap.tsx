@@ -544,11 +544,9 @@ export default function LiveFloorMap({
         setLocalFloorplan(dataUrl);
         safeStorage.setItem('gao_custom_floorplan', dataUrl);
 
-        const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
-        const headers = {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        };
+        const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) { headers['Authorization'] = `Bearer ${token}`; }
 
         const payload = {
           id: projectId,
@@ -595,11 +593,9 @@ export default function LiveFloorMap({
     setLocalFloorplan(null);
     safeStorage.removeItem('gao_custom_floorplan');
     try {
-      const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
-      const headers = {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      };
+      const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) { headers['Authorization'] = `Bearer ${token}`; }
       const payload = {
         id: projectId,
         siteId: projectId,

@@ -102,12 +102,15 @@ export interface TrackingContextType {
 const TrackingContext = createContext<TrackingContextType | undefined>(undefined);
 
 function getAuthHeaders(): Record<string, string> {
-  const token = typeof window !== 'undefined' ? (localStorage.getItem('gao_jwt_token') || 'demo') : 'demo';
-  return {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('gao_jwt_token') : null;
+  const headers: Record<string, string> = {
     'Accept': 'application/json',
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${token}`
+    'Content-Type': 'application/json'
   };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
 }
 
 export const SITE_ZONE_WAYPOINTS: { name: string; x: number; y: number; minX: number; maxX: number; minY: number; maxY: number }[] = [

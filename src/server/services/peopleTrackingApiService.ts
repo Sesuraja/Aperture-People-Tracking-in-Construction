@@ -1,4 +1,4 @@
-import { getCollectionDocs, upsertDoc, bulkWriteRealtimeTags, savePlaybackSnapshot, bulkUpsertDocs, getDocById } from './db.js';
+import { getCollectionDocs, upsertDoc, bulkWriteRealtimeTags, savePlaybackSnapshot, bulkUpsertDocs, getDocById, isRealCustomWorker } from './db.js';
 import { processTelemetryWithAI, TelemetryPayload } from './aiPipeline.js';
 import { isRealTelemetryTag } from './dataPolicy.js';
 import { broadcastWebSocketEvent } from './websocket.js';
@@ -391,52 +391,102 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
   }
 
   // 2. Auto-register / update workforce in registered_people & people
-  const existingPeople = await getCollectionDocs('registered_people', undefined, orgId).catch(() => []);
+  const [existingRegistered, existingPeopleCols] = await Promise.all([
+    getCollectionDocs('registered_people', undefined, orgId).catch(() => []),
+    getCollectionDocs('people', undefined, orgId).catch(() => [])
+  ]);
+  const existingPeople = [...(existingRegistered || []), ...(existingPeopleCols || [])];
   const existingMap = new Map<string, any>();
   existingPeople.forEach((p: any) => {
-    if (p.id) existingMap.set(String(p.id).toLowerCase(), p);
-    if (p.tagId) existingMap.set(String(p.tagId).toLowerCase(), p);
-    if (p.hardhatTagId) existingMap.set(String(p.hardhatTagId).toLowerCase(), p);
+    const keys = [p.id, p.tagId, p.hardhatTagId, p.TagID].filter(Boolean).map((k: any) => String(k).toLowerCase().trim());
+    for (const key of keys) {
+      const prev = existingMap.get(key);
+      const prevIsCustom = isRealCustomWorker(prev);
+      const curIsCustom = isRealCustomWorker(p);
+      if (!prev) {
+        existingMap.set(key, p);
+      } else if (!prevIsCustom && curIsCustom) {
+        existingMap.set(key, p);
+      } else if (prevIsCustom && !curIsCustom) {
+        // Never overwrite a custom profile with a non-custom profile
+        continue;
+      } else if (curIsCustom && p.updatedAt && prev.updatedAt && new Date(p.updatedAt).getTime() >= new Date(prev.updatedAt).getTime()) {
+        existingMap.set(key, p);
+      }
+    }
   });
 
   const existingZones = await getCollectionDocs('zones', undefined, orgId).catch(() => []);
   const zoneNames = new Set(existingZones.map((z: any) => (z.name || z.id || '').toLowerCase().replace(/[^a-z0-9]/g, '')));
 
   for (const [tid, item] of tagMap.entries()) {
-    const existing = existingMap.get(tid.toLowerCase());
-    const workerName = item.fullName && !item.fullName.startsWith('Personnel ') ? item.fullName : (existing?.name || item.fullName);
-    const workerRole = existing?.role || 'Field Personnel';
-    const workerCompany = existing?.tradeCompany || existing?.company || 'Field Team';
-
-    const personDoc = {
-      ...(existing || {}),
-      id: tid,
-      _id: tid,
-      tagId: tid,
-      hardhatTagId: tid,
-      organizationId: orgId,
-      firstName: item.fn || existing?.firstName || '',
-      lastName: item.ln || existing?.lastName || '',
-      name: workerName,
-      role: workerRole,
-      company: workerCompany,
-      tradeCompany: workerCompany,
-      currentZone: item.loc,
-      location: item.loc,
-      shiftStatus: existing?.shiftStatus || 'ON_SITE',
-      presenceState: 'ACTIVE',
-      safetyScore: existing?.safetyScore || 98,
-      ppeStatus: existing?.ppeStatus || 'COMPLIANT',
-      trainingStatus: existing?.trainingStatus || 'COMPLIANT',
-      status: 'ACTIVE',
-      lastSeen: item.enter,
-      updatedAt: nowIso,
-      createdAt: existing?.createdAt || nowIso,
-      expireAt: sevenDaysLater
-    };
+    let existing = existingMap.get(tid.toLowerCase().trim());
+    if (!existing) {
+      existing = await getDocById('registered_people', tid, orgId).catch(() => null) ||
+                 await getDocById('people', tid, orgId).catch(() => null) ||
+                 await getDocById('registered_people', tid, 'ALL').catch(() => null) ||
+                 await getDocById('people', tid, 'ALL').catch(() => null);
+    }
+    let personDoc: any;
+    if (existing) {
+      personDoc = {
+        ...existing,
+        id: tid,
+        _id: existing._id || tid,
+        tagId: tid,
+        hardhatTagId: tid,
+        currentZone: item.loc || existing.currentZone || 'Zone1',
+        location: item.loc || existing.location || 'Zone1',
+        shiftStatus: existing.shiftStatus || 'ON_SITE',
+        presenceState: 'ACTIVE',
+        lastSeen: item.enter || existing.lastSeen || nowIso,
+        updatedAt: nowIso
+      };
+    } else {
+      const rawName = (item.fullName && !item.fullName.startsWith('Personnel ') && item.fullName.toLowerCase() !== 'john site lead') 
+        ? item.fullName 
+        : ((item.fn || item.ln) ? `${item.fn} ${item.ln}`.trim() : `Personnel ${tid.slice(-6).toUpperCase()}`);
+      personDoc = {
+        id: tid,
+        _id: tid,
+        tagId: tid,
+        hardhatTagId: tid,
+        organizationId: orgId,
+        firstName: item.fn || '',
+        lastName: item.ln || '',
+        name: rawName,
+        isCustomProfile: false,
+        role: 'Field Personnel',
+        company: 'Field Team',
+        tradeCompany: 'Field Team',
+        department: 'Field Team',
+        phone: '',
+        email: '',
+        emergencyContact: '',
+        supervisor: '',
+        notes: '',
+        currentZone: item.loc || 'Zone1',
+        location: item.loc || 'Zone1',
+        shiftStatus: 'ON_SITE',
+        presenceState: 'ACTIVE',
+        safetyScore: 98,
+        ppeStatus: 'COMPLIANT',
+        trainingStatus: 'COMPLIANT',
+        certifications: 'Standard Compliance & Safety',
+        status: 'ACTIVE',
+        lastSeen: item.enter || nowIso,
+        updatedAt: nowIso,
+        createdAt: nowIso,
+        expireAt: sevenDaysLater
+      };
+    }
 
     await upsertDoc('registered_people', personDoc, orgId).catch(() => {});
     await upsertDoc('people', personDoc, orgId).catch(() => {});
+
+    const workerName = personDoc.name || `Personnel ${tid.slice(-6).toUpperCase()}`;
+    const workerRole = personDoc.role || 'Field Personnel';
+    const workerCompany = personDoc.tradeCompany || personDoc.company || 'Field Team';
 
     // 3. Auto-register Tag as an Active Device in 'devices'
     const deviceDoc = {

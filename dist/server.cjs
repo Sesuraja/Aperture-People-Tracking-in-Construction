@@ -794,14 +794,19 @@ async function initDatabaseIndexes() {
     "visitor_security_list",
     "visitor_access_tokens"
   ];
-  for (const col of coreCollections) {
+  await Promise.all(coreCollections.map(async (col) => {
     try {
-      await mongoDb.collection(col).createIndex({ organizationId: 1 }, { background: true });
-      await mongoDb.collection(col).createIndex({ id: 1 }, { background: true });
-      await mongoDb.collection(col).createIndex({ organizationId: 1, createdAt: -1 }, { background: true });
+      await Promise.all([
+        mongoDb.collection(col).createIndex({ organizationId: 1 }, { background: true }).catch(() => {
+        }),
+        mongoDb.collection(col).createIndex({ id: 1 }, { background: true }).catch(() => {
+        }),
+        mongoDb.collection(col).createIndex({ organizationId: 1, createdAt: -1 }, { background: true }).catch(() => {
+        })
+      ]);
     } catch {
     }
-  }
+  }));
   console.log("[DB Service] MongoDB deduplication, uniqueness, and 7-day retention TTL indexes initialized.");
 }
 async function initDatabase(customUri) {
@@ -835,11 +840,10 @@ async function initDatabase(customUri) {
     mongoDb = mongoClient.db();
     runtimeMongoUri = uri;
     console.log(`[DB Service] Successfully connected to MongoDB Atlas database (DATA_MODE=${getDataMode()}).`);
-    await initDatabaseIndexes();
+    void initDatabaseIndexes();
     if (!cleanupsInitialized) {
       cleanupsInitialized = true;
-      await pruneDuplicateAlerts();
-      await purgeLegacySampleWorkers();
+      void pruneDuplicateAlerts();
     }
   } catch (err) {
     console.error("[DB Service] Failed to connect to MongoDB:", err.message);
@@ -847,7 +851,7 @@ async function initDatabase(customUri) {
     mongoClient = null;
     mongoDb = null;
   } finally {
-    await bootstrapMapAndZoneDefinitions();
+    void bootstrapMapAndZoneDefinitions();
   }
 }
 function isMongoConnected() {
@@ -990,11 +994,9 @@ async function getCollectionDocs(colName, opts, organizationId) {
       if (organizationId && organizationId !== "ALL" && colName !== "organizations" && colName !== "settings") {
         const isSpatialConfig = ["map_configurations", "zones", "geofences", "projects", "sites", "floorplans", "settings", "organizations"].includes(colName);
         if (!isSpatialConfig) {
-          if (organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default") {
+          if (DEFAULT_ORGS.includes(organizationId)) {
             query.$or = [
-              { organizationId: "default" },
-              { organizationId: "org_main" },
-              { organizationId: "org_aperture_default" },
+              ...DEFAULT_ORGS.map((org) => ({ organizationId: org })),
               { organizationId: { $exists: false } },
               { organizationId: null },
               { organizationId: "" }
@@ -1029,7 +1031,7 @@ async function getCollectionDocs(colName, opts, organizationId) {
   let result = items;
   if (organizationId && organizationId !== "ALL" && colName !== "organizations" && colName !== "settings") {
     result = items.filter(
-      (item) => organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default" ? !item.organizationId || item.organizationId === "default" || item.organizationId === "org_main" || item.organizationId === "org_aperture_default" : item.organizationId === organizationId
+      (item) => DEFAULT_ORGS.includes(organizationId) ? !item.organizationId || DEFAULT_ORGS.includes(item.organizationId) : item.organizationId === organizationId
     );
   }
   const serialized = result.map((item) => serializeBinaryImages(item));
@@ -1042,11 +1044,9 @@ async function countCollectionDocs(colName, organizationId) {
       const isSpatialConfig = ["map_configurations", "zones", "geofences", "projects", "sites", "floorplans", "settings", "organizations"].includes(colName);
       const query = {};
       if (organizationId && organizationId !== "ALL" && !isSpatialConfig) {
-        if (organizationId === "default" || organizationId === "org_main" || organizationId === "org_aperture_default") {
+        if (DEFAULT_ORGS.includes(organizationId)) {
           query.$or = [
-            { organizationId: "default" },
-            { organizationId: "org_main" },
-            { organizationId: "org_aperture_default" },
+            ...DEFAULT_ORGS.map((org) => ({ organizationId: org })),
             { organizationId: { $exists: false } },
             { organizationId: null },
             { organizationId: "" }
@@ -1066,19 +1066,37 @@ async function countCollectionDocs(colName, organizationId) {
   const items = inMemoryStore[colName] || [];
   return items.length;
 }
-var DEFAULT_ORGS = ["default", "org_main", "org_aperture_default"];
+var DEFAULT_ORGS = ["default", "demo", "org_main", "org_aperture_default"];
 async function getDocById(colName, id, organizationId) {
   if (mongoDb) {
     try {
       const idStr = String(id || "").trim();
+      const isSingletonCollection = [
+        "registered_people",
+        "people",
+        "live_tags",
+        "real_time_tags",
+        "devices",
+        "hardware_readers"
+      ].includes(colName);
       const orClauses = [
         { id: idStr },
         { id: idStr.toUpperCase() },
-        { id: idStr.toLowerCase() },
-        { hardhatTagId: idStr },
-        { hardhatTagId: idStr.toUpperCase() },
-        { hardhatTagId: idStr.toLowerCase() }
+        { id: idStr.toLowerCase() }
       ];
+      if (isSingletonCollection) {
+        orClauses.push(
+          { hardhatTagId: idStr },
+          { hardhatTagId: idStr.toUpperCase() },
+          { hardhatTagId: idStr.toLowerCase() },
+          { tagId: idStr },
+          { tagId: idStr.toUpperCase() },
+          { tagId: idStr.toLowerCase() },
+          { TagID: idStr },
+          { TagID: idStr.toUpperCase() },
+          { TagID: idStr.toLowerCase() }
+        );
+      }
       if (import_mongodb.ObjectId.isValid(idStr) && idStr.length === 24) {
         try {
           orClauses.push({ _id: new import_mongodb.ObjectId(idStr) });
@@ -1163,14 +1181,60 @@ async function upsertDoc(colName, doc, organizationId) {
   if (mongoDb) {
     try {
       const idStr = String(cleanDoc.id || "").trim();
+      const hardhatStr = String(cleanDoc.hardhatTagId || "").trim();
+      const tagIdStr = String(cleanDoc.tagId || cleanDoc.TagID || "").trim();
+      const isSingletonCollection = [
+        "registered_people",
+        "people",
+        "live_tags",
+        "real_time_tags",
+        "devices",
+        "hardware_readers"
+      ].includes(colName);
       const orClauses = [
         { id: idStr },
         { id: idStr.toUpperCase() },
-        { id: idStr.toLowerCase() },
-        { hardhatTagId: idStr },
-        { hardhatTagId: idStr.toUpperCase() },
-        { hardhatTagId: idStr.toLowerCase() }
+        { id: idStr.toLowerCase() }
       ];
+      if (isSingletonCollection) {
+        orClauses.push(
+          { hardhatTagId: idStr },
+          { hardhatTagId: idStr.toUpperCase() },
+          { hardhatTagId: idStr.toLowerCase() },
+          { tagId: idStr },
+          { tagId: idStr.toUpperCase() },
+          { tagId: idStr.toLowerCase() },
+          { TagID: idStr },
+          { TagID: idStr.toUpperCase() },
+          { TagID: idStr.toLowerCase() }
+        );
+        if (hardhatStr) {
+          orClauses.push(
+            { hardhatTagId: hardhatStr },
+            { hardhatTagId: hardhatStr.toUpperCase() },
+            { hardhatTagId: hardhatStr.toLowerCase() },
+            { id: hardhatStr },
+            { id: hardhatStr.toUpperCase() },
+            { id: hardhatStr.toLowerCase() },
+            { tagId: hardhatStr },
+            { TagID: hardhatStr }
+          );
+        }
+        if (tagIdStr) {
+          orClauses.push(
+            { tagId: tagIdStr },
+            { tagId: tagIdStr.toUpperCase() },
+            { tagId: tagIdStr.toLowerCase() },
+            { TagID: tagIdStr },
+            { TagID: tagIdStr.toUpperCase() },
+            { TagID: tagIdStr.toLowerCase() },
+            { id: tagIdStr },
+            { id: tagIdStr.toUpperCase() },
+            { id: tagIdStr.toLowerCase() },
+            { hardhatTagId: tagIdStr }
+          );
+        }
+      }
       if (import_mongodb.ObjectId.isValid(idStr) && idStr.length === 24) {
         try {
           orClauses.push({ _id: new import_mongodb.ObjectId(idStr) });
@@ -1214,17 +1278,45 @@ async function upsertDoc(colName, doc, organizationId) {
           { _id: existingInDb._id },
           { $set: cleanDoc }
         );
-      } else {
-        const insertFilter = { id: cleanDoc.id };
-        if (cleanDoc.organizationId && colName !== "organizations") {
-          insertFilter.organizationId = cleanDoc.organizationId;
+        if (colName === "registered_people" || colName === "people") {
+          const idClauses = orClauses.length > 0 ? orClauses : [{ id: cleanDoc.id }];
+          await mongoDb.collection(colName).updateMany(
+            { $or: idClauses },
+            { $set: cleanDoc }
+          ).catch(() => {
+          });
         }
-        await mongoDb.collection(colName).updateOne(
-          insertFilter,
-          { $set: cleanDoc },
-          { upsert: true }
-        );
+      } else {
+        const fallbackById = cleanDoc.id ? await mongoDb.collection(colName).findOne({ id: cleanDoc.id }) : null;
+        if (fallbackById) {
+          if (fallbackById.organizationId) {
+            cleanDoc.organizationId = fallbackById.organizationId;
+          }
+          await mongoDb.collection(colName).updateOne(
+            { _id: fallbackById._id },
+            { $set: cleanDoc }
+          );
+          if (colName === "registered_people" || colName === "people") {
+            const idClauses = orClauses.length > 0 ? orClauses : [{ id: cleanDoc.id }];
+            await mongoDb.collection(colName).updateMany(
+              { $or: idClauses },
+              { $set: cleanDoc }
+            ).catch(() => {
+            });
+          }
+        } else {
+          const insertFilter = { id: cleanDoc.id };
+          if (cleanDoc.organizationId && colName !== "organizations") {
+            insertFilter.organizationId = cleanDoc.organizationId;
+          }
+          await mongoDb.collection(colName).updateOne(
+            insertFilter,
+            { $set: cleanDoc },
+            { upsert: true }
+          );
+        }
       }
+      invalidateCollectionCache(colName);
       return cleanDoc;
     } catch (err) {
       console.error(`[DB Service] Error upserting doc in ${colName}:`, err);
@@ -1234,8 +1326,16 @@ async function upsertDoc(colName, doc, organizationId) {
     inMemoryStore[colName] = [];
   }
   const idLower = String(cleanDoc.id || "").toLowerCase().trim();
+  const hardhatLower = String(cleanDoc.hardhatTagId || "").toLowerCase().trim();
+  const tagLower = String(cleanDoc.tagId || cleanDoc.TagID || "").toLowerCase().trim();
+  const targetIds = [idLower, hardhatLower, tagLower].filter(Boolean);
   const idx = inMemoryStore[colName].findIndex((item) => {
-    const sameId = item.id === cleanDoc.id || String(item.id || "").toLowerCase().trim() === idLower;
+    const itemIds = [
+      String(item.id || "").toLowerCase().trim(),
+      String(item.hardhatTagId || "").toLowerCase().trim(),
+      String(item.tagId || item.TagID || "").toLowerCase().trim()
+    ].filter(Boolean);
+    const sameId = targetIds.some((tid) => itemIds.includes(tid));
     if (colName !== "organizations" && cleanDoc.organizationId) {
       return sameId && item.organizationId === cleanDoc.organizationId;
     }
@@ -2008,7 +2108,7 @@ async function purgeAllDemoAndTestData() {
       "TAG_SAFE_02"
     ];
     const fakeTagRegex = /^(TEST_|BATCH-|UHF-REAL-|TAG_DIAG|DIAG_|TAG_HIST_|TAG_RT_|TAG_RAW_|TAG_API_|TAG_HAZARD_|TAG_SAFE_|att_TEST_|att_BATCH-|att_UHF-REAL-|att_TAG_)/i;
-    const fakeOrgRegex = /^(safety_org_|ai_workflow_org_|test_|demo$)/i;
+    const fakeOrgRegex = /^(safety_org_|ai_workflow_org_|test_)/i;
     const fakeNames = [
       "Staff User",
       "John Miller",
@@ -2035,7 +2135,6 @@ async function purgeAllDemoAndTestData() {
         { personId: { $regex: fakeTagRegex } },
         { rfidTagId: { $regex: fakeTagRegex } },
         { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: "demo" },
         { name: { $in: fakeNames } },
         { personName: { $in: fakeNames } }
       ]
@@ -2061,7 +2160,6 @@ async function purgeAllDemoAndTestData() {
         { TagID: { $in: fakeIds } },
         { TagID: { $regex: fakeTagRegex } },
         { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: "demo" },
         { personName: { $in: fakeNames } }
       ]
     };
@@ -2076,25 +2174,21 @@ async function purgeAllDemoAndTestData() {
         { "tags.TagID": { $in: fakeIds } },
         { "tags.tagId": { $regex: fakeTagRegex } },
         { "tags.TagID": { $regex: fakeTagRegex } },
-        { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: "demo" }
+        { organizationId: { $regex: fakeOrgRegex } }
       ]
     });
     deletedCounts["playback_history"] = playbackRes.deletedCount || 0;
     const orgRes = await mongoDb.collection("organizations").deleteMany({
       $or: [
-        { id: { $regex: fakeOrgRegex } },
-        { id: "demo" },
-        { organizationId: "demo" }
+        { id: { $regex: fakeOrgRegex } }
       ]
     });
     deletedCounts["organizations"] = orgRes.deletedCount || 0;
     const userRes = await mongoDb.collection("users").deleteMany({
       $or: [
-        { id: { $in: ["usr_viewer", "usr_admin", "demo_user"] } },
-        { email: { $in: ["viewer@example.com", "admin@gaostaff.com", "demo@aperture.io", "forged_admin@gaostaff.com"] } },
-        { organizationId: { $regex: fakeOrgRegex } },
-        { organizationId: "demo" }
+        { id: { $in: ["usr_viewer", "usr_admin"] } },
+        { email: { $in: ["viewer@example.com", "admin@gaostaff.com", "forged_admin@gaostaff.com"] } },
+        { organizationId: { $regex: fakeOrgRegex } }
       ]
     });
     deletedCounts["users"] = userRes.deletedCount || 0;
@@ -2129,8 +2223,14 @@ async function purgeAllDemoAndTestData() {
   }
   return { deletedCounts };
 }
-async function purgeLegacySampleWorkers() {
-  await purgeAllDemoAndTestData();
+function isRealCustomWorker(p) {
+  if (!p || typeof p !== "object") return false;
+  const name = String(p.name || "").trim();
+  const lower = name.toLowerCase();
+  if (!name || lower === "john" || lower === "john site lead" || name.startsWith("Personnel ") || name.startsWith("Tag ")) {
+    return false;
+  }
+  return Boolean(p.isCustomProfile || name && lower !== "john");
 }
 
 // src/server/routes/connections.ts
@@ -2887,9 +2987,13 @@ async function analyzeTelemetryItemWithAI(item, orgId = "default", registeredPeo
   const matchedPerson = registeredPeople.find(
     (person) => [person.tagId, person.TagID, person.badgeId, person.hardhatTagId, person.id].filter(Boolean).some((id) => String(id).toLowerCase() === tagId.toLowerCase())
   ) || null;
-  const firstName = item.firstName || matchedPerson?.firstName || matchedPerson?.name?.split(" ")[0] || "";
-  const lastName = item.lastName || matchedPerson?.lastName || matchedPerson?.name?.split(" ").slice(1).join(" ") || "";
-  const fullName = item.fullName || `${firstName} ${lastName}`.trim() || "Field Personnel";
+  const hasCustomMatchedName = isRealCustomWorker(matchedPerson);
+  const rawItemFn = String(item.firstName || item.FirstName || "").trim();
+  const rawItemLn = String(item.lastName || item.LastName || "").trim();
+  const rawItemName = rawItemFn || rawItemLn ? `${rawItemFn} ${rawItemLn}`.trim() : item.fullName || matchedPerson?.name || "Field Personnel";
+  const fullName = hasCustomMatchedName ? matchedPerson.name : item.fullName && !item.fullName.startsWith("Personnel ") && item.fullName !== "John" ? item.fullName : rawItemName;
+  const firstName = hasCustomMatchedName ? fullName.split(" ")[0] : rawItemFn || matchedPerson?.firstName || "";
+  const lastName = hasCustomMatchedName ? fullName.split(" ").slice(1).join(" ") : rawItemLn || matchedPerson?.lastName || "";
   const tenantProfile = await getTenantIntelligenceProfile(orgId);
   const deterministicEval = evaluateDeterministicRules(tenantProfile, {
     tagId,
@@ -3270,9 +3374,13 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
     const matchedPerson = registeredPeople.find(
       (person) => [person.tagId, person.TagID, person.badgeId, person.hardhatTagId, person.id].filter(Boolean).some((id) => String(id).toLowerCase() === tagId.toLowerCase())
     ) || null;
-    const firstName = String(item.FirstName || item.firstName || matchedPerson?.firstName || matchedPerson?.name?.split(" ")[0] || "");
-    const lastName = String(item.LastName || item.lastName || matchedPerson?.lastName || matchedPerson?.name?.split(" ").slice(1).join(" ") || "");
-    const fullName = `${firstName} ${lastName}`.trim();
+    const hasCustomMatchedName = isRealCustomWorker(matchedPerson);
+    const rawTelemetryFn = String(item.FirstName || item.firstName || "").trim();
+    const rawTelemetryLn = String(item.LastName || item.lastName || "").trim();
+    const rawTelemetryName = rawTelemetryFn || rawTelemetryLn ? `${rawTelemetryFn} ${rawTelemetryLn}`.trim() : matchedPerson?.name || "Personnel";
+    const fullName = hasCustomMatchedName ? matchedPerson.name : rawTelemetryName;
+    const firstName = hasCustomMatchedName ? fullName.split(" ")[0] || matchedPerson?.firstName || "" : rawTelemetryFn;
+    const lastName = hasCustomMatchedName ? fullName.split(" ").slice(1).join(" ") || matchedPerson?.lastName || "" : rawTelemetryLn;
     contextItems.push({
       ...item,
       tagId,
@@ -3316,15 +3424,28 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
       aiInsight: tagAnalysis?.aiInsight ?? "Normal operational status"
     };
     analyzedResults.push(analysis);
+    const existingPerson = await getDocById("registered_people", tagId, orgId) || await getDocById("people", tagId, orgId) || await getDocById("registered_people", tagId, "ALL") || await getDocById("people", tagId, "ALL");
+    const hasCustomExistingName = isRealCustomWorker(existingPerson);
+    const rawTagFn = String(item.FirstName || item.firstName || "").trim();
+    const rawTagLn = String(item.LastName || item.lastName || "").trim();
+    const rawTagName = rawTagFn || rawTagLn ? `${rawTagFn} ${rawTagLn}`.trim() : item.personName || item.name || `Tag ${tagId}`;
+    const personName = existingPerson && existingPerson.name && existingPerson.name !== "John" && !existingPerson.name.startsWith("Tag ") ? existingPerson.name : hasCustomExistingName ? existingPerson.name : rawTagName;
+    const personRole = hasCustomExistingName && existingPerson?.role ? existingPerson.role : existingPerson?.role || (item.role && item.role !== "General Staff" ? item.role : "Field Personnel");
+    const personCompany = hasCustomExistingName && (existingPerson?.tradeCompany || existingPerson?.company) ? existingPerson.tradeCompany || existingPerson.company : existingPerson?.tradeCompany || existingPerson?.company || item.company || "External API / RFID";
+    const resolvedFirstName = hasCustomExistingName ? personName.split(" ")[0] || existingPerson?.firstName || rawTagFn : rawTagFn || existingPerson?.firstName || "";
+    const resolvedLastName = hasCustomExistingName ? personName.split(" ").slice(1).join(" ") || existingPerson?.lastName || rawTagLn : rawTagLn || "";
     const tagDocument = {
       id: tagId,
       organizationId: orgId,
       TagID: tagId,
+      name: personName,
       Timestamp: item.timestamp,
       Location: item.location,
       LocationName: item.location,
-      FirstName: item.firstName,
-      LastName: item.lastName,
+      FirstName: resolvedFirstName,
+      LastName: resolvedLastName,
+      firstName: resolvedFirstName,
+      lastName: resolvedLastName,
       sourceProtocol,
       readerId: item.readerId,
       rssi: item.rssi,
@@ -3342,21 +3463,24 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
     if (locChanged || timeElapsed) {
       recentTagLocationHistory.set(tagId, { location: item.location, timestamp: Date.now() });
       await upsertDoc("rfid_realtime_events", {
+        ...tagDocument,
         id: `evt_${tagId}_${eventHash}`,
         eventId: eventHash,
-        ...tagDocument,
         receivedAt: nowIso,
         createdAt: now,
         expireAt: sevenDaysLater
       }, orgId);
       await upsertDoc("tag_history", {
+        ...tagDocument,
         id: `hist_${tagId}_${eventHash}`,
         eventId: eventHash,
         organizationId: orgId,
         TagID: tagId,
-        FirstName: item.firstName,
-        LastName: item.lastName,
-        name: `${item.firstName || ""} ${item.lastName || ""}`.trim() || item.fullName || `Tag ${tagId}`,
+        FirstName: resolvedFirstName,
+        LastName: resolvedLastName,
+        firstName: resolvedFirstName,
+        lastName: resolvedLastName,
+        name: personName,
         LocationName: item.location,
         Location: item.location,
         EnterTime: item.timestamp,
@@ -3366,42 +3490,58 @@ async function processTelemetryWithAI(payloads, sourceProtocol = "API Key Server
         Duration: "Active",
         role: item.role || "Field Personnel",
         category: item.role && String(item.role).toLowerCase().includes("visitor") ? "visitors" : "workers",
-        ...tagDocument,
         createdAt: now,
         expireAt: sevenDaysLater
       }, orgId);
     }
-    const existingPerson = await getDocById("registered_people", tagId, orgId) || await getDocById("people", tagId, orgId);
-    const fn = String(item.FirstName || item.firstName || existingPerson?.firstName || "").trim();
-    const ln = String(item.LastName || item.lastName || existingPerson?.lastName || "").trim();
-    const personName = fn || ln ? `${fn} ${ln}`.trim() : existingPerson?.name || item.personName || item.name || `Tag ${tagId}`;
-    const personRole = existingPerson?.role || (item.role && item.role !== "General Staff" ? item.role : "Field Personnel");
-    const personCompany = existingPerson?.tradeCompany || existingPerson?.company || item.company || "External API / RFID";
     if (isRealTelemetryTag(tagId)) {
-      const personDoc = {
-        ...existingPerson || {},
-        id: tagId,
-        tagId,
-        hardhatTagId: tagId,
-        organizationId: orgId,
-        firstName: fn,
-        lastName: ln,
-        name: personName,
-        role: personRole,
-        company: personCompany,
-        tradeCompany: personCompany,
-        currentZone: item.location || existingPerson?.currentZone || "Site Area",
-        location: item.location || existingPerson?.location || "Site Area",
-        shiftStatus: existingPerson?.shiftStatus || "ON_SITE",
-        presenceState: "ACTIVE",
-        safetyScore: existingPerson?.safetyScore || 95,
-        ppeStatus: existingPerson?.ppeStatus || "COMPLIANT",
-        trainingStatus: existingPerson?.trainingStatus || "COMPLIANT",
-        lastSeen: item.timestamp || nowIso,
-        updatedAt: nowIso,
-        createdAt: existingPerson?.createdAt || nowIso,
-        expireAt: sevenDaysLater
-      };
+      let personDoc;
+      if (existingPerson) {
+        personDoc = {
+          ...existingPerson,
+          id: tagId,
+          tagId,
+          hardhatTagId: tagId,
+          currentZone: item.location || existingPerson.currentZone || "Site Area",
+          location: item.location || existingPerson.location || "Site Area",
+          lastSeen: item.timestamp || nowIso,
+          presenceState: "ACTIVE",
+          shiftStatus: existingPerson.shiftStatus || "ON_SITE",
+          updatedAt: nowIso
+        };
+      } else {
+        personDoc = {
+          id: tagId,
+          tagId,
+          hardhatTagId: tagId,
+          organizationId: orgId,
+          firstName: rawTagFn,
+          lastName: rawTagLn,
+          name: personName,
+          isCustomProfile: false,
+          role: personRole,
+          company: personCompany,
+          tradeCompany: personCompany,
+          department: personCompany,
+          phone: "",
+          email: "",
+          emergencyContact: "",
+          supervisor: "",
+          notes: "",
+          currentZone: item.location || "Site Area",
+          location: item.location || "Site Area",
+          shiftStatus: "ON_SITE",
+          presenceState: "ACTIVE",
+          safetyScore: 95,
+          ppeStatus: "COMPLIANT",
+          trainingStatus: "COMPLIANT",
+          certifications: "Standard Compliance & Safety",
+          lastSeen: item.timestamp || nowIso,
+          updatedAt: nowIso,
+          createdAt: nowIso,
+          expireAt: sevenDaysLater
+        };
+      }
       await upsertDoc("registered_people", personDoc, orgId);
       await upsertDoc("people", personDoc, orgId);
     }
@@ -3822,50 +3962,94 @@ async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
     await bulkUpsertDocs("history", historyDocs, orgId).catch(() => {
     });
   }
-  const existingPeople = await getCollectionDocs("registered_people", void 0, orgId).catch(() => []);
+  const [existingRegistered, existingPeopleCols] = await Promise.all([
+    getCollectionDocs("registered_people", void 0, orgId).catch(() => []),
+    getCollectionDocs("people", void 0, orgId).catch(() => [])
+  ]);
+  const existingPeople = [...existingRegistered || [], ...existingPeopleCols || []];
   const existingMap = /* @__PURE__ */ new Map();
   existingPeople.forEach((p) => {
-    if (p.id) existingMap.set(String(p.id).toLowerCase(), p);
-    if (p.tagId) existingMap.set(String(p.tagId).toLowerCase(), p);
-    if (p.hardhatTagId) existingMap.set(String(p.hardhatTagId).toLowerCase(), p);
+    const keys = [p.id, p.tagId, p.hardhatTagId, p.TagID].filter(Boolean).map((k) => String(k).toLowerCase().trim());
+    for (const key of keys) {
+      const prev = existingMap.get(key);
+      const prevIsCustom = isRealCustomWorker(prev);
+      const curIsCustom = isRealCustomWorker(p);
+      if (!prev) {
+        existingMap.set(key, p);
+      } else if (!prevIsCustom && curIsCustom) {
+        existingMap.set(key, p);
+      } else if (prevIsCustom && !curIsCustom) {
+        continue;
+      } else if (curIsCustom && p.updatedAt && prev.updatedAt && new Date(p.updatedAt).getTime() >= new Date(prev.updatedAt).getTime()) {
+        existingMap.set(key, p);
+      }
+    }
   });
   const existingZones = await getCollectionDocs("zones", void 0, orgId).catch(() => []);
   const zoneNames = new Set(existingZones.map((z7) => (z7.name || z7.id || "").toLowerCase().replace(/[^a-z0-9]/g, "")));
   for (const [tid, item] of tagMap.entries()) {
-    const existing = existingMap.get(tid.toLowerCase());
-    const workerName = item.fullName && !item.fullName.startsWith("Personnel ") ? item.fullName : existing?.name || item.fullName;
-    const workerRole = existing?.role || "Field Personnel";
-    const workerCompany = existing?.tradeCompany || existing?.company || "Field Team";
-    const personDoc = {
-      ...existing || {},
-      id: tid,
-      _id: tid,
-      tagId: tid,
-      hardhatTagId: tid,
-      organizationId: orgId,
-      firstName: item.fn || existing?.firstName || "",
-      lastName: item.ln || existing?.lastName || "",
-      name: workerName,
-      role: workerRole,
-      company: workerCompany,
-      tradeCompany: workerCompany,
-      currentZone: item.loc,
-      location: item.loc,
-      shiftStatus: existing?.shiftStatus || "ON_SITE",
-      presenceState: "ACTIVE",
-      safetyScore: existing?.safetyScore || 98,
-      ppeStatus: existing?.ppeStatus || "COMPLIANT",
-      trainingStatus: existing?.trainingStatus || "COMPLIANT",
-      status: "ACTIVE",
-      lastSeen: item.enter,
-      updatedAt: nowIso,
-      createdAt: existing?.createdAt || nowIso,
-      expireAt: sevenDaysLater
-    };
+    let existing = existingMap.get(tid.toLowerCase().trim());
+    if (!existing) {
+      existing = await getDocById("registered_people", tid, orgId).catch(() => null) || await getDocById("people", tid, orgId).catch(() => null) || await getDocById("registered_people", tid, "ALL").catch(() => null) || await getDocById("people", tid, "ALL").catch(() => null);
+    }
+    let personDoc;
+    if (existing) {
+      personDoc = {
+        ...existing,
+        id: tid,
+        _id: existing._id || tid,
+        tagId: tid,
+        hardhatTagId: tid,
+        currentZone: item.loc || existing.currentZone || "Zone1",
+        location: item.loc || existing.location || "Zone1",
+        shiftStatus: existing.shiftStatus || "ON_SITE",
+        presenceState: "ACTIVE",
+        lastSeen: item.enter || existing.lastSeen || nowIso,
+        updatedAt: nowIso
+      };
+    } else {
+      const rawName = item.fullName && !item.fullName.startsWith("Personnel ") && item.fullName.toLowerCase() !== "john site lead" ? item.fullName : item.fn || item.ln ? `${item.fn} ${item.ln}`.trim() : `Personnel ${tid.slice(-6).toUpperCase()}`;
+      personDoc = {
+        id: tid,
+        _id: tid,
+        tagId: tid,
+        hardhatTagId: tid,
+        organizationId: orgId,
+        firstName: item.fn || "",
+        lastName: item.ln || "",
+        name: rawName,
+        isCustomProfile: false,
+        role: "Field Personnel",
+        company: "Field Team",
+        tradeCompany: "Field Team",
+        department: "Field Team",
+        phone: "",
+        email: "",
+        emergencyContact: "",
+        supervisor: "",
+        notes: "",
+        currentZone: item.loc || "Zone1",
+        location: item.loc || "Zone1",
+        shiftStatus: "ON_SITE",
+        presenceState: "ACTIVE",
+        safetyScore: 98,
+        ppeStatus: "COMPLIANT",
+        trainingStatus: "COMPLIANT",
+        certifications: "Standard Compliance & Safety",
+        status: "ACTIVE",
+        lastSeen: item.enter || nowIso,
+        updatedAt: nowIso,
+        createdAt: nowIso,
+        expireAt: sevenDaysLater
+      };
+    }
     await upsertDoc("registered_people", personDoc, orgId).catch(() => {
     });
     await upsertDoc("people", personDoc, orgId).catch(() => {
     });
+    const workerName = personDoc.name || `Personnel ${tid.slice(-6).toUpperCase()}`;
+    const workerRole = personDoc.role || "Field Personnel";
+    const workerCompany = personDoc.tradeCompany || personDoc.company || "Field Team";
     const deviceDoc = {
       id: tid,
       _id: tid,
@@ -4513,15 +4697,7 @@ async function getGooglePublicCerts(projectId = FIREBASE_PROJECT_ID) {
 function verifyToken(token) {
   if (!token) return null;
   if (token === "demo" || token === "viewer") {
-    return {
-      id: "demo_user",
-      email: "demo@aperture.io",
-      name: "Aperture User",
-      role: token === "demo" ? "admin" : "viewer",
-      organizationId: "default",
-      isPlatformAdmin: false,
-      tokenVersion: 1
-    };
+    return null;
   }
   try {
     const decoded = import_jsonwebtoken.default.verify(token, JWT_SECRET);
@@ -4646,8 +4822,8 @@ async function requireAuth(req, res, next) {
         user.name = userDoc.name || userDoc.displayName || user.name;
         user.id = userDoc.id || user.id;
       } else {
-        const isInitialAdmin = user.email?.toLowerCase() === "sigmund.t.d@gaostaff.com" || user.email?.endsWith("@gaostaff.com");
-        const role = isInitialAdmin ? "admin" : "viewer";
+        const isInitialAdmin = user.email?.endsWith("@gaostaff.com");
+        const role = isInitialAdmin ? "admin" : user.role || "viewer";
         const orgId = user.organizationId || "default";
         user.role = role;
         user.organizationId = orgId;
@@ -5197,6 +5373,79 @@ authRouter.get("/me", requireAuth, async (req, res) => {
     user: req.user,
     organization: orgDoc || { id: orgId, name: orgDoc?.name || (orgId === "default" || orgId === "org_main" ? "People Tracking in Construction" : orgId), status: "active", plan: "standard" }
   });
+});
+var updateProfileSchema = import_zod3.z.object({
+  name: import_zod3.z.string().min(1, "Name cannot be empty").optional(),
+  currentPassword: import_zod3.z.string().optional(),
+  newPassword: import_zod3.z.string().min(6, "New password must be at least 6 characters").optional()
+});
+authRouter.put("/me", requireAuth, async (req, res) => {
+  if (!req.user) {
+    return res.status(401).json({ error: "Authentication required" });
+  }
+  const parseResult = updateProfileSchema.safeParse(req.body);
+  if (!parseResult.success) {
+    return res.status(400).json({
+      error: "Invalid profile input",
+      details: parseResult.error.issues
+    });
+  }
+  const { name, currentPassword, newPassword } = parseResult.data;
+  try {
+    const allUsers = await getCollectionDocs("users");
+    const userDoc = allUsers.find((u) => u.id === req.user?.id || u.email?.toLowerCase() === req.user?.email?.toLowerCase());
+    if (!userDoc) {
+      return res.status(404).json({ error: "User profile not found in database" });
+    }
+    if (newPassword) {
+      if (userDoc.passwordHash) {
+        if (!currentPassword) {
+          return res.status(400).json({ error: "Current password is required to set a new password" });
+        }
+        const isMatch = await import_bcryptjs.default.compare(currentPassword, userDoc.passwordHash);
+        if (!isMatch) {
+          return res.status(400).json({ error: "Current password does not match" });
+        }
+      }
+      userDoc.passwordHash = await import_bcryptjs.default.hash(newPassword, 10);
+    }
+    if (name && name.trim()) {
+      userDoc.name = name.trim();
+      userDoc.displayName = name.trim();
+    }
+    userDoc.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
+    const targetOrg = userDoc.organizationId || req.user.organizationId || "default";
+    await upsertDoc("users", userDoc, targetOrg);
+    const updatedToken = generateToken({
+      id: userDoc.id,
+      email: userDoc.email,
+      name: userDoc.name,
+      role: userDoc.role,
+      organizationId: targetOrg,
+      isPlatformAdmin: Boolean(userDoc.isPlatformAdmin),
+      tokenVersion: userDoc.tokenVersion || 1
+    });
+    await logAuditEvent({
+      userId: userDoc.id,
+      userEmail: userDoc.email,
+      organizationId: targetOrg,
+      action: "USER_PROFILE_UPDATED",
+      resource: "auth",
+      details: {
+        nameUpdated: Boolean(name),
+        passwordUpdated: Boolean(newPassword)
+      },
+      ip: req.ip
+    });
+    return res.json({
+      message: "Profile updated successfully",
+      user: sanitizeUser(userDoc),
+      token: updatedToken
+    });
+  } catch (err) {
+    console.error("[Auth Route] Update profile error:", err);
+    return res.status(500).json({ error: "Failed to update profile" });
+  }
 });
 authRouter.get("/organization", requireAuth, async (req, res) => {
   const orgId = req.user?.organizationId || "default";
@@ -5826,7 +6075,7 @@ var scanSchema = realtimeTagSchema.extend({
   tagId: import_zod5.z.string().optional()
 });
 var HISTORY_CACHE_TTL_MS = 15e3;
-var FAST_UPSTREAM_TIMEOUT_MS = 2e3;
+var FAST_UPSTREAM_TIMEOUT_MS = 15e3;
 var historyRecordsCache = /* @__PURE__ */ new Map();
 var historyCountCache = null;
 var cachedGlobalTz = null;
@@ -5843,7 +6092,7 @@ var handleGetTotalCount = async (req, res) => {
     try {
       const upstream = await Promise.race([
         fetchHistoryTotalCount(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream total count timeout after 2000ms")), FAST_UPSTREAM_TIMEOUT_MS))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream total count timeout after 15000ms")), FAST_UPSTREAM_TIMEOUT_MS))
       ]);
       if (upstream && typeof upstream.totalCount === "number" && upstream.totalCount > 0) {
         historyCountCache = { timestamp: Date.now(), count: upstream.totalCount };
@@ -5991,33 +6240,38 @@ var handleGetHistory = async (req, res) => {
     try {
       const liveRecords = await Promise.race([
         fetchHistoryRecords(skipCount, takeCount),
-        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream API timeout after 2500ms")), 2500))
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Upstream API timeout after 15000ms")), 15e3))
       ]);
       if (Array.isArray(liveRecords) && liveRecords.length > 0) {
         const enrichedLive = [];
         for (const rec of liveRecords) {
           const tagKey = String(rec.TagID || rec.tagId || "").toLowerCase();
           const matched = personMap.get(tagKey);
-          const matchedFirst = String(matched?.firstName || matched?.FirstName || rec.FirstName || rec.firstName || "").trim();
-          const matchedLast = String(matched?.lastName || matched?.LastName || rec.LastName || rec.lastName || "").trim();
           let fullName = "";
-          if (matchedFirst && matchedLast) {
-            fullName = `${matchedFirst} ${matchedLast}`;
-          } else if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown") {
+          let fName = "";
+          let lName = "";
+          if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown" && matched.name !== "John") {
             fullName = matched.name.trim();
+            fName = matched.firstName || fullName.split(" ")[0] || "";
+            lName = matched.lastName || fullName.split(" ").slice(1).join(" ") || "";
+          } else if (matched?.firstName && matched?.lastName) {
+            fName = matched.firstName;
+            lName = matched.lastName;
+            fullName = `${fName} ${lName}`;
           } else if (rec.FirstName && rec.LastName) {
+            fName = rec.FirstName;
+            lName = rec.LastName;
             fullName = `${rec.FirstName} ${rec.LastName}`.trim();
           } else if (rec.name && rec.name.trim() && rec.name !== "Personnel" && rec.name !== "Unknown") {
             fullName = rec.name.trim();
-          } else if (matchedFirst) {
-            fullName = matchedFirst;
-          } else if (matchedLast) {
-            fullName = matchedLast;
+            fName = fullName.split(" ")[0] || "";
+            lName = fullName.split(" ").slice(1).join(" ") || "";
+          } else if (rec.FirstName || rec.firstName) {
+            fName = rec.FirstName || rec.firstName;
+            fullName = fName;
           } else {
             fullName = `Personnel ${rec.TagID || ""}`;
           }
-          const fName = matchedFirst;
-          const lName = matchedLast;
           const role = matched?.role || (matched?.badgeId || matched?.isVisitor ? "Visitor" : rec.role || "Field Personnel");
           const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes("visitor"));
           const enter = rec.EnterTime || rec.enterTime || (/* @__PURE__ */ new Date()).toISOString();
@@ -6081,26 +6335,31 @@ var handleGetHistory = async (req, res) => {
       const leaveStr = leave && leave !== "ACTIVE" ? formatHistoryInTz(leave, iana, label) : leave;
       const tagKey = String(item.TagID || item.tagId || item.epc || "").toLowerCase();
       const matched = personMap.get(tagKey);
-      const matchedFirst = String(matched?.firstName || matched?.FirstName || item.FirstName || item.firstName || "").trim();
-      const matchedLast = String(matched?.lastName || matched?.LastName || item.LastName || item.lastName || "").trim();
       let fullName = "";
-      if (matchedFirst && matchedLast) {
-        fullName = `${matchedFirst} ${matchedLast}`;
-      } else if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown") {
+      let firstName = "";
+      let lastName = "";
+      if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown" && matched.name !== "John") {
         fullName = matched.name.trim();
+        firstName = matched.firstName || fullName.split(" ")[0] || "";
+        lastName = matched.lastName || fullName.split(" ").slice(1).join(" ") || "";
+      } else if (matched?.firstName && matched?.lastName) {
+        firstName = matched.firstName;
+        lastName = matched.lastName;
+        fullName = `${firstName} ${lastName}`;
       } else if (item.FirstName && item.LastName) {
+        firstName = item.FirstName;
+        lastName = item.LastName;
         fullName = `${item.FirstName} ${item.LastName}`.trim();
       } else if (item.name && item.name.trim() && item.name !== "Personnel" && item.name !== "Unknown") {
         fullName = item.name.trim();
-      } else if (matchedFirst) {
-        fullName = matchedFirst;
-      } else if (matchedLast) {
-        fullName = matchedLast;
+        firstName = fullName.split(" ")[0] || "";
+        lastName = fullName.split(" ").slice(1).join(" ") || "";
+      } else if (item.FirstName || item.firstName) {
+        firstName = item.FirstName || item.firstName;
+        fullName = firstName;
       } else {
-        fullName = `Personnel ${item.TagID || item.id || ""}`;
+        fullName = `Personnel ${item.TagID || item.tagId || ""}`;
       }
-      const firstName = matchedFirst;
-      const lastName = matchedLast;
       const role = matched?.role || item.role || (matched?.badgeId || matched?.isVisitor ? "Visitor" : "Field Personnel");
       const isVisitor = Boolean(matched?.isVisitor || matched?.badgeId || role.toLowerCase().includes("visitor"));
       return {
@@ -6183,19 +6442,29 @@ var handleGetRealtime = async (req, res) => {
       const ts = item.Timestamp || item.timestamp || item.lastSeen || (/* @__PURE__ */ new Date()).toISOString();
       const tagKey = String(item.TagID || item.tagId || item.epc || "").toLowerCase();
       const matched = personMap.get(tagKey);
-      const fn = String(matched?.firstName || matched?.FirstName || item.FirstName || item.firstName || "").trim();
-      const ln = String(matched?.lastName || matched?.LastName || item.LastName || item.lastName || "").trim();
       let fullName = "";
-      if (fn && ln) {
-        fullName = `${fn} ${ln}`;
-      } else if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown") {
+      let fn = "";
+      let ln = "";
+      if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown" && matched.name !== "John") {
         fullName = matched.name.trim();
+        fn = matched.firstName || fullName.split(" ")[0] || "";
+        ln = matched.lastName || fullName.split(" ").slice(1).join(" ") || "";
+      } else if (matched?.firstName && matched?.lastName) {
+        fn = matched.firstName;
+        ln = matched.lastName;
+        fullName = `${fn} ${ln}`;
       } else if (item.personName && item.personName.trim()) {
         fullName = item.personName.trim();
+        fn = fullName.split(" ")[0] || "";
+        ln = fullName.split(" ").slice(1).join(" ") || "";
       } else if (item.name && item.name.trim()) {
         fullName = item.name.trim();
-      } else if (fn) {
-        fullName = fn;
+        fn = fullName.split(" ")[0] || "";
+        ln = fullName.split(" ").slice(1).join(" ") || "";
+      } else if (item.FirstName || item.firstName) {
+        fn = String(item.FirstName || item.firstName).trim();
+        ln = String(item.LastName || item.lastName || "").trim();
+        fullName = ln ? `${fn} ${ln}` : fn;
       } else {
         fullName = `Tag ${item.TagID || item.tagId || ""}`;
       }
@@ -7665,6 +7934,13 @@ var handleCollectionUpsert = async (req, res) => {
         body.zones = existing.zones;
       }
     }
+    if (collection === "registered_people" || collection === "people") {
+      body.isCustomProfile = true;
+      if (body.name) {
+        body.firstName = body.name.trim().split(" ")[0] || body.firstName || "";
+        body.lastName = body.name.trim().split(" ").slice(1).join(" ") || body.lastName || "";
+      }
+    }
     const saved = await upsertDoc(collection, body, orgId);
     if (collection === "registered_people") {
       await upsertDoc("people", { ...body, id: body.id || saved.id }, orgId).catch(() => {
@@ -7768,14 +8044,21 @@ var handleCollectionItemUpsert = async (req, res) => {
   if (!isGlobalOrSystemConfig) {
     const existingDoc = await getDocById(collection, id, orgId);
     const allExisting = await getDocById(collection, id, "ALL");
-    const DEFAULT_ORGS2 = ["default", "demo", "org_main", "org_aperture_default"];
-    const isBothDefault = DEFAULT_ORGS2.includes(allExisting?.organizationId) && DEFAULT_ORGS2.includes(orgId);
-    if (allExisting && !existingDoc && !isBothDefault && allExisting.organizationId && allExisting.organizationId !== orgId) {
+    const isAdmin = user?.role === "admin" || Boolean(user?.isPlatformAdmin);
+    const isBothDefault = (DEFAULT_ORGS.includes(allExisting?.organizationId) || !allExisting?.organizationId) && DEFAULT_ORGS.includes(orgId);
+    if (!isAdmin && allExisting && !existingDoc && !isBothDefault && allExisting.organizationId && allExisting.organizationId !== orgId) {
       return res.status(404).json({ error: "Document not found or belongs to another organization" });
     }
   }
   const body = req.body || {};
   body.id = id;
+  if (collection === "registered_people" || collection === "people") {
+    body.isCustomProfile = true;
+    if (body.name) {
+      body.firstName = body.name.trim().split(" ")[0] || body.firstName || "";
+      body.lastName = body.name.trim().split(" ").slice(1).join(" ") || body.lastName || "";
+    }
+  }
   try {
     if (collection === "map_configurations" && (body.zones === void 0 || body.preserveZones && (!body.zones || Object.keys(body.zones).length === 0))) {
       const existing = await getDocById("map_configurations", id, orgId);

@@ -211,8 +211,9 @@ export default function DevicesTab() {
     // Direct REST API Fallback & Continuous Poller for MongoDB Devices & Hardware Readers
     const fetchDirectFromApi = async () => {
       try {
-        const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || localStorage.getItem('auth_token') || 'demo';
-        const authHeaders: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+        const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || localStorage.getItem('auth_token');
+        const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (token) { authHeaders['Authorization'] = `Bearer ${token}`; }
 
         // Fetch devices from MongoDB
         const [devRes, readerRes, tagRes, regRes, peopleRes] = await Promise.allSettled([
@@ -720,8 +721,9 @@ export default function DevicesTab() {
   // Helper to save single device to MongoDB
   const saveDeviceToMongo = async (device: DeviceItem) => {
     try {
-      const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || localStorage.getItem('auth_token') || 'demo';
-      const authHeaders: Record<string, string> = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+      const token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || localStorage.getItem('auth_token');
+      const authHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) { authHeaders['Authorization'] = `Bearer ${token}`; }
       const encodedId = encodeURIComponent(device.id);
 
       // 1. Direct MongoDB REST endpoints with authentication
