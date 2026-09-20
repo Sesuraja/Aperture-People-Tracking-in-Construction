@@ -203,6 +203,16 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
             ...(Array.isArray(peoList) ? peoList : [])
           ];
           if (combined.length > 0) {
+            // Sort so that custom profiles and recent updates are processed last (overwriting defaults)
+            combined.sort((a, b) => {
+              const aCustom = Boolean(a.isCustomProfile);
+              const bCustom = Boolean(b.isCustomProfile);
+              if (aCustom !== bCustom) return aCustom ? 1 : -1;
+              const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+              const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+              return aTime - bTime;
+            });
+
             const map: Record<string, { name: string; role: string; tradeCompany?: string; department?: string }> = {};
             combined.forEach(p => {
               if (!p || !p.name) return;

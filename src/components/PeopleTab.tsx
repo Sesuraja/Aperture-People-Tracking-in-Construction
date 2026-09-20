@@ -614,7 +614,8 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
     let unsubRegistered: () => void = () => {};
     let unsubPeople: () => void = () => {};
 
-    const rawMap = new Map<string, DBWorker>();
+    let registeredWorkersMap = new Map<string, DBWorker>();
+    let peopleWorkersMap = new Map<string, DBWorker>();
 
     // Safety timeout: Never leave the table in loading state if network or initial query is delayed
     const timeout = setTimeout(() => {
@@ -623,12 +624,81 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
 
     const updateCombinedDbWorkers = () => {
       clearTimeout(timeout);
-      setDbWorkers(Array.from(rawMap.values()));
+
+      const mergedMap = new Map<string, DBWorker>();
+
+      // 1. First load all people records
+      peopleWorkersMap.forEach((doc, key) => {
+        mergedMap.set(key, doc);
+      });
+
+      // 2. Merge registered_people records with priority on isCustomProfile and newest updatedAt
+      registeredWorkersMap.forEach((doc, key) => {
+        const existing = mergedMap.get(key);
+        if (!existing) {
+          mergedMap.set(key, doc);
+        } else {
+          const docIsCustom = Boolean(doc.isCustomProfile);
+          const existingIsCustom = Boolean(existing.isCustomProfile);
+
+          if (docIsCustom && !existingIsCustom) {
+            mergedMap.set(key, { ...existing, ...doc });
+          } else if (!docIsCustom && existingIsCustom) {
+            mergedMap.set(key, { ...doc, ...existing });
+          } else {
+            const docTime = doc.updatedAt ? new Date(doc.updatedAt).getTime() : (doc.createdAt ? new Date(doc.createdAt).getTime() : 0);
+            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : (existing.createdAt ? new Date(existing.createdAt).getTime() : 0);
+            if (docTime >= existingTime) {
+              mergedMap.set(key, { ...existing, ...doc });
+            } else {
+              mergedMap.set(key, { ...doc, ...existing });
+            }
+          }
+        }
+      });
+
+      const incomingList = Array.from(mergedMap.values());
+
+      // Merge with previous dbWorkers to prevent slow network snapshots from reverting instant optimistic user edits
+      setDbWorkers(prev => {
+        if (prev.length === 0) return incomingList;
+
+        const now = Date.now();
+        // Workers edited optimistically in the last 15 seconds
+        const recentOptimisticWorkers = prev.filter(w => {
+          if (!w.updatedAt) return false;
+          const age = now - new Date(w.updatedAt).getTime();
+          return age >= 0 && age < 15000;
+        });
+
+        if (recentOptimisticWorkers.length === 0) {
+          return incomingList;
+        }
+
+        const resultMap = new Map<string, DBWorker>();
+        incomingList.forEach(w => {
+          const k = (w.hardhatTagId || (w as any).tagId || w.id || '').toUpperCase().trim();
+          if (k) resultMap.set(k, w);
+        });
+
+        // Overlay optimistic updates on top
+        recentOptimisticWorkers.forEach(opt => {
+          const k = (opt.hardhatTagId || (opt as any).tagId || opt.id || '').toUpperCase().trim();
+          if (k) {
+            const existing = resultMap.get(k);
+            resultMap.set(k, { ...(existing || {}), ...opt });
+          }
+        });
+
+        return Array.from(resultMap.values());
+      });
+
       setIsDbLoading(false);
     };
 
     try {
       unsubRegistered = onSnapshot(query(collection(db, 'registered_people')), (snapshot) => {
+        const nextMap = new Map<string, DBWorker>();
         snapshot.forEach((d) => {
           const data = d.data();
           const role = data.role || 'General Subcontractor';
@@ -639,11 +709,14 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
           ) {
             return;
           }
-          const tagId = (data.hardhatTagId || d.id || '').toUpperCase();
-          rawMap.set(tagId, {
+          const tagId = (data.hardhatTagId || (data as any).tagId || d.id || '').toUpperCase();
+          nextMap.set(tagId, {
             id: d.id,
             hardhatTagId: data.hardhatTagId || d.id,
             name: data.name || 'Unnamed Worker',
+            firstName: data.firstName,
+            lastName: data.lastName,
+            isCustomProfile: Boolean(data.isCustomProfile),
             role: role,
             tradeCompany: data.tradeCompany || data.company || organizationType || 'Operations',
             phone: data.phone || '',
@@ -663,13 +736,16 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
             supervisor: data.supervisor || '',
             safetyScore: data.safetyScore !== undefined ? data.safetyScore : 95,
             notes: data.notes || '',
-            createdAt: data.createdAt
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt
           });
         });
+        registeredWorkersMap = nextMap;
         updateCombinedDbWorkers();
       });
 
       unsubPeople = onSnapshot(query(collection(db, 'people')), (snapshot) => {
+        const nextMap = new Map<string, DBWorker>();
         snapshot.forEach((d) => {
           const data = d.data();
           const role = data.role || 'Field Specialist';
@@ -680,32 +756,35 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
           ) {
             return;
           }
-          const tagId = (data.hardhatTagId || d.id || '').toUpperCase();
-          if (!rawMap.has(tagId)) {
-            rawMap.set(tagId, {
-              id: d.id,
-              hardhatTagId: data.hardhatTagId || d.id,
-              name: data.name || 'Personnel Member',
-              role: role,
-              tradeCompany: data.tradeCompany || data.company || organizationType || 'Operations',
-              phone: data.phone || '',
-              email: data.email || '',
-              emergencyContact: data.emergencyContact || '',
-              certifications: data.certifications || '',
-              ppeStatus: data.ppeStatus || 'COMPLIANT',
-              shiftStatus: data.shiftStatus || 'ON_SITE',
-              trainingStatus: data.trainingStatus || 'COMPLIANT',
-              lastTrainingDate: data.lastTrainingDate || '',
-              trainingCourse: data.trainingCourse || '',
-              trainingExpiry: data.trainingExpiry || '',
-              department: data.department || 'Operations',
-              supervisor: data.supervisor || 'Operations Lead',
-              safetyScore: data.safetyScore || 95,
-              notes: data.notes || '',
-              createdAt: data.createdAt
-            });
-          }
+          const tagId = (data.hardhatTagId || (data as any).tagId || d.id || '').toUpperCase();
+          nextMap.set(tagId, {
+            id: d.id,
+            hardhatTagId: data.hardhatTagId || d.id,
+            name: data.name || 'Personnel Member',
+            firstName: data.firstName,
+            lastName: data.lastName,
+            isCustomProfile: Boolean(data.isCustomProfile),
+            role: role,
+            tradeCompany: data.tradeCompany || data.company || organizationType || 'Operations',
+            phone: data.phone || '',
+            email: data.email || '',
+            emergencyContact: data.emergencyContact || '',
+            certifications: data.certifications || '',
+            ppeStatus: data.ppeStatus || 'COMPLIANT',
+            shiftStatus: data.shiftStatus || 'ON_SITE',
+            trainingStatus: data.trainingStatus || 'COMPLIANT',
+            lastTrainingDate: data.lastTrainingDate || '',
+            trainingCourse: data.trainingCourse || '',
+            trainingExpiry: data.trainingExpiry || '',
+            department: data.department || 'Operations',
+            supervisor: data.supervisor || 'Operations Lead',
+            safetyScore: data.safetyScore || 95,
+            notes: data.notes || '',
+            createdAt: data.createdAt,
+            updatedAt: data.updatedAt
+          });
         });
+        peopleWorkersMap = nextMap;
         updateCombinedDbWorkers();
       });
     } catch (err) {
@@ -1032,51 +1111,58 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   }, [combinedPeople]);
 
   // Quick Update Safety Training Status in MongoDB
-  const handleQuickUpdateTrainingStatus = async (tagId: string, name: string, newStatus: 'COMPLIANT' | 'DUE_SOON' | 'OVERDUE' | 'PENDING') => {
-    try {
-      const tagUpper = (tagId || "").toUpperCase().trim();
-      const todayDate = formatEdtDate(new Date(), { format: 'iso' });
-      await setDoc(doc(db, 'registered_people', tagUpper), {
-        trainingStatus: newStatus,
-        lastTrainingDate: todayDate,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      await setDoc(doc(db, 'people', tagUpper), {
-        trainingStatus: newStatus,
-        lastTrainingDate: todayDate,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+  const handleQuickUpdateTrainingStatus = (tagId: string, name: string, newStatus: 'COMPLIANT' | 'DUE_SOON' | 'OVERDUE' | 'PENDING') => {
+    const tagUpper = (tagId || "").toUpperCase().trim();
+    const todayDate = formatEdtDate(new Date(), { format: 'iso' });
+    const nowIso = new Date().toISOString();
 
-      // Optimistically update dbWorkers state
-      setDbWorkers(prev => prev.map(w => {
-        if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
-          return { ...w, trainingStatus: newStatus, lastTrainingDate: todayDate };
-        }
-        return w;
-      }));
-
-      if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
-        setSelectedPerson(prev => prev ? {
-          ...prev,
-          trainingStatus: newStatus,
-          lastTrainingDate: todayDate
-        } : null);
+    // 1. Optimistically update dbWorkers state immediately (0ms)
+    setDbWorkers(prev => prev.map(w => {
+      if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
+        return { ...w, trainingStatus: newStatus, lastTrainingDate: todayDate, updatedAt: nowIso };
       }
+      return w;
+    }));
 
-      await addDoc(collection(db, 'alerts'), {
-        type: newStatus === 'OVERDUE' ? 'warning' : 'info',
-        message: `Safety Training Compliance update for ${name} (${tagId}): Status changed to ${newStatus}`,
-        timestamp: new Date()
-      });
-
-      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
-      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-
-      showToast('success', `Updated Safety Training Status to '${newStatus}' for ${name} in MongoDB database.`);
-    } catch (err) {
-      console.error("Failed to update training status:", err);
-      showToast('error', "Failed to update worker safety status in MongoDB.");
+    if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
+      setSelectedPerson(prev => prev ? {
+        ...prev,
+        trainingStatus: newStatus,
+        lastTrainingDate: todayDate,
+        updatedAt: nowIso
+      } : null);
     }
+
+    showToast('success', `Updated Safety Training Status to '${newStatus}' for ${name}.`);
+    window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
+    // 2. Persist in background without blocking UI
+    (async () => {
+      try {
+        await Promise.all([
+          setDoc(doc(db, 'registered_people', tagUpper), {
+            trainingStatus: newStatus,
+            lastTrainingDate: todayDate,
+            updatedAt: serverTimestamp()
+          }, { merge: true }),
+          setDoc(doc(db, 'people', tagUpper), {
+            trainingStatus: newStatus,
+            lastTrainingDate: todayDate,
+            updatedAt: serverTimestamp()
+          }, { merge: true })
+        ]);
+
+        addDoc(collection(db, 'alerts'), {
+          type: newStatus === 'OVERDUE' ? 'warning' : 'info',
+          message: `Safety Training Compliance update for ${name} (${tagId}): Status changed to ${newStatus}`,
+          timestamp: new Date()
+        }).catch(() => {});
+      } catch (err) {
+        console.error("Failed to update training status in MongoDB:", err);
+        showToast('error', `Failed to sync training status to MongoDB for ${name}.`);
+      }
+    })();
   };
 
   // Quick Contractor Mobile Check-In handler
@@ -1241,36 +1327,41 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         updatedAt: new Date().toISOString()
       };
 
-      await setDoc(doc(db, 'registered_people', tagId), newWorkerData);
-      await setDoc(doc(db, 'people', tagId), newWorkerData);
-      await fetch('/api/data/registered_people', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(newWorkerData)
-      }).catch(() => {});
-
-      // Optimistically update dbWorkers
+      // 1. Instantly update dbWorkers state (0ms latency)
       setDbWorkers(prev => [newWorkerData, ...prev.filter(w => (w.id || '').toUpperCase() !== tagUpper(tagId) && (w.hardhatTagId || '').toUpperCase() !== tagUpper(tagId))]);
-
-      await addDoc(collection(db, 'alerts'), {
-        type: 'info',
-        message: `Registered new ${personnelSingular} in MongoDB: ${newWorkerData.name} (${tagId}) - ${newWorkerData.role} [${newWorkerData.tradeCompany}]`,
-        timestamp: new Date()
-      });
-
-      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
-      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-
-      showToast('success', `${personnelSingular} "${newWorkerData.name}" saved to MongoDB database.`);
       setIsAddingModalOpen(false);
       setIsCustomRole(false);
       setCustomRoleInput('');
       setIsCustomCompany(false);
       setCustomCompanyInput('');
       resetFormData();
+      showToast('success', `${personnelSingular} "${newWorkerData.name}" added to workforce directory.`);
+
+      window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName: 'registered_people' } }));
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
+      // 2. Persist in background in parallel without blocking UI
+      (async () => {
+        try {
+          await Promise.all([
+            setDoc(doc(db, 'registered_people', tagId), newWorkerData),
+            setDoc(doc(db, 'people', tagId), newWorkerData)
+          ]);
+
+          addDoc(collection(db, 'alerts'), {
+            type: 'info',
+            message: `Registered new ${personnelSingular} in MongoDB: ${newWorkerData.name} (${tagId}) - ${newWorkerData.role} [${newWorkerData.tradeCompany}]`,
+            timestamp: new Date()
+          }).catch(() => {});
+        } catch (err: any) {
+          console.error("Failed to save worker to MongoDB in background:", err);
+          showToast('error', `Notice: Failed to persist ${personnelSingular} record in MongoDB.`);
+        }
+      })();
     } catch (err: any) {
-      console.error("Failed to save worker to MongoDB:", err);
-      showToast('error', `Failed to persist ${personnelSingular} record in MongoDB database.`);
+      console.error("Failed to save worker:", err);
+      showToast('error', `Failed to register ${personnelSingular}.`);
     }
   };
 
@@ -1328,16 +1419,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         updatedAt: new Date().toISOString()
       } as any;
 
-      // Update both registered_people AND people collections in MongoDB
-      await setDoc(doc(db, 'registered_people', tagId), updatedRecord, { merge: true });
-      await setDoc(doc(db, 'people', tagId), updatedRecord, { merge: true });
-
-      if (rawId && rawId.toUpperCase() !== tagId) {
-        await setDoc(doc(db, 'registered_people', rawId), updatedRecord, { merge: true });
-        await setDoc(doc(db, 'people', rawId), updatedRecord, { merge: true });
-      }
-
-      // Optimistically update dbWorkers state
+      // 1. Instantly update dbWorkers state (0ms latency)
       setDbWorkers(prev => {
         const exists = prev.some(w => {
           const wIdUpper = (w.id || '').toUpperCase().trim();
@@ -1361,156 +1443,182 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         return [updatedRecord, ...prev];
       });
 
-      await addDoc(collection(db, 'alerts'), {
-        type: 'info',
-        message: `Updated ${personnelSingular} record in MongoDB: ${formData.name.trim()} (${tagId})`,
-        timestamp: new Date()
-      });
+      if (selectedPerson) {
+        setSelectedPerson(prev => prev ? { ...prev, ...updatedRecord } : null);
+      }
 
-      window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName: 'registered_people' } }));
-      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
-      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-
-      showToast('success', `Updated profile for "${formData.name.trim()}" in MongoDB.`);
       setIsEditModalOpen(false);
       setIsCustomRole(false);
       setCustomRoleInput('');
       setIsCustomCompany(false);
       setCustomCompanyInput('');
-      if (selectedPerson) {
-        setSelectedPerson(prev => prev ? { ...prev, ...updatedRecord } : null);
-      }
+      showToast('success', `Updated profile for "${formData.name.trim()}".`);
+
+      window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName: 'registered_people' } }));
+      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
+      // 2. Persist in background in parallel without blocking the UI
+      (async () => {
+        try {
+          const persistTasks: Promise<any>[] = [
+            setDoc(doc(db, 'registered_people', tagId), updatedRecord, { merge: true }),
+            setDoc(doc(db, 'people', tagId), updatedRecord, { merge: true })
+          ];
+
+          if (rawId && rawId.toUpperCase() !== tagId) {
+            persistTasks.push(
+              setDoc(doc(db, 'registered_people', rawId), updatedRecord, { merge: true }),
+              setDoc(doc(db, 'people', rawId), updatedRecord, { merge: true })
+            );
+          }
+
+          await Promise.all(persistTasks);
+
+          addDoc(collection(db, 'alerts'), {
+            type: 'info',
+            message: `Updated ${personnelSingular} record in MongoDB: ${formData.name.trim()} (${tagId})`,
+            timestamp: new Date()
+          }).catch(() => {});
+        } catch (err) {
+          console.error("Background sync error updating worker in MongoDB:", err);
+          showToast('error', `Notice: Failed to sync "${formData.name.trim()}" to MongoDB server.`);
+        }
+      })();
     } catch (err) {
-      console.error("Failed to update worker in MongoDB:", err);
-      showToast('error', `Failed to update ${personnelSingular} in MongoDB.`);
+      console.error("Failed to update worker:", err);
+      showToast('error', `Failed to update ${personnelSingular}.`);
     }
   };
 
   // Delete worker from MongoDB
-  const handleDeleteWorker = async (tagId: string, name: string) => {
+  const handleDeleteWorker = (tagId: string, name: string) => {
     if (!window.confirm(`Are you sure you want to remove worker "${name}" (${tagId}) from MongoDB database?`)) return;
 
-    try {
-      const idUpper = (tagId || "").toUpperCase().trim();
-      const idOriginal = (tagId || "").trim();
+    const idUpper = (tagId || "").toUpperCase().trim();
+    const idOriginal = (tagId || "").trim();
 
-      // Delete from registered_people
-      await deleteDoc(doc(db, 'registered_people', idOriginal));
-      if (idUpper !== idOriginal) {
-        await deleteDoc(doc(db, 'registered_people', idUpper));
-      }
+    // 1. Instantly update local dbWorkers state (0ms latency)
+    setDbWorkers(prev => prev.filter(w => {
+      const wIdUpper = (w.id || '').toUpperCase();
+      const wTagUpper = (w.hardhatTagId || '').toUpperCase();
+      return wIdUpper !== idUpper && wIdUpper !== idOriginal.toUpperCase() && wTagUpper !== idUpper;
+    }));
 
-      // Also delete from people collection
-      await deleteDoc(doc(db, 'people', idOriginal));
-      if (idUpper !== idOriginal) {
-        await deleteDoc(doc(db, 'people', idUpper));
-      }
-
-      // Optimistically update local dbWorkers state immediately
-      setDbWorkers(prev => prev.filter(w => {
-        const wIdUpper = (w.id || '').toUpperCase();
-        const wTagUpper = (w.hardhatTagId || '').toUpperCase();
-        return wIdUpper !== idUpper && wIdUpper !== idOriginal.toUpperCase() && wTagUpper !== idUpper;
-      }));
-
-      if (selectedPerson && (
-        (selectedPerson.id || '').toUpperCase() === idUpper || 
-        (selectedPerson.hardhatTagId || '').toUpperCase() === idUpper ||
-        selectedPerson.id === idOriginal
-      )) {
-        setSelectedPerson(null);
-      }
-
-      await addDoc(collection(db, 'alerts'), {
-        type: 'warning',
-        message: `Worker deregistered from MongoDB: ${name} (${tagId})`,
-        timestamp: new Date()
-      });
-
-      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
-      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-
-      showToast('info', `Deregistered worker "${name}" from MongoDB.`);
-    } catch (err) {
-      console.error("Failed to delete worker:", err);
-      showToast('error', "Failed to remove worker from MongoDB.");
+    if (selectedPerson && (
+      (selectedPerson.id || '').toUpperCase() === idUpper || 
+      (selectedPerson.hardhatTagId || '').toUpperCase() === idUpper ||
+      selectedPerson.id === idOriginal
+    )) {
+      setSelectedPerson(null);
     }
+
+    showToast('info', `Deregistered worker "${name}".`);
+    window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName: 'registered_people' } }));
+    window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
+    // 2. Persist delete in background in parallel
+    (async () => {
+      try {
+        const deleteTasks: Promise<any>[] = [
+          deleteDoc(doc(db, 'registered_people', idOriginal)),
+          deleteDoc(doc(db, 'people', idOriginal))
+        ];
+        if (idUpper !== idOriginal) {
+          deleteTasks.push(
+            deleteDoc(doc(db, 'registered_people', idUpper)),
+            deleteDoc(doc(db, 'people', idUpper))
+          );
+        }
+        await Promise.all(deleteTasks);
+
+        addDoc(collection(db, 'alerts'), {
+          type: 'warning',
+          message: `Worker deregistered from MongoDB: ${name} (${tagId})`,
+          timestamp: new Date()
+        }).catch(() => {});
+      } catch (err) {
+        console.error("Failed to delete worker in MongoDB:", err);
+        showToast('error', `Notice: Failed to remove worker from MongoDB server.`);
+      }
+    })();
   };
 
   // Quick toggle PPE status directly in MongoDB
-  const handleQuickUpdatePpe = async (tagId: string, name: string, newPpe: 'COMPLIANT' | 'WARNING' | 'NON_COMPLIANT') => {
-    try {
-      const tagUpper = (tagId || "").toUpperCase().trim();
-      await setDoc(doc(db, 'registered_people', tagUpper), {
-        ppeStatus: newPpe,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      await setDoc(doc(db, 'people', tagUpper), {
-        ppeStatus: newPpe,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+  const handleQuickUpdatePpe = (tagId: string, name: string, newPpe: 'COMPLIANT' | 'WARNING' | 'NON_COMPLIANT') => {
+    const tagUpper = (tagId || "").toUpperCase().trim();
+    const nowIso = new Date().toISOString();
 
-      // Optimistically update dbWorkers state
-      setDbWorkers(prev => prev.map(w => {
-        if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
-          return { ...w, ppeStatus: newPpe };
-        }
-        return w;
-      }));
-
-      if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
-        setSelectedPerson(prev => prev ? { ...prev, ppeStatus: newPpe } : null);
+    // 1. Instantly update dbWorkers state (0ms latency)
+    setDbWorkers(prev => prev.map(w => {
+      if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
+        return { ...w, ppeStatus: newPpe, updatedAt: nowIso };
       }
+      return w;
+    }));
 
-      await addDoc(collection(db, 'alerts'), {
-        type: newPpe === 'NON_COMPLIANT' ? 'security' : newPpe === 'WARNING' ? 'warning' : 'info',
-        message: `PPE status changed for ${name} (${tagId}) to ${newPpe}`,
-        timestamp: new Date()
-      });
-
-      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
-      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-
-      showToast('success', `Updated ${name} PPE status to ${newPpe} in MongoDB.`);
-    } catch (err) {
-      console.error("Failed to update PPE status:", err);
-      showToast('error', "Failed to update PPE status in MongoDB.");
+    if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
+      setSelectedPerson(prev => prev ? { ...prev, ppeStatus: newPpe, updatedAt: nowIso } : null);
     }
+
+    showToast('success', `Updated ${name} PPE status to ${newPpe}.`);
+    window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
+    // 2. Persist in background
+    (async () => {
+      try {
+        await Promise.all([
+          setDoc(doc(db, 'registered_people', tagUpper), { ppeStatus: newPpe, updatedAt: serverTimestamp() }, { merge: true }),
+          setDoc(doc(db, 'people', tagUpper), { ppeStatus: newPpe, updatedAt: serverTimestamp() }, { merge: true })
+        ]);
+
+        addDoc(collection(db, 'alerts'), {
+          type: newPpe === 'NON_COMPLIANT' ? 'security' : newPpe === 'WARNING' ? 'warning' : 'info',
+          message: `PPE status changed for ${name} (${tagId}) to ${newPpe}`,
+          timestamp: new Date()
+        }).catch(() => {});
+      } catch (err) {
+        console.error("Failed to update PPE status in MongoDB:", err);
+        showToast('error', `Failed to sync PPE status to MongoDB for ${name}.`);
+      }
+    })();
   };
 
   // Quick toggle Shift status directly in MongoDB
-  const handleQuickUpdateShift = async (tagId: string, name: string, newShift: 'ON_SITE' | 'OFF_SITE' | 'ON_LEAVE' | 'SUSPENDED') => {
-    try {
-      const tagUpper = (tagId || "").toUpperCase().trim();
-      await setDoc(doc(db, 'registered_people', tagUpper), {
-        shiftStatus: newShift,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
-      await setDoc(doc(db, 'people', tagUpper), {
-        shiftStatus: newShift,
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+  const handleQuickUpdateShift = (tagId: string, name: string, newShift: 'ON_SITE' | 'OFF_SITE' | 'ON_LEAVE' | 'SUSPENDED') => {
+    const tagUpper = (tagId || "").toUpperCase().trim();
+    const nowIso = new Date().toISOString();
 
-      // Optimistically update dbWorkers state
-      setDbWorkers(prev => prev.map(w => {
-        if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
-          return { ...w, shiftStatus: newShift };
-        }
-        return w;
-      }));
-
-      if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
-        setSelectedPerson(prev => prev ? { ...prev, shiftStatus: newShift } : null);
+    // 1. Instantly update dbWorkers state (0ms latency)
+    setDbWorkers(prev => prev.map(w => {
+      if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
+        return { ...w, shiftStatus: newShift, updatedAt: nowIso };
       }
+      return w;
+    }));
 
-      window.dispatchEvent(new CustomEvent('gao_refresh_data'));
-      window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
-
-      showToast('info', `Worker ${name} shift status set to ${newShift} in MongoDB.`);
-    } catch (err) {
-      console.error("Failed to update shift status:", err);
-      showToast('error', "Failed to update shift status in MongoDB.");
+    if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
+      setSelectedPerson(prev => prev ? { ...prev, shiftStatus: newShift, updatedAt: nowIso } : null);
     }
+
+    showToast('info', `Worker ${name} shift status set to ${newShift}.`);
+    window.dispatchEvent(new CustomEvent('gao_refresh_data'));
+    window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
+
+    // 2. Persist in background
+    (async () => {
+      try {
+        await Promise.all([
+          setDoc(doc(db, 'registered_people', tagUpper), { shiftStatus: newShift, updatedAt: serverTimestamp() }, { merge: true }),
+          setDoc(doc(db, 'people', tagUpper), { shiftStatus: newShift, updatedAt: serverTimestamp() }, { merge: true })
+        ]);
+      } catch (err) {
+        console.error("Failed to update shift status in MongoDB:", err);
+        showToast('error', `Failed to sync shift status to MongoDB for ${name}.`);
+      }
+    })();
   };
 
 

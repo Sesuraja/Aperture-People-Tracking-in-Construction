@@ -153,7 +153,7 @@ async function safeJsonFetch(url: string, options?: RequestInit): Promise<any> {
       return null;
     } finally {
       if (method === 'GET') {
-        setTimeout(() => inFlightGetRequests.delete(url), 1000);
+        inFlightGetRequests.delete(url);
       }
     }
   })();
@@ -169,12 +169,18 @@ const updateDebounceTimers = new Map<string, any>();
 
 function notifyDataUpdated(colName: string) {
   if (typeof window !== 'undefined') {
+    const isPeopleCol = colName === 'registered_people' || colName === 'people';
     for (const key of Array.from(clientResponseCache.keys())) {
-      if (key.includes(`/api/data/${colName}`) || colName === 'registered_people' || colName === 'people') {
+      if (!colName || key.includes(`/api/data/${colName}`) || (isPeopleCol && (key.includes('/api/data/registered_people') || key.includes('/api/data/people')))) {
         clientResponseCache.delete(key);
       }
     }
-    // Trailing 300ms debounce to prevent cascading update storms from multi-document writes
+    for (const key of Array.from(inFlightGetRequests.keys())) {
+      if (!colName || key.includes(`/api/data/${colName}`) || (isPeopleCol && (key.includes('/api/data/registered_people') || key.includes('/api/data/people')))) {
+        inFlightGetRequests.delete(key);
+      }
+    }
+    // Fast 40ms debounce to prevent cascading update storms from multi-document writes without perceptible UI delay
     if (updateDebounceTimers.has(colName)) {
       clearTimeout(updateDebounceTimers.get(colName));
     }
@@ -183,7 +189,7 @@ function notifyDataUpdated(colName: string) {
       window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName } }));
       window.dispatchEvent(new CustomEvent('gao_refresh_data', { detail: { colName } }));
       window.dispatchEvent(new CustomEvent('gao_map_data_updated', { detail: { colName } }));
-    }, 150);
+    }, 40);
     updateDebounceTimers.set(colName, timer);
   }
 }
@@ -320,16 +326,33 @@ export function onSnapshot(ref: any, callback: (snapshot: any) => void, _errorCa
   // Efficient 30s background sync (immediate push updates occur via WebSocket and gao_data_updated events)
   const interval = setInterval(poll, 30000);
 
+  let pollDebounceTimer: any = null;
+  const debouncedPoll = () => {
+    if (pollDebounceTimer) clearTimeout(pollDebounceTimer);
+    pollDebounceTimer = setTimeout(() => {
+      pollDebounceTimer = null;
+      poll();
+    }, 25);
+  };
+
   // Listen to mutations for immediate event-driven update with 0 delay
   const handleDataUpdate = (e: any) => {
     if (!active) return;
-    if (!e.detail || !e.detail.colName || e.detail.colName === colName) {
+    const targetCol = e.detail?.colName;
+    const isPeoplePair = (colName === 'registered_people' || colName === 'people') && 
+                         (!targetCol || targetCol === 'registered_people' || targetCol === 'people');
+    if (!targetCol || targetCol === colName || isPeoplePair) {
       for (const key of Array.from(clientResponseCache.keys())) {
-        if (!e.detail?.colName || key.includes(`/api/data/${e.detail.colName}`)) {
+        if (!targetCol || key.includes(`/api/data/${targetCol}`) || isPeoplePair) {
           clientResponseCache.delete(key);
         }
       }
-      poll();
+      for (const key of Array.from(inFlightGetRequests.keys())) {
+        if (!targetCol || key.includes(`/api/data/${targetCol}`) || isPeoplePair) {
+          inFlightGetRequests.delete(key);
+        }
+      }
+      debouncedPoll();
     }
   };
 
