@@ -3,6 +3,7 @@
  * Direct REST API client connected to MongoDB persistence endpoints (/api/data/*, /api/mongodb/*).
  * All collections and documents persist to MongoDB Atlas.
  */
+import { safeStorage } from './safeStorage';
 
 let _mongoConnectedState = true;
 
@@ -90,16 +91,22 @@ function createQuerySnapshot(docsData: any[]) {
   };
 }
 
-function getAuthHeaders(): Record<string, string> {
+export function getAuthHeaders(): Record<string, string> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   let token: string | null = null;
   if (typeof window !== 'undefined') {
-    token = localStorage.getItem('gao_jwt_token') || localStorage.getItem('aperture_token') || localStorage.getItem('token') || localStorage.getItem('auth_token');
+    try {
+      token = safeStorage.getItem('gao_jwt_token') || 
+              localStorage.getItem('gao_jwt_token') || 
+              localStorage.getItem('aperture_token') || 
+              localStorage.getItem('token') || 
+              localStorage.getItem('auth_token') ||
+              sessionStorage.getItem('gao_jwt_token') ||
+              sessionStorage.getItem('token');
+    } catch {}
   }
-  if (!token) {
-    token = 'demo';
-  }
-  if (token) {
+  if (token && token !== 'demo') {
+    token = token.replace(/^"(.*)"$/, '$1').trim();
     headers['Authorization'] = `Bearer ${token}`;
   }
   return headers;
@@ -163,7 +170,7 @@ const updateDebounceTimers = new Map<string, any>();
 function notifyDataUpdated(colName: string) {
   if (typeof window !== 'undefined') {
     for (const key of Array.from(clientResponseCache.keys())) {
-      if (key.includes(`/api/data/${colName}`)) {
+      if (key.includes(`/api/data/${colName}`) || colName === 'registered_people' || colName === 'people') {
         clientResponseCache.delete(key);
       }
     }
@@ -174,7 +181,9 @@ function notifyDataUpdated(colName: string) {
     const timer = setTimeout(() => {
       updateDebounceTimers.delete(colName);
       window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName } }));
-    }, 300);
+      window.dispatchEvent(new CustomEvent('gao_refresh_data', { detail: { colName } }));
+      window.dispatchEvent(new CustomEvent('gao_map_data_updated', { detail: { colName } }));
+    }, 150);
     updateDebounceTimers.set(colName, timer);
   }
 }

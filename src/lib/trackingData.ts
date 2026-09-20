@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { gaoApi, RealtimeTag } from './gaoApi';
-import { collection, query, orderBy, limit, onSnapshot, doc, getDoc, db } from './db';
+import { collection, query, orderBy, limit, onSnapshot, doc, getDoc, db, getAuthHeaders } from './db';
 import { Person, Asset, Vehicle, AIAlert, PresenceState } from '../types';
 
 export type { Person, Asset, Vehicle, AIAlert, PresenceState };
@@ -192,30 +192,47 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
 
   useEffect(() => {
     const fetchRegisteredPeople = () => {
-      fetch('/api/data/registered_people')
-        .then(res => res.ok ? res.json() : [])
-        .then((peopleList: any[]) => {
-          if (Array.isArray(peopleList) && peopleList.length > 0) {
-            const map: Record<string, { name: string; role: string }> = {};
-            peopleList.forEach(p => {
-              const entry = { name: p.name, role: p.role };
-              if (p.id) {
-                map[p.id] = entry;
-                map[p.id.toLowerCase()] = entry;
-                map[p.id.toUpperCase()] = entry;
-              }
-              if (p.hardhatTagId) {
-                map[p.hardhatTagId] = entry;
-                map[p.hardhatTagId.toLowerCase()] = entry;
-                map[p.hardhatTagId.toUpperCase()] = entry;
-              }
-              if (p.tagId) {
-                map[p.tagId] = entry;
-                map[p.tagId.toLowerCase()] = entry;
-                map[p.tagId.toUpperCase()] = entry;
-              }
+      const authHeaders = getAuthHeaders();
+      Promise.all([
+        fetch('/api/data/registered_people', { headers: authHeaders }).then(res => res.ok ? res.json() : []),
+        fetch('/api/data/people', { headers: authHeaders }).then(res => res.ok ? res.json() : [])
+      ])
+        .then(([regList, peoList]: [any[], any[]]) => {
+          const combined = [
+            ...(Array.isArray(regList) ? regList : []),
+            ...(Array.isArray(peoList) ? peoList : [])
+          ];
+          if (combined.length > 0) {
+            const map: Record<string, { name: string; role: string; tradeCompany?: string; department?: string }> = {};
+            combined.forEach(p => {
+              if (!p || !p.name) return;
+              const entry = {
+                name: String(p.name).trim(),
+                role: p.role || 'Field Personnel',
+                tradeCompany: p.tradeCompany || p.company,
+                department: p.department
+              };
+              const identifiers = [p.id, p.hardhatTagId, p.tagId, p.TagID, (p as any)._id].filter(Boolean);
+              identifiers.forEach(id => {
+                const s = String(id).trim();
+                if (s) {
+                  map[s] = entry;
+                  map[s.toLowerCase()] = entry;
+                  map[s.toUpperCase()] = entry;
+                }
+              });
             });
             registeredPeopleRef.current = map;
+
+            // Immediately synchronize current people state with latest custom names
+            setPeople(prev => prev.map(person => {
+              const tid = String(person.hardhatTagId || (person as any).tagId || person.id || '').trim();
+              const reg = map[tid] || map[tid.toLowerCase()] || map[tid.toUpperCase()];
+              if (reg && reg.name && person.name !== reg.name) {
+                return { ...person, name: reg.name, role: reg.role || person.role };
+              }
+              return person;
+            }));
           }
         })
         .catch(() => {});
@@ -224,9 +241,11 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
     fetchRegisteredPeople();
     window.addEventListener('gao_data_updated', fetchRegisteredPeople);
     window.addEventListener('gao_refresh_data', fetchRegisteredPeople);
+    window.addEventListener('gao_map_data_updated', fetchRegisteredPeople);
     return () => {
       window.removeEventListener('gao_data_updated', fetchRegisteredPeople);
       window.removeEventListener('gao_refresh_data', fetchRegisteredPeople);
+      window.removeEventListener('gao_map_data_updated', fetchRegisteredPeople);
     };
   }, []);
 
@@ -293,8 +312,8 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
 
                  const registered = registeredPeopleRef.current[tid] || registeredPeopleRef.current[tidLower] || registeredPeopleRef.current[tid.toUpperCase()];
                  const apiName = tag.personName || tag.name || ((tag as any).FirstName ? `${(tag as any).FirstName} ${(tag as any).LastName || ''}`.trim() : '');
-                 const pName = registered ? registered.name : (apiName || `Tag ${tid.substring(0, 8).toUpperCase()}`);
-                 const pRole = registered ? registered.role : (tag.role || 'Field Personnel');
+                 const pName = registered?.name || (apiName || `Tag ${tid.substring(0, 8).toUpperCase()}`);
+                 const pRole = registered?.role || (tag.role || 'Field Personnel');
                  const parsedDate = parseTagTimestamp(tag.Timestamp);
 
                  if (!p) {
@@ -316,8 +335,16 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
                     nextPeople.push(p);
                  } else {
                     p.lastSeen = parsedDate;
-                    if (pName && !pName.startsWith('Tag ')) p.name = pName;
-                    if (pRole) p.role = pRole;
+                    if (registered?.name) {
+                      p.name = registered.name;
+                    } else if (pName && !pName.startsWith('Tag ')) {
+                      p.name = pName;
+                    }
+                    if (registered?.role) {
+                      p.role = registered.role;
+                    } else if (pRole) {
+                      p.role = pRole;
+                    }
                     if (tag.rssi !== undefined) p.rssi = tag.rssi;
                     if (tag.readerId) p.lastReader = tag.readerId;
 

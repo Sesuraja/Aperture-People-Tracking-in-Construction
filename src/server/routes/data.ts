@@ -408,9 +408,10 @@ const handleCollectionItemUpsert = async (req: AuthRequest, res: Response) => {
   if (!isGlobalOrSystemConfig) {
     const existingDoc = await getDocById(collection, id, orgId);
     const allExisting = await getDocById(collection, id, 'ALL');
-    const isAdmin = user?.role === 'admin' || Boolean(user?.isPlatformAdmin);
+    const isAdmin = user?.role === 'admin' || user?.role === 'owner' || user?.role === 'superadmin' || Boolean(user?.isPlatformAdmin);
     const isBothDefault = (DEFAULT_ORGS.includes(allExisting?.organizationId) || !allExisting?.organizationId) && DEFAULT_ORGS.includes(orgId);
-    if (!isAdmin && allExisting && !existingDoc && !isBothDefault && allExisting.organizationId && allExisting.organizationId !== orgId) {
+    const isDefaultOrGlobalRecord = !allExisting?.organizationId || DEFAULT_ORGS.includes(allExisting?.organizationId);
+    if (!isAdmin && allExisting && !existingDoc && !isBothDefault && !isDefaultOrGlobalRecord && allExisting.organizationId !== orgId) {
       return res.status(404).json({ error: 'Document not found or belongs to another organization' });
     }
   }
@@ -419,9 +420,12 @@ const handleCollectionItemUpsert = async (req: AuthRequest, res: Response) => {
   body.id = id;
   if (collection === 'registered_people' || collection === 'people') {
     body.isCustomProfile = true;
+    body.tagId = body.tagId || body.hardhatTagId || id;
+    body.hardhatTagId = body.hardhatTagId || body.tagId || id;
     if (body.name) {
-      body.firstName = body.name.trim().split(' ')[0] || body.firstName || '';
-      body.lastName = body.name.trim().split(' ').slice(1).join(' ') || body.lastName || '';
+      body.name = String(body.name).trim();
+      body.firstName = body.name.split(' ')[0] || body.firstName || '';
+      body.lastName = body.name.split(' ').slice(1).join(' ') || body.lastName || '';
     }
   }
 

@@ -451,24 +451,34 @@ const handleGetRealtime = async (req: Request, res: Response) => {
   const orgId = (req as any).user?.organizationId || req.body?.organizationId || (req.query.organizationId as string) || 'default';
 
   try {
-    // 1. Fetch registered people and visitors from MongoDB to map worker names by TagID
-    const [peopleList, visitorsList] = await Promise.all([
+    // 1. Fetch registered people, people directory, and visitors from MongoDB to map worker names by TagID
+    const [registeredList, peopleList, visitorsList] = await Promise.all([
       getCollectionDocs('registered_people', undefined, orgId).catch(() => []),
+      getCollectionDocs('people', undefined, orgId).catch(() => []),
       getCollectionDocs('visitors', undefined, orgId).catch(() => [])
     ]);
 
     const personMap = new Map<string, any>();
-    peopleList.forEach((p: any) => {
-      if (p.id) personMap.set(String(p.id).toLowerCase(), p);
-      if (p.hardhatTagId) personMap.set(String(p.hardhatTagId).toLowerCase(), p);
-      if (p.tagId) personMap.set(String(p.tagId).toLowerCase(), p);
-      if (p.TagID) personMap.set(String(p.TagID).toLowerCase(), p);
+    const allWorkforce = [...(registeredList || []), ...(peopleList || [])];
+    allWorkforce.forEach((p: any) => {
+      if (!p) return;
+      const keys = [p.id, p.hardhatTagId, p.tagId, p.TagID].filter(Boolean);
+      keys.forEach((k: any) => {
+        const s = String(k).trim();
+        personMap.set(s.toLowerCase(), p);
+        personMap.set(s.toUpperCase(), p);
+        personMap.set(s, p);
+      });
     });
     visitorsList.forEach((v: any) => {
-      if (v.id) personMap.set(String(v.id).toLowerCase(), v);
-      if (v.badgeId) personMap.set(String(v.badgeId).toLowerCase(), v);
-      if (v.tagId) personMap.set(String(v.tagId).toLowerCase(), v);
-      if (v.TagID) personMap.set(String(v.TagID).toLowerCase(), v);
+      if (!v) return;
+      const keys = [v.id, v.badgeId, v.tagId, v.TagID].filter(Boolean);
+      keys.forEach((k: any) => {
+        const s = String(k).trim();
+        personMap.set(s.toLowerCase(), v);
+        personMap.set(s.toUpperCase(), v);
+        personMap.set(s, v);
+      });
     });
 
     let rawTags: any[] = [];
@@ -494,13 +504,14 @@ const handleGetRealtime = async (req: Request, res: Response) => {
 
     const formattedTags = rawTags.map((item: any) => {
       const ts = item.Timestamp || item.timestamp || item.lastSeen || new Date().toISOString();
-      const tagKey = String(item.TagID || item.tagId || item.epc || '').toLowerCase();
-      const matched = personMap.get(tagKey);
+      const rawTagStr = String(item.TagID || item.tagId || item.epc || '').trim();
+      const tagKey = rawTagStr.toLowerCase();
+      const matched = personMap.get(tagKey) || personMap.get(rawTagStr) || personMap.get(rawTagStr.toUpperCase());
       let fullName = '';
       let fn = '';
       let ln = '';
-      if (matched?.name && matched.name.trim() && matched.name !== 'Personnel' && matched.name !== 'Unknown' && matched.name !== 'John') {
-        fullName = matched.name.trim();
+      if (matched?.name && String(matched.name).trim() && (matched.isCustomProfile || (!matched.name.startsWith('Tag ') && matched.name !== 'Unknown'))) {
+        fullName = String(matched.name).trim();
         fn = matched.firstName || fullName.split(' ')[0] || '';
         ln = matched.lastName || fullName.split(' ').slice(1).join(' ') || '';
       } else if (matched?.firstName && matched?.lastName) {

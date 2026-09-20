@@ -820,6 +820,39 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
             { $or: idClauses },
             { $set: cleanDoc }
           ).catch(() => {});
+
+          // Mirror edited worker name to live_tags and real_time_tags matching this RFID tagId
+          const tagKey = String(cleanDoc.hardhatTagId || cleanDoc.tagId || cleanDoc.TagID || cleanDoc.id || '').toUpperCase().trim();
+          if (tagKey && cleanDoc.name) {
+            const nameToSync = String(cleanDoc.name).trim();
+            const fn = cleanDoc.firstName || nameToSync.split(' ')[0] || '';
+            const ln = cleanDoc.lastName || nameToSync.split(' ').slice(1).join(' ') || '';
+            const tagFilter = {
+              $or: [
+                { TagID: tagKey },
+                { tagId: tagKey },
+                { id: tagKey },
+                { TagID: tagKey.toLowerCase() },
+                { tagId: tagKey.toLowerCase() },
+                { id: tagKey.toLowerCase() }
+              ]
+            };
+            const updatePayload = {
+              $set: {
+                personName: nameToSync,
+                name: nameToSync,
+                FirstName: fn,
+                LastName: ln,
+                role: cleanDoc.role || 'Field Personnel',
+                company: cleanDoc.tradeCompany || cleanDoc.company || 'Field Team',
+                tradeCompany: cleanDoc.tradeCompany || cleanDoc.company || 'Field Team'
+              }
+            };
+            await mongoDb.collection('live_tags').updateMany(tagFilter, updatePayload).catch(() => {});
+            await mongoDb.collection('real_time_tags').updateMany(tagFilter, updatePayload).catch(() => {});
+            invalidateCollectionCache('live_tags');
+            invalidateCollectionCache('real_time_tags');
+          }
         }
       } else {
         const fallbackById = cleanDoc.id ? await mongoDb.collection(colName).findOne({ id: cleanDoc.id }) : null;
@@ -837,6 +870,38 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
               { $or: idClauses },
               { $set: cleanDoc }
             ).catch(() => {});
+
+            const tagKey = String(cleanDoc.hardhatTagId || cleanDoc.tagId || cleanDoc.TagID || cleanDoc.id || '').toUpperCase().trim();
+            if (tagKey && cleanDoc.name) {
+              const nameToSync = String(cleanDoc.name).trim();
+              const fn = cleanDoc.firstName || nameToSync.split(' ')[0] || '';
+              const ln = cleanDoc.lastName || nameToSync.split(' ').slice(1).join(' ') || '';
+              const tagFilter = {
+                $or: [
+                  { TagID: tagKey },
+                  { tagId: tagKey },
+                  { id: tagKey },
+                  { TagID: tagKey.toLowerCase() },
+                  { tagId: tagKey.toLowerCase() },
+                  { id: tagKey.toLowerCase() }
+                ]
+              };
+              const updatePayload = {
+                $set: {
+                  personName: nameToSync,
+                  name: nameToSync,
+                  FirstName: fn,
+                  LastName: ln,
+                  role: cleanDoc.role || 'Field Personnel',
+                  company: cleanDoc.tradeCompany || cleanDoc.company || 'Field Team',
+                  tradeCompany: cleanDoc.tradeCompany || cleanDoc.company || 'Field Team'
+                }
+              };
+              await mongoDb.collection('live_tags').updateMany(tagFilter, updatePayload).catch(() => {});
+              await mongoDb.collection('real_time_tags').updateMany(tagFilter, updatePayload).catch(() => {});
+              invalidateCollectionCache('live_tags');
+              invalidateCollectionCache('real_time_tags');
+            }
           }
         } else {
           const insertFilter: any = { id: cleanDoc.id };
@@ -851,6 +916,8 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
         }
       }
       invalidateCollectionCache(colName);
+      if (colName === 'registered_people') invalidateCollectionCache('people');
+      if (colName === 'people') invalidateCollectionCache('registered_people');
       return cleanDoc;
     } catch (err) {
       console.error(`[DB Service] Error upserting doc in ${colName}:`, err);
@@ -1932,6 +1999,7 @@ export async function purgeLegacySampleWorkers(): Promise<void> {
  */
 export function isRealCustomWorker(p: any): boolean {
   if (!p || typeof p !== 'object') return false;
+  if (p.isCustomProfile) return true;
   const name = String(p.name || '').trim();
   const lower = name.toLowerCase();
   if (
@@ -1943,7 +2011,7 @@ export function isRealCustomWorker(p: any): boolean {
   ) {
     return false;
   }
-  return Boolean(p.isCustomProfile || (name && lower !== 'john'));
+  return Boolean(name && lower !== 'john');
 }
 
 

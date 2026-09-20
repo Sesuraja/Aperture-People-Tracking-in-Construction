@@ -839,10 +839,11 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       ) {
         return;
       }
+      const canonicalTag = (w.hardhatTagId || (w as any).tagId || w.id || '').toUpperCase().trim();
       const entry = {
         id: w.id,
-        hardhatTagId: w.hardhatTagId || w.id,
-        tagId: w.hardhatTagId || w.id,
+        hardhatTagId: canonicalTag || w.id,
+        tagId: canonicalTag || w.id,
         name: w.name,
         role: w.role,
         tradeCompany: w.tradeCompany || organizationType || 'Operations',
@@ -865,10 +866,10 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         isDbRegistered: true
       };
 
-      const tagKey = (w.hardhatTagId || w.id).toUpperCase();
-      map.set(tagKey, entry);
-      if (w.id) map.set(w.id.toUpperCase(), entry);
-      if (w.hardhatTagId) map.set(w.hardhatTagId.toUpperCase(), entry);
+      if (canonicalTag) map.set(canonicalTag, entry);
+      if (w.id) map.set(w.id.toUpperCase().trim(), entry);
+      if (w.hardhatTagId) map.set(w.hardhatTagId.toUpperCase().trim(), entry);
+      if ((w as any).tagId) map.set(String((w as any).tagId).toUpperCase().trim(), entry);
     });
 
     // 2. Overlay live positions from antenna scans (ONLY update live telemetry: x, y, currentZone, dwellTime, presenceState, lastSeen)
@@ -884,8 +885,11 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         return; // Exclude visitors from People (worker) directory
       }
 
-      const tagKey = (p.hardhatTagId || p.id).toUpperCase();
-      const existing = map.get(tagKey) || (p.id ? map.get(p.id.toUpperCase()) : null) || (p.hardhatTagId ? map.get(p.hardhatTagId.toUpperCase()) : null);
+      const pTagUpper = (p.hardhatTagId || (p as any).tagId || (p as any).TagID || p.id || '').toUpperCase().trim();
+      const existing = map.get(pTagUpper) || 
+                       (p.id ? map.get(p.id.toUpperCase().trim()) : null) || 
+                       (p.hardhatTagId ? map.get(p.hardhatTagId.toUpperCase().trim()) : null) ||
+                       ((p as any).tagId ? map.get(String((p as any).tagId).toUpperCase().trim()) : null);
       if (existing) {
         // ALWAYS keep authoritative worker name and role from MongoDB
         existing.currentZone = p.currentZone || existing.currentZone;
@@ -894,11 +898,14 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         existing.x = p.x;
         existing.y = p.y;
         existing.lastSeen = p.lastSeen || existing.lastSeen;
+        if (p.rssi !== undefined) existing.rssi = p.rssi;
+        if ((p as any).batteryLevel !== undefined) existing.batteryLevel = (p as any).batteryLevel;
       } else {
-        map.set(tagKey, {
+        map.set(pTagUpper, {
           ...p,
-          hardhatTagId: p.hardhatTagId || p.id,
-          name: p.name || `Tag ${tagKey}`,
+          hardhatTagId: p.hardhatTagId || pTagUpper,
+          tagId: pTagUpper,
+          name: p.name || `Tag ${pTagUpper}`,
           role: p.role || 'Field Personnel',
           tradeCompany: p.tradeCompany || 'Field Team',
           shiftStatus: 'ON_SITE',
@@ -910,17 +917,31 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       }
     });
 
-    // Deduplicate by primary hardhatTagId / id
+    // Deduplicate by primary hardhatTagId / tagId / id
     const dedupedMap = new Map<string, any>();
     map.forEach(item => {
-      const primaryKey = (item.hardhatTagId || item.id).toUpperCase();
-      if (!dedupedMap.has(primaryKey)) {
+      const primaryKey = (item.hardhatTagId || item.tagId || item.id || '').toUpperCase().trim();
+      if (primaryKey && !dedupedMap.has(primaryKey)) {
         dedupedMap.set(primaryKey, item);
       }
     });
 
     return Array.from(dedupedMap.values());
   }, [dbWorkers, people]);
+
+  // Keep selectedPerson synced with combinedPeople whenever data updates
+  useEffect(() => {
+    if (!selectedPerson) return;
+    const selectedKey = (selectedPerson.hardhatTagId || selectedPerson.tagId || selectedPerson.id || '').toUpperCase().trim();
+    const match = combinedPeople.find(p => {
+      const pKey = (p.hardhatTagId || p.tagId || p.id || '').toUpperCase().trim();
+      const pId = (p.id || '').toUpperCase().trim();
+      return pKey === selectedKey || pId === selectedKey;
+    });
+    if (match && (match.name !== selectedPerson.name || match.role !== selectedPerson.role || match.tradeCompany !== selectedPerson.tradeCompany)) {
+      setSelectedPerson((prev: any) => prev ? { ...prev, ...match } : null);
+    }
+  }, [combinedPeople]);
 
   // Filtered workers list
   const filteredPeople = useMemo(() => {
@@ -1263,7 +1284,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       showToast('error', `Please provide a name for this ${personnelSingular}.`);
       return;
     }
-    const tagId = (formData.hardhatTagId || formData.id || "").toUpperCase().trim();
+    const tagId = (formData.hardhatTagId || (formData as any).tagId || formData.id || "").toUpperCase().trim();
     const rawId = (formData.id || tagId).trim();
     if (!tagId) {
       showToast('error', 'Cannot update worker without an identifier.');
@@ -1319,15 +1340,19 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       // Optimistically update dbWorkers state
       setDbWorkers(prev => {
         const exists = prev.some(w => {
-          const wIdUpper = (w.id || '').toUpperCase();
-          const wTagUpper = (w.hardhatTagId || '').toUpperCase();
-          return wIdUpper === tagId || wTagUpper === tagId || (rawId && (wIdUpper === rawId.toUpperCase() || wTagUpper === rawId.toUpperCase()));
+          const wIdUpper = (w.id || '').toUpperCase().trim();
+          const wTagUpper = (w.hardhatTagId || '').toUpperCase().trim();
+          const wTagIdUpper = ((w as any).tagId || '').toUpperCase().trim();
+          return wIdUpper === tagId || wTagUpper === tagId || wTagIdUpper === tagId ||
+                 (rawId && (wIdUpper === rawId.toUpperCase() || wTagUpper === rawId.toUpperCase() || wTagIdUpper === rawId.toUpperCase()));
         });
         if (exists) {
           return prev.map(w => {
-            const wIdUpper = (w.id || '').toUpperCase();
-            const wTagUpper = (w.hardhatTagId || '').toUpperCase();
-            if (wIdUpper === tagId || wTagUpper === tagId || (rawId && (wIdUpper === rawId.toUpperCase() || wTagUpper === rawId.toUpperCase()))) {
+            const wIdUpper = (w.id || '').toUpperCase().trim();
+            const wTagUpper = (w.hardhatTagId || '').toUpperCase().trim();
+            const wTagIdUpper = ((w as any).tagId || '').toUpperCase().trim();
+            if (wIdUpper === tagId || wTagUpper === tagId || wTagIdUpper === tagId ||
+                (rawId && (wIdUpper === rawId.toUpperCase() || wTagUpper === rawId.toUpperCase() || wTagIdUpper === rawId.toUpperCase()))) {
               return { ...w, ...updatedRecord };
             }
             return w;
@@ -1342,6 +1367,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         timestamp: new Date()
       });
 
+      window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName: 'registered_people' } }));
       window.dispatchEvent(new CustomEvent('gao_refresh_data'));
       window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 

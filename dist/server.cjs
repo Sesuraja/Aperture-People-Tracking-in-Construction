@@ -1285,6 +1285,39 @@ async function upsertDoc(colName, doc, organizationId) {
             { $set: cleanDoc }
           ).catch(() => {
           });
+          const tagKey = String(cleanDoc.hardhatTagId || cleanDoc.tagId || cleanDoc.TagID || cleanDoc.id || "").toUpperCase().trim();
+          if (tagKey && cleanDoc.name) {
+            const nameToSync = String(cleanDoc.name).trim();
+            const fn = cleanDoc.firstName || nameToSync.split(" ")[0] || "";
+            const ln = cleanDoc.lastName || nameToSync.split(" ").slice(1).join(" ") || "";
+            const tagFilter = {
+              $or: [
+                { TagID: tagKey },
+                { tagId: tagKey },
+                { id: tagKey },
+                { TagID: tagKey.toLowerCase() },
+                { tagId: tagKey.toLowerCase() },
+                { id: tagKey.toLowerCase() }
+              ]
+            };
+            const updatePayload = {
+              $set: {
+                personName: nameToSync,
+                name: nameToSync,
+                FirstName: fn,
+                LastName: ln,
+                role: cleanDoc.role || "Field Personnel",
+                company: cleanDoc.tradeCompany || cleanDoc.company || "Field Team",
+                tradeCompany: cleanDoc.tradeCompany || cleanDoc.company || "Field Team"
+              }
+            };
+            await mongoDb.collection("live_tags").updateMany(tagFilter, updatePayload).catch(() => {
+            });
+            await mongoDb.collection("real_time_tags").updateMany(tagFilter, updatePayload).catch(() => {
+            });
+            invalidateCollectionCache("live_tags");
+            invalidateCollectionCache("real_time_tags");
+          }
         }
       } else {
         const fallbackById = cleanDoc.id ? await mongoDb.collection(colName).findOne({ id: cleanDoc.id }) : null;
@@ -1303,6 +1336,39 @@ async function upsertDoc(colName, doc, organizationId) {
               { $set: cleanDoc }
             ).catch(() => {
             });
+            const tagKey = String(cleanDoc.hardhatTagId || cleanDoc.tagId || cleanDoc.TagID || cleanDoc.id || "").toUpperCase().trim();
+            if (tagKey && cleanDoc.name) {
+              const nameToSync = String(cleanDoc.name).trim();
+              const fn = cleanDoc.firstName || nameToSync.split(" ")[0] || "";
+              const ln = cleanDoc.lastName || nameToSync.split(" ").slice(1).join(" ") || "";
+              const tagFilter = {
+                $or: [
+                  { TagID: tagKey },
+                  { tagId: tagKey },
+                  { id: tagKey },
+                  { TagID: tagKey.toLowerCase() },
+                  { tagId: tagKey.toLowerCase() },
+                  { id: tagKey.toLowerCase() }
+                ]
+              };
+              const updatePayload = {
+                $set: {
+                  personName: nameToSync,
+                  name: nameToSync,
+                  FirstName: fn,
+                  LastName: ln,
+                  role: cleanDoc.role || "Field Personnel",
+                  company: cleanDoc.tradeCompany || cleanDoc.company || "Field Team",
+                  tradeCompany: cleanDoc.tradeCompany || cleanDoc.company || "Field Team"
+                }
+              };
+              await mongoDb.collection("live_tags").updateMany(tagFilter, updatePayload).catch(() => {
+              });
+              await mongoDb.collection("real_time_tags").updateMany(tagFilter, updatePayload).catch(() => {
+              });
+              invalidateCollectionCache("live_tags");
+              invalidateCollectionCache("real_time_tags");
+            }
           }
         } else {
           const insertFilter = { id: cleanDoc.id };
@@ -1317,6 +1383,8 @@ async function upsertDoc(colName, doc, organizationId) {
         }
       }
       invalidateCollectionCache(colName);
+      if (colName === "registered_people") invalidateCollectionCache("people");
+      if (colName === "people") invalidateCollectionCache("registered_people");
       return cleanDoc;
     } catch (err) {
       console.error(`[DB Service] Error upserting doc in ${colName}:`, err);
@@ -2225,12 +2293,13 @@ async function purgeAllDemoAndTestData() {
 }
 function isRealCustomWorker(p) {
   if (!p || typeof p !== "object") return false;
+  if (p.isCustomProfile) return true;
   const name = String(p.name || "").trim();
   const lower = name.toLowerCase();
   if (!name || lower === "john" || lower === "john site lead" || name.startsWith("Personnel ") || name.startsWith("Tag ")) {
     return false;
   }
-  return Boolean(p.isCustomProfile || name && lower !== "john");
+  return Boolean(name && lower !== "john");
 }
 
 // src/server/routes/connections.ts
@@ -6405,22 +6474,32 @@ rfidRouter.get("/history", handleGetHistory);
 var handleGetRealtime = async (req, res) => {
   const orgId = req.user?.organizationId || req.body?.organizationId || req.query.organizationId || "default";
   try {
-    const [peopleList, visitorsList] = await Promise.all([
+    const [registeredList, peopleList, visitorsList] = await Promise.all([
       getCollectionDocs("registered_people", void 0, orgId).catch(() => []),
+      getCollectionDocs("people", void 0, orgId).catch(() => []),
       getCollectionDocs("visitors", void 0, orgId).catch(() => [])
     ]);
     const personMap = /* @__PURE__ */ new Map();
-    peopleList.forEach((p) => {
-      if (p.id) personMap.set(String(p.id).toLowerCase(), p);
-      if (p.hardhatTagId) personMap.set(String(p.hardhatTagId).toLowerCase(), p);
-      if (p.tagId) personMap.set(String(p.tagId).toLowerCase(), p);
-      if (p.TagID) personMap.set(String(p.TagID).toLowerCase(), p);
+    const allWorkforce = [...registeredList || [], ...peopleList || []];
+    allWorkforce.forEach((p) => {
+      if (!p) return;
+      const keys = [p.id, p.hardhatTagId, p.tagId, p.TagID].filter(Boolean);
+      keys.forEach((k) => {
+        const s = String(k).trim();
+        personMap.set(s.toLowerCase(), p);
+        personMap.set(s.toUpperCase(), p);
+        personMap.set(s, p);
+      });
     });
     visitorsList.forEach((v) => {
-      if (v.id) personMap.set(String(v.id).toLowerCase(), v);
-      if (v.badgeId) personMap.set(String(v.badgeId).toLowerCase(), v);
-      if (v.tagId) personMap.set(String(v.tagId).toLowerCase(), v);
-      if (v.TagID) personMap.set(String(v.TagID).toLowerCase(), v);
+      if (!v) return;
+      const keys = [v.id, v.badgeId, v.tagId, v.TagID].filter(Boolean);
+      keys.forEach((k) => {
+        const s = String(k).trim();
+        personMap.set(s.toLowerCase(), v);
+        personMap.set(s.toUpperCase(), v);
+        personMap.set(s, v);
+      });
     });
     let rawTags = [];
     try {
@@ -6440,13 +6519,14 @@ var handleGetRealtime = async (req, res) => {
     }
     const formattedTags = rawTags.map((item) => {
       const ts = item.Timestamp || item.timestamp || item.lastSeen || (/* @__PURE__ */ new Date()).toISOString();
-      const tagKey = String(item.TagID || item.tagId || item.epc || "").toLowerCase();
-      const matched = personMap.get(tagKey);
+      const rawTagStr = String(item.TagID || item.tagId || item.epc || "").trim();
+      const tagKey = rawTagStr.toLowerCase();
+      const matched = personMap.get(tagKey) || personMap.get(rawTagStr) || personMap.get(rawTagStr.toUpperCase());
       let fullName = "";
       let fn = "";
       let ln = "";
-      if (matched?.name && matched.name.trim() && matched.name !== "Personnel" && matched.name !== "Unknown" && matched.name !== "John") {
-        fullName = matched.name.trim();
+      if (matched?.name && String(matched.name).trim() && (matched.isCustomProfile || !matched.name.startsWith("Tag ") && matched.name !== "Unknown")) {
+        fullName = String(matched.name).trim();
         fn = matched.firstName || fullName.split(" ")[0] || "";
         ln = matched.lastName || fullName.split(" ").slice(1).join(" ") || "";
       } else if (matched?.firstName && matched?.lastName) {
@@ -8044,9 +8124,10 @@ var handleCollectionItemUpsert = async (req, res) => {
   if (!isGlobalOrSystemConfig) {
     const existingDoc = await getDocById(collection, id, orgId);
     const allExisting = await getDocById(collection, id, "ALL");
-    const isAdmin = user?.role === "admin" || Boolean(user?.isPlatformAdmin);
+    const isAdmin = user?.role === "admin" || user?.role === "owner" || user?.role === "superadmin" || Boolean(user?.isPlatformAdmin);
     const isBothDefault = (DEFAULT_ORGS.includes(allExisting?.organizationId) || !allExisting?.organizationId) && DEFAULT_ORGS.includes(orgId);
-    if (!isAdmin && allExisting && !existingDoc && !isBothDefault && allExisting.organizationId && allExisting.organizationId !== orgId) {
+    const isDefaultOrGlobalRecord = !allExisting?.organizationId || DEFAULT_ORGS.includes(allExisting?.organizationId);
+    if (!isAdmin && allExisting && !existingDoc && !isBothDefault && !isDefaultOrGlobalRecord && allExisting.organizationId !== orgId) {
       return res.status(404).json({ error: "Document not found or belongs to another organization" });
     }
   }
@@ -8054,9 +8135,12 @@ var handleCollectionItemUpsert = async (req, res) => {
   body.id = id;
   if (collection === "registered_people" || collection === "people") {
     body.isCustomProfile = true;
+    body.tagId = body.tagId || body.hardhatTagId || id;
+    body.hardhatTagId = body.hardhatTagId || body.tagId || id;
     if (body.name) {
-      body.firstName = body.name.trim().split(" ")[0] || body.firstName || "";
-      body.lastName = body.name.trim().split(" ").slice(1).join(" ") || body.lastName || "";
+      body.name = String(body.name).trim();
+      body.firstName = body.name.split(" ")[0] || body.firstName || "";
+      body.lastName = body.name.split(" ").slice(1).join(" ") || body.lastName || "";
     }
   }
   try {
