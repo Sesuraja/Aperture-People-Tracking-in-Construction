@@ -45,6 +45,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { FormattedChatMessage } from './FormattedChatMessage';
 import { useTerminology, useTracking } from '../context/TrackingContext';
 import { gaoApi, HistoryRecord } from '../lib/gaoApi';
 import { exportToCSV, ExportColumn } from '../lib/exportUtils';
@@ -1209,9 +1210,7 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
                     ? 'bg-indigo-600 text-white p-3.5 rounded-2xl rounded-tr-xs text-xs font-medium'
                     : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl rounded-tl-xs text-xs space-y-3 shadow-2xs'
                 }`}>
-                  <div className="whitespace-pre-wrap leading-relaxed font-sans">
-                    {msg.text}
-                  </div>
+                  <FormattedChatMessage text={msg.text} isUser={msg.sender === 'user'} />
 
                   {/* Supporting Metrics Card (if present) */}
                   {msg.supportingMetrics && Object.keys(msg.supportingMetrics).length > 0 && (

@@ -3,7 +3,7 @@ import {
   Search, Radio, Wifi, WifiOff, AlertCircle, RefreshCw, MoreVertical, Plus, X, Save,
   MapPin, Cpu, Video, Eye, CloudSun, Satellite, Sliders, Download, CheckCircle2,
   Zap, Thermometer, Activity, Layers, ShieldCheck, AlertTriangle, Gauge, Terminal,
-  Settings2, Maximize2, ScanEye, Radar, CircleDot, HardDrive, Play, ArrowUpRight,
+  Settings2, Maximize2, CircleDot, HardDrive, Play, ArrowUpRight,
   Clock, Shield, Sparkles, Filter, Check, RotateCcw, Grid, List, Edit3, Trash2,
   Upload, CheckSquare, Square, FileSpreadsheet, SlidersHorizontal, ChevronRight,
   Database, HardHat, Tag, Battery, BatteryCharging, UserCheck
@@ -11,7 +11,6 @@ import {
 import { collection, onSnapshot, doc, setDoc, deleteDoc, updateDoc, db } from '../lib/db';
 import { useNavigate } from 'react-router-dom';
 import webSocketService, { WSConnectionStatus } from '../lib/webSocketService';
-import StreamDiagnostics from './StreamDiagnostics';
 import mqttStreamService, { MqttMetrics } from '../lib/mqttService';
 import { globalSseClient } from '../lib/realtimeClients';
 import { useTerminology, useTracking } from '../context/TrackingContext';
@@ -133,7 +132,7 @@ export default function DevicesTab() {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [activeTab, setActiveTab] = useState<'inventory' | 'heatmap' | 'deadzones' | 'ota' | 'diagnostics' | 'worker_tags'>('inventory');
+  const [activeTab] = useState<'inventory'>('inventory');
 
   // Selection & Batch Operations
   const [selectedDeviceIds, setSelectedDeviceIds] = useState<string[]>([]);
@@ -158,45 +157,27 @@ export default function DevicesTab() {
   const [editForm, setEditForm] = useState<Partial<DeviceItem>>({});
   const [importJsonText, setImportJsonText] = useState('');
 
-  // Diagnostic Scan State
-  const [isScanning, setIsScanning] = useState(false);
-  const [scanResults, setScanResults] = useState<{ totalScanned: number; issuesFound: number; logs: string[] } | null>(null);
-
-  // Sync with MongoDB (devices + hardware_readers + live antenna tags + registered worker RFID tags)
+  // Sync with MongoDB (devices + hardware_readers)
   useEffect(() => {
     setLoading(true);
     let devList: DeviceItem[] = [];
     let hardwareReadersList: DeviceItem[] = [];
-    let liveTagsList: DeviceItem[] = [];
-    let workerTagsList: DeviceItem[] = [];
     let isMounted = true;
 
     const mergeAndSet = () => {
       if (!isMounted) return;
       const devMap = new Map<string, DeviceItem>();
-      // 1. Baseline: Live Active Tag Telemetry
-      liveTagsList.forEach(d => {
-        if (d.id) devMap.set(d.id.toUpperCase(), d);
-      });
-      // 2. Baseline: Worker Wearable RFID Badges
-      workerTagsList.forEach(d => {
-        if (d.id) {
-          const idKey = d.id.toUpperCase();
-          const existing = devMap.get(idKey);
-          devMap.set(idKey, existing ? { ...existing, ...d } : d);
-        }
-      });
-      // 3. Hardware Readers from MongoDB
+      // 1. Hardware Readers from MongoDB
       hardwareReadersList.forEach(d => {
-        if (d.id) {
+        if (d.id && d.category !== 'rfid_tag') {
           const idKey = d.id.toUpperCase();
           const existing = devMap.get(idKey);
           devMap.set(idKey, existing ? { ...existing, ...d, name: d.name || existing.name } : d);
         }
       });
-      // 4. Devices collection from MongoDB (HIGHEST PRIORITY - User configured names always win)
+      // 2. Devices collection from MongoDB (HIGHEST PRIORITY - User configured names always win)
       devList.forEach(d => {
-        if (d.id) {
+        if (d.id && d.category !== 'rfid_tag') {
           const idKey = d.id.toUpperCase();
           const existing = devMap.get(idKey);
           devMap.set(idKey, existing ? { ...existing, ...d, name: d.name || existing.name } : d);
@@ -216,18 +197,15 @@ export default function DevicesTab() {
         if (token) { authHeaders['Authorization'] = `Bearer ${token}`; }
 
         // Fetch devices from MongoDB
-        const [devRes, readerRes, tagRes, regRes, peopleRes] = await Promise.allSettled([
+        const [devRes, readerRes] = await Promise.allSettled([
           fetch('/api/data/devices', { headers: authHeaders }),
-          fetch('/api/data/hardware_readers', { headers: authHeaders }),
-          fetch('/api/GetTagsInRealtime', { headers: authHeaders }),
-          fetch('/api/data/registered_people', { headers: authHeaders }),
-          fetch('/api/data/people', { headers: authHeaders })
+          fetch('/api/data/hardware_readers', { headers: authHeaders })
         ]);
 
         if (devRes.status === 'fulfilled' && devRes.value.ok) {
           const dbDevices = await devRes.value.json();
           if (Array.isArray(dbDevices) && dbDevices.length > 0) {
-            devList = dbDevices.map(d => ({
+            devList = dbDevices.filter((d: any) => d.category !== 'rfid_tag').map(d => ({
               id: d.id,
               name: d.name || 'Unnamed Device',
               category: d.category || 'rfid',
@@ -259,7 +237,7 @@ export default function DevicesTab() {
         if (readerRes.status === 'fulfilled' && readerRes.value.ok) {
           const dbReaders = await readerRes.value.json();
           if (Array.isArray(dbReaders) && dbReaders.length > 0) {
-            hardwareReadersList = dbReaders.map(d => {
+            hardwareReadersList = dbReaders.filter((d: any) => d.category !== 'rfid_tag').map(d => {
               const readerId = d.id || d.readerId || d.serialno || 'portal-reader';
               return {
                 id: readerId,
@@ -285,103 +263,6 @@ export default function DevicesTab() {
                 otaStatus: 'Up to Date',
                 powerSource: 'PoE',
                 notes: d.notes || `Hardware Reader Serial: ${d.serialno || readerId}. Antennas: ${(d.antennas || []).length || 1}.`
-              };
-            });
-          }
-        }
-
-        // Merge Registered Workers as Hardware Wearable RFID Badges
-        const registeredMap = new Map<string, any>();
-        if (regRes.status === 'fulfilled' && regRes.value.ok) {
-          const regArr = await regRes.value.json();
-          if (Array.isArray(regArr)) {
-            regArr.forEach(p => {
-              const tag = (p.hardhatTagId || p.tagId || p.id || '').toUpperCase();
-              if (tag) registeredMap.set(tag, p);
-            });
-          }
-        }
-        if (peopleRes.status === 'fulfilled' && peopleRes.value.ok) {
-          const pArr = await peopleRes.value.json();
-          if (Array.isArray(pArr)) {
-            pArr.forEach(p => {
-              const tag = (p.hardhatTagId || p.tagId || p.id || '').toUpperCase();
-              if (tag && !registeredMap.has(tag)) registeredMap.set(tag, p);
-            });
-          }
-        }
-
-        if (registeredMap.size > 0) {
-          workerTagsList = Array.from(registeredMap.values()).map(p => {
-            const tagId = (p.hardhatTagId || p.tagId || p.id || '').toUpperCase();
-            return {
-              id: tagId,
-              name: `${p.name || personnelSingular} (${idBadgeLabel})`,
-              workerName: p.name || `Active ${personnelSingular}`,
-              workerRole: p.role || p.tradeCompany || roleLabel,
-              ppeStatus: p.ppeStatus || 'COMPLIANT',
-              presenceState: p.presenceState || 'IDLE',
-              battery: p.battery !== undefined ? Number(p.battery) : 88,
-              category: 'rfid_tag' as const,
-              type: `${personnelSingular} Smart Badge / UHF ${idBadgeLabel}`,
-              location: p.currentZone || 'Site Area',
-              zoneId: (p.currentZone || 'zone-a').toLowerCase().replace(/\s+/g, '-'),
-              status: p.shiftStatus === 'OFF_SITE' ? ('offline' as const) : (p.battery !== undefined && Number(p.battery) < 20 ? ('warning' as const) : ('online' as const)),
-              ip: p.tradeCompany || organizationType || 'Operations',
-              mac: tagId,
-              firmware: 'v2.4.0',
-              latestFirmware: 'v2.4.0',
-              signalRssi: p.speed ? -48 : -58,
-              coverageRadiusMeters: 15,
-              temperatureC: 33.2,
-              cpuUsagePct: 6,
-              memoryUsagePct: 15,
-              pingMs: 4,
-              uptime: p.presenceState === 'MOVING' ? 'Active / In Transit' : 'Stationary / Working',
-              lastPing: p.lastSeen ? formatEdtTime(p.lastSeen) : 'Just now',
-              calibrationStatus: 'Calibrated' as const,
-              otaStatus: 'Up to Date' as const,
-              powerSource: 'Li-Ion Battery' as const,
-              notes: `Assigned Personnel: ${p.name || 'Unknown'} | ${roleLabel}: ${p.role || 'Operator'} | ${organizationType}: ${p.tradeCompany || 'Internal'}`
-            };
-          });
-        }
-
-        // Live Real-Time Telemetry UHF Tag Scans
-        if (tagRes.status === 'fulfilled' && tagRes.value.ok) {
-          const rawTags = await tagRes.value.json();
-          if (Array.isArray(rawTags) && rawTags.length > 0) {
-            liveTagsList = rawTags.map(t => {
-              const tagId = (t.TagID || t.tagId || t.id || '').toUpperCase();
-              const matchedWorker = registeredMap.get(tagId);
-              const workerName = t.personName || t.name || (matchedWorker ? matchedWorker.name : `Active Tag (${tagId})`);
-              return {
-                id: tagId,
-                name: `${workerName} (UHF Tag)`,
-                workerName,
-                workerRole: t.role || (matchedWorker ? matchedWorker.role : 'Field Specialist'),
-                category: 'rfid_tag' as const,
-                type: 'UHF RFID Personnel Tag',
-                location: t.LocationName || t.Location || t.zone || 'Site Sector',
-                zoneId: (t.LocationName || t.Location || 'zone-1').toLowerCase().replace(/\s+/g, '-'),
-                status: 'online' as const,
-                ip: t.AntennaID ? `Antenna ${t.AntennaID}` : 'Portal Reader',
-                mac: tagId,
-                firmware: 'v2.4.0',
-                latestFirmware: 'v2.4.0',
-                signalRssi: t.RSSI !== undefined ? Number(t.RSSI) : -55,
-                coverageRadiusMeters: 15,
-                temperatureC: 32,
-                cpuUsagePct: 5,
-                memoryUsagePct: 12,
-                pingMs: 5,
-                uptime: 'Active In Telemetry',
-                lastPing: (t.EnterTime || t.timestamp) ? formatEdtTime(t.EnterTime || t.timestamp) : 'Just now',
-                calibrationStatus: 'Calibrated' as const,
-                otaStatus: 'Up to Date' as const,
-                powerSource: 'Li-Ion Battery' as const,
-                battery: 92,
-                notes: `Live UHF Antenna Telemetry Scan | Reader: Gate Portal`
               };
             });
           }
@@ -472,111 +353,6 @@ export default function DevicesTab() {
       console.warn('hardware_readers listener notice:', err);
     });
 
-    const unsubLiveTags = onSnapshot(collection(db, 'live_tags'), (snapshot) => {
-      liveTagsList = [];
-      snapshot.forEach(d => {
-        const data = d.data();
-        const tagId = (data.TagID || data.tagId || d.id || '').toUpperCase();
-        if (!tagId) return;
-        liveTagsList.push({
-          id: tagId,
-          name: data.name ? `${data.name} (UHF Tag)` : `Active RFID Tag (${tagId})`,
-          workerName: data.name || 'Active Tag',
-          category: 'rfid_tag',
-          type: 'UHF RFID Personnel Tag',
-          location: data.location || data.zone || 'Site Perimeter',
-          zoneId: (data.location || data.zone || 'zone-1').toLowerCase().replace(/\s+/g, '-'),
-          status: 'online',
-          ip: data.antennaId ? `Antenna ${data.antennaId}` : (data.readerId || 'Portal Reader'),
-          mac: tagId,
-          firmware: 'v2.4.0',
-          latestFirmware: 'v2.4.0',
-          signalRssi: data.rssi !== undefined ? Number(data.rssi) : -55,
-          coverageRadiusMeters: 15,
-          temperatureC: 32,
-          cpuUsagePct: 5,
-          memoryUsagePct: 12,
-          pingMs: 5,
-          uptime: 'Active In Telemetry',
-          lastPing: data.timestamp ? formatEdtTime(data.timestamp) : 'Just now',
-          calibrationStatus: 'Calibrated',
-          otaStatus: 'Up to Date',
-          powerSource: 'Li-Ion Battery',
-          notes: `Telemetry Source: ${data.source || 'GAO Cloud Stream'} | Reader: ${data.readerId || 'Portal'}`
-        });
-      });
-      mergeAndSet();
-    }, (err) => {
-      console.warn('live_tags listener notice:', err);
-    });
-
-    let regPeopleMap = new Map<string, any>();
-    let peopleMap = new Map<string, any>();
-
-    const updateWorkerTags = () => {
-      const mergedMap = new Map<string, any>();
-      regPeopleMap.forEach((v, k) => mergedMap.set(k, v));
-      peopleMap.forEach((v, k) => {
-        if (!mergedMap.has(k)) mergedMap.set(k, v);
-      });
-
-      workerTagsList = [];
-      mergedMap.forEach((p, dId) => {
-        const tagId = (p.hardhatTagId || p.tagId || dId || p.id || '').toUpperCase();
-        workerTagsList.push({
-          id: tagId,
-          name: `${p.name || personnelSingular} (${idBadgeLabel})`,
-          workerName: p.name || `Active ${personnelSingular}`,
-          workerRole: p.role || p.tradeCompany || roleLabel,
-          ppeStatus: p.ppeStatus || 'COMPLIANT',
-          presenceState: p.presenceState || 'IDLE',
-          battery: p.battery !== undefined ? Number(p.battery) : 88,
-          category: 'rfid_tag',
-          type: `${personnelSingular} Smart Badge / UHF ${idBadgeLabel}`,
-          location: p.currentZone || 'Site Area',
-          zoneId: (p.currentZone || 'zone-a').toLowerCase().replace(/\s+/g, '-'),
-          status: p.shiftStatus === 'OFF_SITE' ? 'offline' : (p.battery !== undefined && Number(p.battery) < 20 ? 'warning' : 'online'),
-          ip: p.tradeCompany || organizationType || 'Operations',
-          mac: tagId,
-          firmware: 'v2.4.0',
-          latestFirmware: 'v2.4.0',
-          signalRssi: p.speed ? -48 : -58,
-          coverageRadiusMeters: 15,
-          temperatureC: 33.2,
-          cpuUsagePct: 6,
-          memoryUsagePct: 15,
-          pingMs: 4,
-          uptime: p.presenceState === 'MOVING' ? 'Active / In Transit' : 'Stationary / Working',
-          lastPing: p.lastSeen ? formatEdtTime(p.lastSeen) : 'Just now',
-          calibrationStatus: 'Calibrated',
-          otaStatus: 'Up to Date',
-          powerSource: 'Li-Ion Battery',
-          notes: `Assigned Personnel: ${p.name || 'Unknown'} | ${roleLabel}: ${p.role || 'Operator'} | ${organizationType}: ${p.tradeCompany || 'Internal'}`
-        });
-      });
-      mergeAndSet();
-    };
-
-    const unsubRegPeople = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
-      regPeopleMap = new Map();
-      snapshot.forEach(d => {
-        regPeopleMap.set(d.id, { id: d.id, ...d.data() });
-      });
-      updateWorkerTags();
-    }, (err) => {
-      console.warn('MongoDB registered_people tag listener error:', err);
-    });
-
-    const unsubPeople = onSnapshot(collection(db, 'people'), (snapshot) => {
-      peopleMap = new Map();
-      snapshot.forEach(d => {
-        peopleMap.set(d.id, { id: d.id, ...d.data() });
-      });
-      updateWorkerTags();
-    }, (err) => {
-      console.warn('MongoDB people tag listener error:', err);
-    });
-
     return () => {
       isMounted = false;
       clearInterval(interval);
@@ -585,108 +361,13 @@ export default function DevicesTab() {
       window.removeEventListener('gao_data_updated', fetchDirectFromApi);
       unsubDevices();
       unsubHwReaders();
-      unsubLiveTags();
-      unsubRegPeople();
-      unsubPeople();
     };
   }, []);
 
-  // Compute reactive worker badge devices from TrackingContext / MongoDB
-  const workerBadgeDevices: DeviceItem[] = useMemo(() => {
-    if (!people || people.length === 0) return [];
-    return people.map(p => {
-      const tagId = (p.hardhatTagId || p.tagId || p.id || '').toUpperCase();
-      const workerFullName = p.name || `${(p as any).firstName || ''} ${(p as any).lastName || ''}`.trim() || 'Active Personnel';
-      return {
-        id: tagId || `TAG-${p.id}`,
-        name: `${workerFullName} (${idBadgeLabel})`,
-        workerName: workerFullName,
-        workerRole: p.role || p.tradeCompany || roleLabel,
-        ppeStatus: p.ppeStatus || 'COMPLIANT',
-        presenceState: p.presenceState || 'IDLE',
-        battery: (p as any).battery !== undefined ? Number((p as any).battery) : 88,
-        category: 'rfid_tag' as const,
-        type: `${personnelSingular} Smart Badge / UHF ${idBadgeLabel}`,
-        location: p.currentZone || (p as any).location || 'Site Area',
-        zoneId: (p.currentZone || (p as any).location || 'zone-a').toLowerCase().replace(/\s+/g, '-'),
-        status: p.shiftStatus === 'OFF_SITE' ? ('offline' as const) : ((p as any).battery !== undefined && Number((p as any).battery) < 20 ? ('warning' as const) : ('online' as const)),
-        ip: p.tradeCompany || organizationType || 'Operations',
-        mac: tagId,
-        firmware: 'v2.4.0',
-        latestFirmware: 'v2.4.0',
-        signalRssi: (p as any).speed ? -48 : -58,
-        coverageRadiusMeters: 15,
-        temperatureC: 33.2,
-        cpuUsagePct: 6,
-        memoryUsagePct: 15,
-        pingMs: 4,
-        uptime: p.presenceState === 'MOVING' ? 'Active / In Transit' : 'Stationary / Working',
-        lastPing: p.lastSeen ? formatEdtTime(p.lastSeen) : 'Just now',
-        calibrationStatus: 'Calibrated' as const,
-        otaStatus: 'Up to Date' as const,
-        powerSource: 'Li-Ion Battery' as const,
-        notes: `Assigned Personnel: ${workerFullName} | ${roleLabel}: ${p.role || 'Operator'} | ${organizationType}: ${p.tradeCompany || 'Internal'}`
-      };
-    });
-  }, [people, personnelSingular, idBadgeLabel, roleLabel, organizationType]);
-
-  // Compute reactive real-time antenna scans from live UHF stream
-  const liveTagDevices: DeviceItem[] = useMemo(() => {
-    if (!liveTags || liveTags.length === 0) return [];
-    return liveTags.map(t => {
-      const tagId = (t.TagID || (t as any).tagId || (t as any).id || '').toUpperCase();
-      const workerFullName = (t as any).name || (t as any).personName || `${t.FirstName || ''} ${t.LastName || ''}`.trim() || `Active Tag (${tagId})`;
-      return {
-        id: tagId,
-        name: `${workerFullName} (UHF Tag)`,
-        workerName: workerFullName,
-        workerRole: (t as any).role || 'Field Specialist',
-        category: 'rfid_tag' as const,
-        type: 'UHF RFID Personnel Tag',
-        location: t.LocationName || t.Location || (t as any).zone || 'Site Sector',
-        zoneId: (t.LocationName || t.Location || 'zone-1').toLowerCase().replace(/\s+/g, '-'),
-        status: 'online' as const,
-        ip: t.AntennaID ? `Antenna ${t.AntennaID}` : 'Portal Reader',
-        mac: tagId,
-        firmware: 'v2.4.0',
-        latestFirmware: 'v2.4.0',
-        signalRssi: t.RSSI !== undefined ? Number(t.RSSI) : -55,
-        coverageRadiusMeters: 15,
-        temperatureC: 32,
-        cpuUsagePct: 5,
-        memoryUsagePct: 12,
-        pingMs: 5,
-        uptime: 'Active In Telemetry',
-        lastPing: (t.EnterTime || t.Timestamp) ? formatEdtTime(t.EnterTime || t.Timestamp) : 'Just now',
-        calibrationStatus: 'Calibrated' as const,
-        otaStatus: 'Up to Date' as const,
-        powerSource: 'Li-Ion Battery' as const,
-        battery: 92,
-        notes: `Live UHF Antenna Telemetry Scan | Reader: Gate Portal`
-      };
-    });
-  }, [liveTags]);
-
-  // Combined master list of Hardware Readers + Worker RFID Badges + Real-time Tags
+  // Master list of Hardware Readers & Infrastructure Gateways (wearable tags excluded)
   const allDevices: DeviceItem[] = useMemo(() => {
-    const devMap = new Map<string, DeviceItem>();
-    // 1. Live Active Tag Telemetry (baseline)
-    liveTagDevices.forEach(d => {
-      if (d.id) devMap.set(d.id.toUpperCase(), d);
-    });
-    // 2. Worker Wearable RFID Tags & Badges
-    workerBadgeDevices.forEach(d => {
-      if (d.id) devMap.set(d.id.toUpperCase(), d);
-    });
-    // 3. User configured & edited Hardware Readers and Devices in MongoDB (highest priority)
-    devices.forEach(d => {
-      if (d.id) {
-        const existing = devMap.get(d.id.toUpperCase());
-        devMap.set(d.id.toUpperCase(), existing ? { ...existing, ...d } : d);
-      }
-    });
-    return Array.from(devMap.values());
-  }, [devices, workerBadgeDevices, liveTagDevices]);
+    return devices.filter(d => d && d.category !== 'rfid_tag');
+  }, [devices]);
 
   // Filtered Devices
   const filteredDevices = useMemo(() => {
@@ -1179,32 +860,6 @@ export default function DevicesTab() {
     }
   };
 
-  // Run Site Diagnostic Scan
-  const handleRunDiagnosticScan = async () => {
-    setIsScanning(true);
-    setScanResults(null);
-    const logs: string[] = ['Initiating full site-wide hardware telemetry scan...', 'Checking Ethernet socket interfaces & IP connectivity...'];
-
-    setTimeout(() => {
-      logs.push('Verifying LoRaWAN & RFID gateway socket link noise floors...');
-
-      setTimeout(async () => {
-        let issues = 0;
-        for (const dev of devices) {
-          if (dev.status === 'critical' || dev.signalRssi < -85 || dev.temperatureC > 48) {
-            issues++;
-            logs.push(`⚠️ Anomaly detected on [${dev.id}]: RSSI ${dev.signalRssi}dBm | Temp ${dev.temperatureC}°C`);
-          } else {
-            logs.push(`✅ Hardware [${dev.id}] passed diagnostic response ping (${dev.pingMs}ms)`);
-          }
-        }
-
-        logs.push(`Scan Complete. Total Hardware Scanned: ${devices.length} | Issues Flagged: ${issues}`);
-        setScanResults({ totalScanned: devices.length, issuesFound: issues, logs });
-        setIsScanning(false);
-      }, 1200);
-    }, 1000);
-  };
 
   // Handle Terminal CLI command execution
   const handleExecuteTerminalCmd = (e: React.FormEvent) => {
@@ -1319,7 +974,7 @@ export default function DevicesTab() {
             </div>
           </div>
           <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-0.5">
-            Real-time telemetry, firmware, health diagnostics, coverage heatmaps & dead zone detection with end-to-end MongoDB database sync
+            Real-time hardware telemetry, reader inventory and operational health monitoring with end-to-end MongoDB database sync
           </p>
         </div>
 
@@ -1498,69 +1153,50 @@ export default function DevicesTab() {
         </div>
       </div>
 
-      {/* 3. MAIN TAB NAVIGATION STRIP & CONTROLS */}
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-2 shadow-sm">
-        <div className="flex items-center gap-1.5 w-full sm:w-auto overflow-x-auto">
-          {[
-            { id: 'inventory', label: 'Device Inventory & Health', icon: Cpu },
-            { id: 'worker_tags', label: `${personnelSingular} Wearable ${idBadgeLabel}s`, icon: HardHat },
-            { id: 'heatmap', label: 'Coverage Heatmap', icon: Radar },
-            { id: 'deadzones', label: 'Dead Zone Analyzer', icon: ScanEye },
-            { id: 'ota', label: 'Mass OTA Firmware Hub', icon: Zap },
-            { id: 'diagnostics', label: 'System Diagnostics', icon: Activity }
-          ].map(tab => {
-            const Icon = tab.icon;
-            const active = activeTab === tab.id;
-            return (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id as any)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-2 whitespace-nowrap ${active
-                    ? 'bg-[#007BC4] text-white shadow-sm'
-                    : 'text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'
-                  }`}
-              >
-                <Icon size={14} />
-                {tab.label}
-              </button>
-            );
-          })}
+      {/* 3. DEVICE INVENTORY CONTROLS & SEARCH BAR */}
+      <div className="flex flex-col sm:flex-row items-center justify-between gap-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-3 shadow-sm">
+        <div className="flex items-center gap-2.5 px-2">
+          <div className="w-8 h-8 rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 flex items-center justify-center text-[#007BC4]">
+            <Cpu size={16} />
+          </div>
+          <div>
+            <h3 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">Device Inventory & Health</h3>
+            <p className="text-[11px] text-slate-500 font-medium">Hardware readers, gateways & infrastructure telemetry</p>
+          </div>
         </div>
 
         {/* View Mode & Search Bar */}
-        {activeTab === 'inventory' && (
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            {/* View Switcher */}
-            <div className="flex items-center bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
-              <button
-                onClick={() => setViewMode('table')}
-                className={`p-1.5 rounded-lg transition ${viewMode === 'table' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow-sm' : 'text-slate-400'}`}
-                title="Table View"
-              >
-                <List size={14} />
-              </button>
-              <button
-                onClick={() => setViewMode('grid')}
-                className={`p-1.5 rounded-lg transition ${viewMode === 'grid' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow-sm' : 'text-slate-400'}`}
-                title="Grid Card View"
-              >
-                <Grid size={14} />
-              </button>
-            </div>
-
-            {/* Search */}
-            <div className="relative flex-1 sm:w-60">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
-              <input
-                type="text"
-                placeholder="Search IP, MAC, Name, Zone..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs outline-none focus:ring-1 focus:ring-[#007BC4]"
-              />
-            </div>
+        <div className="flex items-center gap-2 w-full sm:w-auto">
+          {/* View Switcher */}
+          <div className="flex items-center bg-slate-100 dark:bg-slate-900 p-1 rounded-xl border border-slate-200 dark:border-slate-700">
+            <button
+              onClick={() => setViewMode('table')}
+              className={`p-1.5 rounded-lg transition cursor-pointer ${viewMode === 'table' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow-sm' : 'text-slate-400'}`}
+              title="Table View"
+            >
+              <List size={14} />
+            </button>
+            <button
+              onClick={() => setViewMode('grid')}
+              className={`p-1.5 rounded-lg transition cursor-pointer ${viewMode === 'grid' ? 'bg-white dark:bg-slate-800 text-[#007BC4] shadow-sm' : 'text-slate-400'}`}
+              title="Grid Card View"
+            >
+              <Grid size={14} />
+            </button>
           </div>
-        )}
+
+          {/* Search */}
+          <div className="relative flex-1 sm:w-64">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
+            <input
+              type="text"
+              placeholder="Search IP, MAC, Name, Zone..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full pl-9 pr-3 py-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl text-xs outline-none focus:ring-1 focus:ring-[#007BC4]"
+            />
+          </div>
+        </div>
       </div>
 
       {/* 4. TAB CONTENT AREAS */}
@@ -1577,9 +1213,9 @@ export default function DevicesTab() {
               </span>
               {[
                 { id: 'all', label: 'All Hardware' },
-                { id: 'rfid_tag', label: `${personnelSingular} ${idBadgeLabel}s` },
                 { id: 'rfid', label: 'RFID Readers' },
-                { id: 'ble', label: 'Fixed Gateways' }
+                { id: 'ble', label: 'Fixed Gateways' },
+                { id: 'iot', label: 'IoT Sensors' }
               ].map(cat => (
                 <button
                   key={cat.id}
@@ -1941,504 +1577,6 @@ export default function DevicesTab() {
             </div>
           )}
 
-        </div>
-      )}
-
-      {/* --- TAB: WORKER WEARABLE RFID / BLE BADGES --- */}
-      {activeTab === 'worker_tags' && (
-        <div className="space-y-6 animate-in fade-in duration-300">
-          {/* Worker Badges Key Metrics */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-3.5 shadow-sm">
-              <div className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5">
-                <HardHat size={13} className="text-amber-500" /> Active {personnelSingular} Badges
-              </div>
-              <div className="text-2xl font-black text-slate-900 dark:text-white mt-1">
-                {allDevices.filter(d => d.category === 'rfid_tag').length}
-              </div>
-              <div className="text-[10px] font-semibold text-emerald-600 mt-0.5">Assigned to Personnel</div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-3.5 shadow-sm">
-              <div className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5">
-                <Radio size={13} className="text-blue-500" /> Transmitting Link
-              </div>
-              <div className="text-2xl font-black text-blue-600 dark:text-blue-400 mt-1">
-                {allDevices.filter(d => d.category === 'rfid_tag' && d.status === 'online').length}
-              </div>
-              <div className="text-[10px] font-semibold text-slate-500 mt-0.5">Online Real-time Telemetry</div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-3.5 shadow-sm">
-              <div className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5">
-                <Battery size={13} className="text-rose-500" /> Low Battery (&lt;25%)
-              </div>
-              <div className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
-                {allDevices.filter(d => d.category === 'rfid_tag' && (d.battery || 100) < 25).length}
-              </div>
-              <div className="text-[10px] font-semibold text-rose-500 mt-0.5">Requires Recharge</div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-3.5 shadow-sm">
-              <div className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5">
-                <ShieldCheck size={13} className="text-emerald-500" /> PPE Compliant
-              </div>
-              <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400 mt-1">
-                {allDevices.filter(d => d.category === 'rfid_tag' && d.ppeStatus !== 'NON_COMPLIANT').length}
-              </div>
-              <div className="text-[10px] font-semibold text-emerald-600 mt-0.5">Safety Gear Verified</div>
-            </div>
-          </div>
-
-          {/* Search and Worker Filter */}
-          <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-[240px] max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-3.5 h-3.5" />
-              <input
-                type="text"
-                placeholder="Search by Worker Name, Tag ID, Trade, Zone..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="w-full pl-9 pr-3 py-2 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs font-semibold outline-none focus:ring-1 focus:ring-[#007BC4]"
-              />
-            </div>
-
-            <div className="text-xs font-bold text-slate-500">
-              Showing <span className="text-slate-900 dark:text-white font-black">{allDevices.filter(d => d.category === 'rfid_tag').length}</span> Worker Wearable RFID / BLE Badges
-            </div>
-          </div>
-
-          {/* Worker Badges Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {allDevices.filter(d => {
-              if (d.category !== 'rfid_tag') return false;
-              if (!searchTerm) return true;
-              const s = searchTerm.toLowerCase();
-              return (d.name || '').toLowerCase().includes(s) ||
-                     (d.id || '').toLowerCase().includes(s) ||
-                     (d.workerName || '').toLowerCase().includes(s) ||
-                     (d.workerRole || '').toLowerCase().includes(s) ||
-                     (d.location || '').toLowerCase().includes(s);
-            }).map((device) => {
-              const battery = device.battery !== undefined ? device.battery : 85;
-              const isLowBatt = battery < 25;
-              return (
-                <div
-                  key={device.id}
-                  className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm hover:shadow-md transition flex flex-col justify-between space-y-3"
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 flex items-center justify-center text-amber-700 dark:text-amber-300 font-bold shrink-0 shadow-sm">
-                        <HardHat size={20} />
-                      </div>
-                      <div>
-                        <div className="font-extrabold text-slate-900 dark:text-white text-sm">
-                          {device.workerName || device.name}
-                        </div>
-                        <div className="text-[11px] font-bold text-[#007BC4]">
-                          {device.workerRole || 'Personnel'}
-                        </div>
-                      </div>
-                    </div>
-
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-slate-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300">
-                      {device.id}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2 py-2 border-y border-slate-100 dark:border-slate-700/60 text-xs">
-                    <div className="flex items-center justify-between text-slate-500">
-                      <span className="flex items-center gap-1"><MapPin size={12} className="text-rose-500" /> Current Zone</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{device.location}</span>
-                    </div>
-
-                    <div className="flex items-center justify-between text-slate-500">
-                      <span className="flex items-center gap-1"><Radio size={12} className="text-blue-500" /> Signal Power</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{device.signalRssi} dBm (Good)</span>
-                    </div>
-
-                    <div className="flex items-center justify-between text-slate-500">
-                      <span className="flex items-center gap-1"><Battery size={12} className={isLowBatt ? 'text-rose-500' : 'text-emerald-500'} /> Battery Level</span>
-                      <div className="flex items-center gap-1.5">
-                        <div className="w-16 bg-slate-100 dark:bg-slate-700 h-2 rounded-full overflow-hidden">
-                          <div
-                            className={`h-full ${isLowBatt ? 'bg-rose-500' : 'bg-emerald-500'}`}
-                            style={{ width: `${battery}%` }}
-                          />
-                        </div>
-                        <span className={`font-bold ${isLowBatt ? 'text-rose-600' : 'text-emerald-600'}`}>{battery}%</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-between text-slate-500">
-                      <span className="flex items-center gap-1"><ShieldCheck size={12} className="text-emerald-500" /> Safety Status</span>
-                      <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${
-                        device.ppeStatus === 'NON_COMPLIANT' 
-                          ? 'bg-rose-100 text-rose-800' 
-                          : 'bg-emerald-100 text-emerald-800'
-                      }`}>
-                        {device.ppeStatus || 'COMPLIANT'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-1">
-                    <span className="text-[10px] text-slate-400 font-mono">
-                      Last Seen: {device.lastPing}
-                    </span>
-
-                    <button
-                      onClick={() => handleQuickPing(device)}
-                      className="px-3 py-1.5 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 text-[#007BC4] rounded-lg text-xs font-bold transition flex items-center gap-1 cursor-pointer"
-                    >
-                      <Activity size={12} /> Ping Tag
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* --- TAB B: SIGNAL COVERAGE HEATMAP & RADIUS TUNER --- */}
-      {activeTab === 'heatmap' && (
-        <div className="space-y-4">
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Radar className="w-5 h-5 text-[#007BC4]" /> Interactive Signal Coverage & Radius Tuner
-                </h3>
-                <p className="text-xs text-slate-500">Visual spatial overlay of RFID, BLE, GPS and Vision sensor radii. Click any device to tune coverage radius.</p>
-              </div>
-
-              <div className="flex items-center gap-3 text-xs font-bold">
-                <span className="flex items-center gap-1.5 text-emerald-600">
-                  <span className="w-3 h-3 rounded-full bg-emerald-500/40 border border-emerald-500" /> Strong (&gt; -65 dBm)
-                </span>
-                <span className="flex items-center gap-1.5 text-amber-600">
-                  <span className="w-3 h-3 rounded-full bg-amber-500/40 border border-amber-500" /> Moderate (-65 to -85 dBm)
-                </span>
-                <span className="flex items-center gap-1.5 text-rose-600">
-                  <span className="w-3 h-3 rounded-full bg-rose-500/40 border border-rose-500" /> Weak / Fringe (&lt; -85 dBm)
-                </span>
-              </div>
-            </div>
-
-            {/* Spatial Canvas Map Representation */}
-            <div className="relative w-full h-[450px] bg-slate-950 rounded-2xl overflow-hidden border border-slate-800 p-4 flex flex-col justify-between select-none">
-
-              {/* Background Grid Lines */}
-              <div className="absolute inset-0 bg-[radial-gradient(#334155_1px,transparent_1px)] [background-size:20px_20px] opacity-40" />
-
-              {/* Floor Plan Zone Labels */}
-              <div className="relative z-10 grid grid-cols-3 gap-4 pointer-events-none">
-                <div className="border border-slate-800 rounded-xl p-2.5 bg-slate-900/60">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Zone A: Main Entrance Turnstile</span>
-                </div>
-                <div className="border border-slate-800 rounded-xl p-2.5 bg-slate-900/60">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Zone B: Tower Shaft & Scaffold</span>
-                </div>
-                <div className="border border-slate-800 rounded-xl p-2.5 bg-slate-900/60">
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">Zone C: Sub-Basement Trenches</span>
-                </div>
-              </div>
-
-              {/* Dynamic Coverage Bubble Nodes */}
-              <div className="absolute inset-0 p-8 flex items-center justify-around flex-wrap gap-8 z-20 pointer-events-auto">
-                {devices.map((dev) => {
-                  const isWeak = dev.signalRssi < -80;
-                  const isSelectedForTuning = selectedDevice?.id === dev.id;
-                  return (
-                    <div
-                      key={dev.id}
-                      onClick={() => setSelectedDevice(dev)}
-                      className="relative group cursor-pointer"
-                    >
-                      {/* Pulse Radius Bubble */}
-                      <div
-                        className={`absolute -inset-8 rounded-full animate-ping opacity-20 ${isWeak ? 'bg-rose-500' : 'bg-[#007BC4]'
-                          }`}
-                        style={{ width: `${Math.max(40, dev.coverageRadiusMeters * 2.5)}px`, height: `${Math.max(40, dev.coverageRadiusMeters * 2.5)}px` }}
-                      />
-                      <div
-                        className={`absolute rounded-full border-2 transition-all ${isSelectedForTuning
-                            ? 'border-yellow-400 bg-yellow-400/20 ring-4 ring-yellow-400/30'
-                            : isWeak
-                              ? 'border-rose-500/50 bg-rose-500/10'
-                              : 'border-emerald-500/50 bg-emerald-500/10'
-                          }`}
-                        style={{
-                          width: `${Math.max(48, dev.coverageRadiusMeters * 2.8)}px`,
-                          height: `${Math.max(48, dev.coverageRadiusMeters * 2.8)}px`,
-                          top: '50%',
-                          left: '50%',
-                          transform: 'translate(-50%, -50%)'
-                        }}
-                      />
-
-                      {/* Hardware Node Center */}
-                      <div className={`relative p-3 rounded-full border-2 shadow-xl text-white flex items-center justify-center transition ${isSelectedForTuning ? 'bg-blue-600 border-yellow-300 scale-110' : 'bg-slate-900 border-white'}`}>
-                        <Radio size={18} className={isWeak ? 'text-rose-400 animate-pulse' : 'text-emerald-400'} />
-                      </div>
-
-                      {/* Tooltip Hover Box */}
-                      <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 hidden group-hover:block w-52 bg-slate-900 border border-slate-700 p-2.5 rounded-xl text-[11px] shadow-2xl z-30 pointer-events-none">
-                        <strong className="text-white block truncate">{dev.name}</strong>
-                        <div className="text-slate-400 font-mono text-[10px]">{dev.ip} • Radius: {dev.coverageRadiusMeters}m</div>
-                        <div className="flex justify-between items-center mt-1 pt-1 border-t border-slate-800">
-                          <span className="text-slate-300">RSSI:</span>
-                          <span className={`font-bold font-mono ${isWeak ? 'text-rose-400' : 'text-emerald-400'}`}>
-                            {dev.signalRssi} dBm
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Radius Tuner Footer Controls (If a device is selected) */}
-              <div className="relative z-10 bg-slate-900/90 backdrop-blur p-3 rounded-xl border border-slate-800 text-xs text-slate-300 flex flex-col sm:flex-row items-center justify-between gap-3">
-                {selectedDevice ? (
-                  <div className="flex items-center gap-4 w-full justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-white">{selectedDevice.name}</span>
-                      <span className="text-slate-500 font-mono">({selectedDevice.id})</span>
-                    </div>
-
-                    <div className="flex items-center gap-3">
-                      <span className="text-slate-400 font-bold">Coverage Radius:</span>
-                      <input
-                        type="range"
-                        min="5"
-                        max="200"
-                        value={selectedDevice.coverageRadiusMeters}
-                        onChange={async (e) => {
-                          const val = Number(e.target.value);
-                          const updated = { ...selectedDevice, coverageRadiusMeters: val };
-                          setSelectedDevice(updated);
-                          await saveDeviceToMongo(updated);
-                        }}
-                        className="w-32 accent-[#007BC4]"
-                      />
-                      <span className="font-mono font-bold text-emerald-400">{selectedDevice.coverageRadiusMeters}m</span>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="flex justify-between items-center w-full">
-                    <span>Active Antenna Fabric: <strong className="text-emerald-400">{devices.length} Devices Broadcasting</strong></span>
-                    <span>Click any node to tune coverage radius & save to MongoDB</span>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- TAB C: DEAD ZONE ANALYZER --- */}
-      {activeTab === 'deadzones' && (
-        <div className="space-y-4">
-          <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-
-            <div className="lg:col-span-8 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    <ScanEye className="w-5 h-5 text-rose-500" /> Site Unmonitored Dead Zone Detection Radar
-                  </h3>
-                  <p className="text-xs text-slate-500">Automated spatial analysis identifying unmonitored blindspots & signal gaps</p>
-                </div>
-
-                <span className="px-2.5 py-1 rounded-full bg-rose-50 text-rose-700 border border-rose-200 text-xs font-bold">
-                  2 Dead Zones Identified
-                </span>
-              </div>
-
-              {/* List of Detected Deadzones */}
-              <div className="space-y-3">
-                <div className="p-4 bg-rose-50/50 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <strong className="text-rose-900 dark:text-rose-300 text-sm font-bold flex items-center gap-2">
-                      <AlertTriangle size={16} className="text-rose-600" /> Sector B2 Deep Shaft (Sub-Basement B2)
-                    </strong>
-                    <span className="text-xs font-mono font-bold text-rose-700">Area: ~34 m² Blindspot</span>
-                  </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-300">
-                    High concrete density attenuates gateway GW-RDR-03 signal. Workers entering B2 pit lose active tag tracking for over 12 minutes.
-                  </p>
-                  <div className="pt-2 border-t border-rose-200/60 dark:border-rose-900/40 flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
-                    <span>💡 Recommended Remedy: Install 1x UHF Repeater Gateway at Scaffold Joint #14</span>
-                    <button
-                      onClick={() => {
-                        setEditForm({
-                          id: `GW-UHF-B2-${Math.floor(100 + Math.random() * 900)}`,
-                          name: 'Sub-Basement B2 Scaffold UHF Gateway',
-                          category: 'rfid',
-                          type: 'UHF Fixed Portal',
-                          location: 'Sub-Basement B2 Pit',
-                          ip: '192.168.10.125',
-                          status: 'online',
-                          signalRssi: -45,
-                          coverageRadiusMeters: 30
-                        });
-                        setActionModalType('add');
-                      }}
-                      className="px-3 py-1 bg-rose-600 text-white rounded-lg hover:bg-rose-700 transition"
-                    >
-                      Provision Gateway
-                    </button>
-                  </div>
-                </div>
-
-                <div className="p-4 bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-xl space-y-2">
-                  <div className="flex items-center justify-between">
-                    <strong className="text-amber-900 dark:text-amber-300 text-sm font-bold flex items-center gap-2">
-                      <AlertCircle size={16} className="text-amber-600" /> Northwest Laydown Yard Crane Blindspot
-                    </strong>
-                    <span className="text-xs font-mono font-bold text-amber-700">Area: ~18 m² Fringe</span>
-                  </div>
-                  <p className="text-xs text-slate-600 dark:text-slate-300">
-                    Steel beam storage piles create multipath interference for RFID Reader RDR-FX9600-01.
-                  </p>
-                  <div className="pt-2 border-t border-amber-200/60 dark:border-amber-900/40 flex items-center justify-between text-xs font-bold text-slate-800 dark:text-slate-200">
-                    <span>💡 Recommended Remedy: Recalibrate antenna gain +3dB or re-orient patch antenna</span>
-                    <button
-                      onClick={() => handleTriggerCalibration(devices[0])}
-                      className="px-3 py-1 bg-amber-600 text-white rounded-lg hover:bg-amber-700 transition"
-                    >
-                      Auto-Calibrate Gain
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Coverage Optimization Summary Panel */}
-            <div className="lg:col-span-4 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm space-y-4">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">Coverage Optimization Score</h4>
-              <div className="text-center p-4 bg-slate-50 dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-700">
-                <div className="text-4xl font-black text-[#007BC4]">94.2%</div>
-                <div className="text-xs text-slate-500 mt-1 font-bold">Site Spatial Visibility Index</div>
-              </div>
-
-              <div className="space-y-2 text-xs font-medium">
-                <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-900">
-                  <span>Monitored Jobsite Area:</span>
-                  <strong className="font-mono">14,200 m²</strong>
-                </div>
-                <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-900">
-                  <span>Unmonitored Gaps:</span>
-                  <strong className="font-mono text-rose-600">52 m² (0.36%)</strong>
-                </div>
-                <div className="flex justify-between p-2 rounded bg-slate-50 dark:bg-slate-900">
-                  <span>Hardware Density:</span>
-                  <strong className="font-mono">1 dev per 1,775 m²</strong>
-                </div>
-              </div>
-            </div>
-
-          </div>
-        </div>
-      )}
-
-      {/* --- TAB D: MASS OTA FIRMWARE HUB --- */}
-      {activeTab === 'ota' && (
-        <div className="space-y-4">
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Zap className="w-5 h-5 text-purple-600" /> Over-The-Air (OTA) Firmware Management Hub
-                </h3>
-                <p className="text-xs text-slate-500">Deploy encrypted binary updates across all site RFID, BLE and IoT hardware into MongoDB</p>
-              </div>
-
-              <button
-                onClick={async () => {
-                  for (const dev of devices) {
-                    if (dev.otaStatus === 'Update Available') {
-                      await saveDeviceToMongo({
-                        ...dev,
-                        firmware: dev.latestFirmware,
-                        otaStatus: 'Up to Date',
-                        status: 'online'
-                      });
-                    }
-                  }
-                  alert('Mass OTA Firmware upgrade completed for all eligible devices in MongoDB!');
-                }}
-                className="px-4 py-2 bg-purple-600 text-white rounded-xl text-xs font-bold hover:bg-purple-700 transition flex items-center gap-1.5"
-              >
-                <Zap size={14} /> Deploy All Pending Updates ({metrics.otaPending})
-              </button>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Current Fleet Firmware</span>
-                <div className="text-xl font-bold font-mono text-slate-800 dark:text-slate-200">v3.8.2 / v2.1.0</div>
-                <div className="text-xs text-emerald-600 font-semibold">{devices.length - metrics.otaPending} of {devices.length} devices up-to-date</div>
-              </div>
-
-              <div className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Available OTA Releases</span>
-                <div className="text-xl font-bold font-mono text-purple-600">v2.2.1 / v3.8.2 Stable</div>
-                <div className="text-xs text-slate-500">Fixes BLE AoA packet latency & battery sleep</div>
-              </div>
-
-              <div className="p-4 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl space-y-1">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Security Checksum</span>
-                <div className="text-xs font-mono font-bold text-slate-700 dark:text-slate-300 truncate">SHA256: e3b0c44298fc1c149afbf4c8996fb924</div>
-                <div className="text-xs text-emerald-600 font-bold flex items-center gap-1">
-                  <ShieldCheck size={12} /> Digitally Signed by GAO Security
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* --- TAB E: SYSTEM DIAGNOSTICS & TELEMETRY SCANNER --- */}
-      {activeTab === 'diagnostics' && (
-        <div className="space-y-6">
-          <StreamDiagnostics />
-
-          <div className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-4 shadow-sm space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                  <Activity className="w-5 h-5 text-[#007BC4]" /> Site Hardware Diagnostic & Telemetry Scanner
-                </h3>
-                <p className="text-xs text-slate-500">Perform real-time socket checks, ICMP latency tests and antenna gain diagnostics</p>
-              </div>
-
-              <button
-                onClick={handleRunDiagnosticScan}
-                disabled={isScanning}
-                className="px-4 py-2 bg-[#007BC4] text-white rounded-xl text-xs font-bold hover:bg-blue-700 transition flex items-center gap-1.5 disabled:opacity-50 cursor-pointer"
-              >
-                <RefreshCw size={14} className={isScanning ? 'animate-spin' : ''} />
-                {isScanning ? 'Running Scan...' : 'Run Site Hardware Scan'}
-              </button>
-            </div>
-
-            {scanResults && (
-              <div className="space-y-3 animate-in fade-in">
-                <div className="p-3 bg-slate-950 text-emerald-400 rounded-xl font-mono text-xs space-y-1 max-h-60 overflow-y-auto border border-slate-800">
-                  {scanResults.logs.map((log, i) => (
-                    <div key={i} className="flex items-start gap-1">
-                      <span className="text-slate-600">&gt;</span>
-                      <span>{log}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-          </div>
         </div>
       )}
 
