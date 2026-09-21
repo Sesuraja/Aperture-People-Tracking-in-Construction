@@ -7,7 +7,7 @@ import { motion } from 'motion/react';
 import React, { useState, useEffect } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { useTrackingData } from './lib/trackingData';
-import { Activity, Bell, Map, Map as MapIcon, Users, BarChart3, Settings, ShieldAlert, Cpu, LayoutDashboard, Radio, PlayCircle, Search, LogOut, Lock, Clock, Building2, ClipboardCheck, History, MessageSquare, Terminal, Wrench, Sparkles, Box, ShieldCheck, Zap, ChevronLeft, ChevronRight, Command } from 'lucide-react';
+import { Activity, Bell, Map, Map as MapIcon, Users, BarChart3, Settings, ShieldAlert, Cpu, LayoutDashboard, Radio, PlayCircle, Search, LogOut, Lock, Clock, Building2, History, MessageSquare, Terminal, Wrench, Sparkles, Box, ShieldCheck, Zap, ChevronLeft, ChevronRight, Command } from 'lucide-react';
 import CommandPaletteModal from './components/CommandPaletteModal';
 import ErrorBoundary from './components/ErrorBoundary';
 import AttendanceTab from './components/AttendanceTab';
@@ -397,7 +397,6 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
               </span>
             )}
             {isPageAllowed('people') && <NavItem to="/people" icon={<Users size={18}/>} label="Personnel" isCollapsed={isSidebarCollapsed} />}
-            {isPageAllowed('visitors') && <NavItem to="/visitors" icon={<ClipboardCheck size={18}/>} label="Visitors" isCollapsed={isSidebarCollapsed} />}
             {isPageAllowed('attendance') && <NavItem to="/attendance" icon={<Clock size={18}/>} label="Attendance" isCollapsed={isSidebarCollapsed} />}
             {isPageAllowed('devices') && <NavItem to="/devices" icon={<Radio size={18}/>} label="Hardware Devices" isCollapsed={isSidebarCollapsed} />}
           </div>

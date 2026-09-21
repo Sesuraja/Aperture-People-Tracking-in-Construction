@@ -2250,7 +2250,7 @@ export default function DashboardTab({
             sub={subOverride || `${vCount} pre-registered & checked-in visitors`} 
             icon={renderKpiIcon(kpi?.iconName || 'UserX')} 
             iconColor={iconColorOverride || "bg-amber-500"} 
-            onClick={() => navigate('/visitors')} 
+            onClick={() => navigate('/people')} 
           />
         );
       }

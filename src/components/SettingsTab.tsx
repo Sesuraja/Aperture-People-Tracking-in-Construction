@@ -329,7 +329,6 @@ export default function SettingsTab() {
     { id: "customMap", label: "Custom Map & Assets", category: "Core Operations", desc: "Custom CAD drawings, zone layers & floorplans" },
     { id: "playback", label: "Tracking Playback History", category: "Analytics & Logs", desc: "Historical movement replays and spatial paths" },
     { id: "people", label: "Personnel Registry", category: "Personnel & Access", desc: "Staff directory, badges, trades & contact cards" },
-    { id: "visitors", label: "Visitor Management", category: "Personnel & Access", desc: "Guest check-in, badges & visitor kiosk log" },
     { id: "attendance", label: "Attendance Insights", category: "Personnel & Access", desc: "Shift timecards, contractor hours & clock-ins" },
     { id: "alerts", label: "Alerts & Trigger Feed", category: "Safety & Security", desc: "SOS emergencies, geo-fence breaches & falls" },
     { id: "incidents", label: "Incident Log File", category: "Safety & Security", desc: "OSHA reports, hazard logs & safety files" },
@@ -343,42 +342,42 @@ export default function SettingsTab() {
 
   const DEFAULT_ROLE_PERMISSIONS: Record<string, Record<string, boolean>> = {
     admin: {
-      dashboard: true, live: true, customMap: true, playback: true, people: true, visitors: true,
+      dashboard: true, live: true, customMap: true, playback: true, people: true,
       attendance: true, alerts: true, incidents: true, analytics: true, aiInsights: true,
       devices: true, maintenance: true, audit: true, settings: true
     },
     manager: {
-      dashboard: true, live: true, customMap: true, playback: true, people: true, visitors: true,
+      dashboard: true, live: true, customMap: true, playback: true, people: true,
       attendance: true, alerts: true, incidents: true, analytics: true, aiInsights: true,
       devices: true, maintenance: true, audit: true, settings: false
     },
     operator: {
-      dashboard: true, live: true, customMap: true, playback: true, people: true, visitors: true,
+      dashboard: true, live: true, customMap: true, playback: true, people: true,
       attendance: true, alerts: true, incidents: true, analytics: false, aiInsights: false,
       devices: false, maintenance: true, audit: false, settings: false
     },
     security: {
-      dashboard: true, live: true, customMap: true, playback: true, people: true, visitors: true,
+      dashboard: true, live: true, customMap: true, playback: true, people: true,
       attendance: false, alerts: true, incidents: true, analytics: false, aiInsights: false,
       devices: false, maintenance: false, audit: false, settings: false
     },
     auditor: {
-      dashboard: true, live: false, customMap: false, playback: true, people: true, visitors: true,
+      dashboard: true, live: false, customMap: false, playback: true, people: true,
       attendance: true, alerts: true, incidents: true, analytics: true, aiInsights: true,
       devices: false, maintenance: false, audit: true, settings: false
     },
     contractor: {
-      dashboard: false, live: true, customMap: false, playback: false, people: true, visitors: false,
+      dashboard: false, live: true, customMap: false, playback: false, people: true,
       attendance: true, alerts: true, incidents: false, analytics: false, aiInsights: false,
       devices: false, maintenance: false, audit: false, settings: false
     },
     visitor_manager: {
-      dashboard: false, live: false, customMap: false, playback: false, people: false, visitors: true,
+      dashboard: false, live: false, customMap: false, playback: false, people: true,
       attendance: true, alerts: true, incidents: false, analytics: false, aiInsights: false,
       devices: false, maintenance: false, audit: false, settings: false
     },
     viewer: {
-      dashboard: true, live: true, customMap: true, playback: false, people: false, visitors: false,
+      dashboard: true, live: true, customMap: true, playback: false, people: false,
       attendance: false, alerts: true, incidents: false, analytics: false, aiInsights: false,
       devices: false, maintenance: false, audit: false, settings: false
     }
