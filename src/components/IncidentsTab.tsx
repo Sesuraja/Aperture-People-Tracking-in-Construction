@@ -25,7 +25,8 @@ import {
   calculateZoneBaselines,
   ZoneBaseline,
   PersonTimelineStep,
-  formatDuration
+  formatDuration,
+  convertRealtimeTagsToMovementRecords
 } from '../lib/incidentIntelligence';
 
 type ActiveViewTab = 'ledger' | 'anomalies' | 'zones' | 'timeline';
@@ -50,18 +51,49 @@ export default function IncidentsTab({ people: propPeople = [] }: IncidentsTabPr
   const activeIndustry = intelligenceProfile?.industry || config?.industryId || 'construction';
   const activeSubIndustry = intelligenceProfile?.subIndustry || config?.subIndustry || config?.industryName || 'General Operations';
 
-  // Live workforce registry from MongoDB registered_people
+  // Live workforce registry from MongoDB registered_people, people & REST fallback
   const [dbPeople, setDbPeople] = useState<any[]>([]);
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
-      const list: any[] = [];
+    const listMap = new Map<string, any>();
+    const updateList = () => setDbPeople(Array.from(listMap.values()));
+
+    const unsubReg = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
       snapshot.forEach(d => {
         const data = d.data();
-        if (data) list.push({ id: d.id, ...data });
+        if (data) listMap.set(d.id, { id: d.id, ...data });
       });
-      setDbPeople(list);
+      updateList();
     });
-    return () => unsub();
+
+    const unsubPpl = onSnapshot(collection(db, 'people'), (snapshot) => {
+      snapshot.forEach(d => {
+        const data = d.data();
+        if (data) listMap.set(d.id, { id: d.id, ...data });
+      });
+      updateList();
+    });
+
+    // REST fallback for complete offline/online coverage
+    Promise.allSettled([
+      fetch('/api/data/registered_people').then(r => r.ok ? r.json() : []),
+      fetch('/api/data/people').then(r => r.ok ? r.json() : [])
+    ]).then(results => {
+      results.forEach(res => {
+        if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+          res.value.forEach(p => {
+            if (p && (p.id || p.tagId || p.TagID || p.hardhatTagId)) {
+              listMap.set(p.id || p.tagId || p.TagID || p.hardhatTagId, p);
+            }
+          });
+        }
+      });
+      updateList();
+    }).catch(() => {});
+
+    return () => {
+      unsubReg();
+      unsubPpl();
+    };
   }, []);
 
   const peopleRegistry = useMemo(() => {
@@ -183,7 +215,7 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
   }, []);
 
   /**
-   * 1. Fetch Real Data from People-Tracking API with Stale-While-Revalidate
+   * 1. Fetch Real Data from People-Tracking API with Stale-While-Revalidate & Live Real-Time Workers
    */
   const loadApiData = useCallback(async (take: number = fetchBatchSize, showRefreshingState = false) => {
     if (showRefreshingState) {
@@ -194,21 +226,38 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
     setApiError(null);
 
     try {
-      const [records, count] = await Promise.all([
+      const [records, count, liveTags] = await Promise.all([
         gaoApi.getHistoryRecords(0, take),
-        gaoApi.getHistoryTotalCount()
+        gaoApi.getHistoryTotalCount().catch(() => 0),
+        gaoApi.getTagsInRealtime().catch(() => [])
       ]);
 
       const validRecords = Array.isArray(records) ? records : [];
-      const totalCount = count || validRecords.length;
 
-      setRawRecords(validRecords);
+      // Convert all active real-time workers & RFID tags into active ongoing records
+      const allLiveTagSources = [
+        ...(Array.isArray(liveTags) ? liveTags : []),
+        ...(Array.isArray(trackingCtx?.liveTags) ? trackingCtx.liveTags : [])
+      ];
+      const activeWorkforce = trackingCtx?.people || propPeople;
+
+      const activeLiveRecords = convertRealtimeTagsToMovementRecords(
+        allLiveTagSources,
+        activeWorkforce,
+        peopleRegistry
+      );
+
+      // Prepend active real-time records so they are prominently featured and analyzed
+      const combinedRecords = [...activeLiveRecords, ...validRecords];
+      const totalCount = Math.max(count || 0, validRecords.length) + activeLiveRecords.length;
+
+      setRawRecords(combinedRecords);
       setTotalSystemCount(totalCount);
       setLastUpdated(new Date());
 
       // Save to memory and sessionStorage cache for instant 0ms next load
-      if (validRecords.length > 0) {
-        const cachePayload = { records: validRecords, count: totalCount, timestamp: Date.now() };
+      if (combinedRecords.length > 0) {
+        const cachePayload = { records: combinedRecords, count: totalCount, timestamp: Date.now() };
         _incidentsCacheMemory = cachePayload;
         try {
           sessionStorage.setItem(INCIDENTS_SESSION_CACHE_KEY, JSON.stringify(cachePayload));
@@ -223,7 +272,7 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [fetchBatchSize, rawRecords.length]);
+  }, [fetchBatchSize, rawRecords.length, trackingCtx?.liveTags, trackingCtx?.people, propPeople, peopleRegistry]);
 
   useEffect(() => {
     loadApiData(fetchBatchSize);

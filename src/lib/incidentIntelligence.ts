@@ -14,8 +14,10 @@
  * temperature, injuries, access permissions, employee roles, or safety violations.
  */
 
-import { resolvePersonName } from './movementAnalytics';
+import { resolvePersonName, convertRealtimeTagsToMovementRecords } from './movementAnalytics';
 import { parseDateInput, resolveIanaTimezone, getSystemTimezoneSetting } from './dateTimeUtils';
+
+export { convertRealtimeTagsToMovementRecords };
 
 
 export interface RawApiHistoryRecord {

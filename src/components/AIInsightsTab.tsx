@@ -54,7 +54,8 @@ import {
   RawMovementRecord,
   NormalizedMovementEvent,
   normalizeRecords,
-  formatDurationHuman
+  formatDurationHuman,
+  convertRealtimeTagsToMovementRecords
 } from '../lib/movementAnalytics';
 import {
   generateAIInsights,
@@ -114,18 +115,49 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
   const activeSubIndustry = intelligenceProfile?.subIndustry || config?.subIndustry || config?.industryName || 'Operations Intelligence';
   const complianceFramework = intelligenceProfile?.complianceFramework || 'OSHA / ISO 45001 Telemetry Standards';
 
-  // Live workforce registry from MongoDB registered_people
+  // Live workforce registry from MongoDB registered_people, people & REST fallback
   const [dbPeople, setDbPeople] = useState<any[]>([]);
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
-      const list: any[] = [];
+    const listMap = new Map<string, any>();
+    const updateList = () => setDbPeople(Array.from(listMap.values()));
+
+    const unsubReg = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
       snapshot.forEach(d => {
         const data = d.data();
-        if (data) list.push({ id: d.id, ...data });
+        if (data) listMap.set(d.id, { id: d.id, ...data });
       });
-      setDbPeople(list);
+      updateList();
     });
-    return () => unsub();
+
+    const unsubPpl = onSnapshot(collection(db, 'people'), (snapshot) => {
+      snapshot.forEach(d => {
+        const data = d.data();
+        if (data) listMap.set(d.id, { id: d.id, ...data });
+      });
+      updateList();
+    });
+
+    // REST fallback for complete offline/online coverage
+    Promise.allSettled([
+      fetch('/api/data/registered_people').then(r => r.ok ? r.json() : []),
+      fetch('/api/data/people').then(r => r.ok ? r.json() : [])
+    ]).then(results => {
+      results.forEach(res => {
+        if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+          res.value.forEach(p => {
+            if (p && (p.id || p.tagId || p.TagID || p.hardhatTagId)) {
+              listMap.set(p.id || p.tagId || p.TagID || p.hardhatTagId, p);
+            }
+          });
+        }
+      });
+      updateList();
+    }).catch(() => {});
+
+    return () => {
+      unsubReg();
+      unsubPpl();
+    };
   }, []);
 
   const peopleRegistry = useMemo(() => {
@@ -169,13 +201,32 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
     setIsRefreshing(true);
     setApiError(null);
     try {
-      const [records, count] = await Promise.all([
+      const [records, count, liveTags] = await Promise.all([
         gaoApi.getHistoryRecords(0, takeCount),
-        gaoApi.getHistoryTotalCount().catch(() => 0)
+        gaoApi.getHistoryTotalCount().catch(() => 0),
+        gaoApi.getTagsInRealtime().catch(() => [])
       ]);
       const validRecords = Array.isArray(records) ? records : [];
-      setRawRecords(validRecords);
-      setTotalSystemCount(count > 0 ? count : validRecords.length);
+
+      // Convert all active real-time workers & RFID tags into active ongoing records
+      const allLiveTagSources = [
+        ...(Array.isArray(liveTags) ? liveTags : []),
+        ...(Array.isArray(trackingCtx?.liveTags) ? trackingCtx.liveTags : [])
+      ];
+      const activeWorkforce = trackingCtx?.people || people;
+
+      const activeLiveRecords = convertRealtimeTagsToMovementRecords(
+        allLiveTagSources,
+        activeWorkforce,
+        peopleRegistry
+      );
+
+      // Prepend active real-time records so the AI engine evaluates active on-site workers
+      const combinedRecords = [...activeLiveRecords, ...validRecords];
+      const totalCount = Math.max(count || 0, validRecords.length) + activeLiveRecords.length;
+
+      setRawRecords(combinedRecords);
+      setTotalSystemCount(totalCount);
       setLastAnalysisTimestamp(formatEdtTime(new Date()));
     } catch (err: any) {
       console.error('[AI Insights] Telemetry fetch error:', err);
@@ -184,10 +235,27 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [batchSize]);
+  }, [batchSize, trackingCtx?.liveTags, trackingCtx?.people, people, peopleRegistry]);
 
   useEffect(() => {
     loadTelemetry(batchSize);
+
+    const interval = setInterval(() => {
+      loadTelemetry(batchSize);
+    }, 12000);
+
+    const handleDataRefresh = () => {
+      loadTelemetry(batchSize);
+    };
+
+    window.addEventListener('gao_data_updated', handleDataRefresh);
+    window.addEventListener('gao_refresh_data', handleDataRefresh);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('gao_data_updated', handleDataRefresh);
+      window.removeEventListener('gao_refresh_data', handleDataRefresh);
+    };
   }, [loadTelemetry, batchSize]);
 
   // ---------------------------------------------------------------------------

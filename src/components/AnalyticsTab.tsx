@@ -34,7 +34,8 @@ import {
   calculatePersonAnalytics,
   calculateDurationAnalytics,
   generateAIObservations,
-  formatDurationHuman
+  formatDurationHuman,
+  convertRealtimeTagsToMovementRecords
 } from '../lib/movementAnalytics';
 
 export interface AnalyticsProps {
@@ -59,18 +60,49 @@ export default function AnalyticsTab({ people = [], isLoading: externalLoading }
   const activeIndustry = intelligenceProfile?.industry || config?.industryId || 'construction';
   const activeSubIndustry = intelligenceProfile?.subIndustry || config?.subIndustry || config?.industryName || 'General Operations';
 
-  // Live workforce registry from MongoDB registered_people
+  // Live workforce registry from MongoDB registered_people, people & REST fallback
   const [dbPeople, setDbPeople] = useState<any[]>([]);
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
-      const list: any[] = [];
+    const listMap = new Map<string, any>();
+    const updateList = () => setDbPeople(Array.from(listMap.values()));
+
+    const unsubReg = onSnapshot(collection(db, 'registered_people'), (snapshot) => {
       snapshot.forEach(d => {
         const data = d.data();
-        if (data) list.push({ id: d.id, ...data });
+        if (data) listMap.set(d.id, { id: d.id, ...data });
       });
-      setDbPeople(list);
+      updateList();
     });
-    return () => unsub();
+
+    const unsubPpl = onSnapshot(collection(db, 'people'), (snapshot) => {
+      snapshot.forEach(d => {
+        const data = d.data();
+        if (data) listMap.set(d.id, { id: d.id, ...data });
+      });
+      updateList();
+    });
+
+    // REST fallback for complete offline/online coverage
+    Promise.allSettled([
+      fetch('/api/data/registered_people').then(r => r.ok ? r.json() : []),
+      fetch('/api/data/people').then(r => r.ok ? r.json() : [])
+    ]).then(results => {
+      results.forEach(res => {
+        if (res.status === 'fulfilled' && Array.isArray(res.value)) {
+          res.value.forEach(p => {
+            if (p && (p.id || p.tagId || p.TagID || p.hardhatTagId)) {
+              listMap.set(p.id || p.tagId || p.TagID || p.hardhatTagId, p);
+            }
+          });
+        }
+      });
+      updateList();
+    }).catch(() => {});
+
+    return () => {
+      unsubReg();
+      unsubPpl();
+    };
   }, []);
 
   const peopleRegistry = useMemo(() => {
@@ -123,7 +155,7 @@ export default function AnalyticsTab({ people = [], isLoading: externalLoading }
   const [copiedTagId, setCopiedTagId] = useState<string | null>(null);
 
   /**
-   * 1. Load Telemetry Data from People-Tracking API
+   * 1. Load Telemetry Data from People-Tracking API & Live Real-Time Workers
    */
   const loadData = useCallback(async (take: number = fetchBatchSize, showRefreshing = false) => {
     if (showRefreshing) setIsRefreshing(true);
@@ -131,13 +163,33 @@ export default function AnalyticsTab({ people = [], isLoading: externalLoading }
     setApiError(null);
 
     try {
-      const [records, count] = await Promise.all([
+      const [records, count, liveTags] = await Promise.all([
         gaoApi.getHistoryRecords(0, take),
-        gaoApi.getHistoryTotalCount()
+        gaoApi.getHistoryTotalCount().catch(() => 0),
+        gaoApi.getTagsInRealtime().catch(() => [])
       ]);
 
-      setRawRecords(Array.isArray(records) ? records : []);
-      setTotalSystemCount(count || records.length);
+      const validRecords = Array.isArray(records) ? records : [];
+
+      // Convert all active real-time workers & RFID tags into active ongoing records
+      const allLiveTagSources = [
+        ...(Array.isArray(liveTags) ? liveTags : []),
+        ...(Array.isArray(trackingCtx?.liveTags) ? trackingCtx.liveTags : [])
+      ];
+      const activeWorkforce = trackingCtx?.people || people;
+
+      const activeLiveRecords = convertRealtimeTagsToMovementRecords(
+        allLiveTagSources,
+        activeWorkforce,
+        peopleRegistry
+      );
+
+      // Prepend active real-time records so they are included in all analytics metrics
+      const combinedRecords = [...activeLiveRecords, ...validRecords];
+      const totalCount = Math.max(count || 0, validRecords.length) + activeLiveRecords.length;
+
+      setRawRecords(combinedRecords);
+      setTotalSystemCount(totalCount);
     } catch (err: any) {
       console.error('[AnalyticsTab] Error fetching API data:', err);
       setApiError(err.message || 'Unable to connect to people-tracking API endpoint.');
@@ -145,10 +197,27 @@ export default function AnalyticsTab({ people = [], isLoading: externalLoading }
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [fetchBatchSize]);
+  }, [fetchBatchSize, trackingCtx?.liveTags, trackingCtx?.people, people, peopleRegistry]);
 
   useEffect(() => {
     loadData(fetchBatchSize);
+
+    const interval = setInterval(() => {
+      loadData(fetchBatchSize, false);
+    }, 12000);
+
+    const handleDataRefresh = () => {
+      loadData(fetchBatchSize, false);
+    };
+
+    window.addEventListener('gao_data_updated', handleDataRefresh);
+    window.addEventListener('gao_refresh_data', handleDataRefresh);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('gao_data_updated', handleDataRefresh);
+      window.removeEventListener('gao_refresh_data', handleDataRefresh);
+    };
   }, [loadData, fetchBatchSize]);
 
   /**

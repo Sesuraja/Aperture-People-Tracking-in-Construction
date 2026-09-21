@@ -853,3 +853,98 @@ export function generateAIObservations(
 
   return observations;
 }
+
+/**
+ * Transforms real-time tags and active workers into RawMovementRecord format with LeaveTime: 'ACTIVE'.
+ * Ensures that all currently active on-site workers are included in incident, analytics, and AI calculations.
+ */
+export function convertRealtimeTagsToMovementRecords(
+  liveTags?: any[] | null,
+  people?: any[] | null,
+  peopleRegistry?: Map<string, any> | any[] | null
+): RawMovementRecord[] {
+  const records: RawMovementRecord[] = [];
+  const seenTagIds = new Set<string>();
+
+  const getPerson = (tid: string) => {
+    if (!peopleRegistry) return null;
+    const clean = tid.trim().toLowerCase();
+    if (peopleRegistry instanceof Map) {
+      return peopleRegistry.get(clean) || peopleRegistry.get(tid);
+    }
+    if (Array.isArray(peopleRegistry)) {
+      return peopleRegistry.find(p => String(p?.id || p?.tagId || p?.TagID || p?.hardhatTagId || '').toLowerCase() === clean);
+    }
+    return null;
+  };
+
+  // 1. Process liveTags (from gaoApi.getTagsInRealtime() or context liveTags)
+  if (Array.isArray(liveTags)) {
+    liveTags.forEach(tag => {
+      const tid = String(tag.TagID || tag.tagId || tag.id || '').trim();
+      if (!tid) return;
+      const tidLower = tid.toLowerCase();
+      if (seenTagIds.has(tidLower)) return;
+      seenTagIds.add(tidLower);
+
+      const matched = getPerson(tid);
+      const name = matched?.name || tag.personName || tag.name || (tag.FirstName ? `${tag.FirstName} ${tag.LastName || ''}`.trim() : '');
+      const role = matched?.role || tag.role || 'Field Personnel';
+      const loc = String(tag.LocationName || tag.Location || tag.zoneName || tag.zone || tag.currentZone || 'Main Facility').trim();
+      const rawTs = tag.Timestamp || tag.timestamp || tag.EnterTime || tag.lastSeen;
+      const ts = rawTs ? (typeof rawTs === 'object' && rawTs instanceof Date ? rawTs.toISOString() : String(rawTs)) : new Date().toISOString();
+
+      records.push({
+        TagID: tid,
+        tagId: tid,
+        FirstName: matched?.firstName || tag.FirstName || (name ? name.split(' ')[0] : ''),
+        LastName: matched?.lastName || tag.LastName || (name ? name.split(' ').slice(1).join(' ') : ''),
+        name: name || undefined,
+        LocationName: loc,
+        Location: loc,
+        location: loc,
+        EnterTime: ts,
+        EnterTimeStr: ts,
+        LeaveTime: 'ACTIVE',
+        LeaveTimeStr: 'ACTIVE',
+        Duration: tag.dwellTime ? Math.max(0.5, Math.round((tag.dwellTime / 60) * 10) / 10) : 0.5,
+        durationMins: tag.dwellTime ? Math.max(0.5, Math.round((tag.dwellTime / 60) * 10) / 10) : 0.5
+      });
+    });
+  }
+
+  // 2. Process active workforce from tracking context/props
+  if (Array.isArray(people)) {
+    people.forEach(p => {
+      const tid = String(p.hardhatTagId || p.tagId || p.TagID || p.id || '').trim();
+      if (!tid) return;
+      const tidLower = tid.toLowerCase();
+      if (seenTagIds.has(tidLower)) return;
+      seenTagIds.add(tidLower);
+
+      const rawTs = p.lastSeen || p.timestamp || p.EnterTime;
+      const ts = rawTs ? (rawTs instanceof Date ? rawTs.toISOString() : String(rawTs)) : new Date().toISOString();
+      const loc = String(p.currentZone || p.zone || p.LocationName || p.location || 'Main Facility').trim();
+
+      records.push({
+        TagID: tid,
+        tagId: tid,
+        FirstName: p.firstName || (p.name ? p.name.split(' ')[0] : ''),
+        LastName: p.lastName || (p.name ? p.name.split(' ').slice(1).join(' ') : ''),
+        name: p.name,
+        LocationName: loc,
+        Location: loc,
+        location: loc,
+        EnterTime: ts,
+        EnterTimeStr: ts,
+        LeaveTime: 'ACTIVE',
+        LeaveTimeStr: 'ACTIVE',
+        Duration: p.dwellTime ? Math.max(0.5, Math.round((p.dwellTime / 60) * 10) / 10) : 0.5,
+        durationMins: p.dwellTime ? Math.max(0.5, Math.round((p.dwellTime / 60) * 10) / 10) : 0.5
+      });
+    });
+  }
+
+  return records;
+}
+
