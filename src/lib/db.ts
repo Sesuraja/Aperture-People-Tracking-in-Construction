@@ -116,7 +116,7 @@ export function getAuthHeaders(): Record<string, string> {
 const inFlightGetRequests = new Map<string, Promise<any>>();
 // Client-side response cache (2.5 seconds) to prevent redundant queries across sibling components
 const clientResponseCache = new Map<string, { data: any; cachedAt: number }>();
-const CLIENT_CACHE_TTL_MS = 300;
+const CLIENT_CACHE_TTL_MS = 3500;
 
 async function safeJsonFetch(url: string, options?: RequestInit): Promise<any> {
   const method = (options?.method || 'GET').toUpperCase();

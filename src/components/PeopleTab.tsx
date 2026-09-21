@@ -34,7 +34,11 @@ interface PeopleTabProps {
 interface DBWorker {
   id: string;
   hardhatTagId: string;
+  tagId?: string;
   name: string;
+  firstName?: string;
+  lastName?: string;
+  isCustomProfile?: boolean;
   role: string;
   company?: string;
   tradeCompany?: string;
@@ -54,6 +58,27 @@ interface DBWorker {
   currentZone?: string;
   notes?: string;
   createdAt?: any;
+  updatedAt?: any;
+}
+
+function hasRealHumanName(name?: string): boolean {
+  if (!name || typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  const lower = trimmed.toLowerCase();
+  if (
+    !trimmed || 
+    lower === 'john' || 
+    lower === 'john site lead' || 
+    lower === 'unknown' || 
+    lower === 'unassigned' || 
+    lower === 'field personnel' || 
+    lower.startsWith('personnel ') || 
+    lower.startsWith('tag ') || 
+    lower.startsWith('worker ')
+  ) {
+    return false;
+  }
+  return true;
 }
 
 interface TagHistoryEntry {
@@ -404,8 +429,24 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   }, []);
 
   // Database Workers state (from MongoDB)
-  const [dbWorkers, setDbWorkers] = useState<DBWorker[]>([]);
-  const [isDbLoading, setIsDbLoading] = useState(true);
+  const [dbWorkers, setDbWorkers] = useState<DBWorker[]>(() => {
+    if (people && people.length > 0) {
+      return people.map(p => ({
+        id: p.id,
+        hardhatTagId: p.hardhatTagId || p.id,
+        name: p.name,
+        role: p.role,
+        tradeCompany: p.tradeCompany,
+        ppeStatus: p.ppeStatus || 'COMPLIANT',
+        shiftStatus: p.shiftStatus || 'ON_SITE',
+        trainingStatus: p.trainingStatus || 'COMPLIANT',
+        currentZone: p.currentZone,
+        safetyScore: 95
+      }));
+    }
+    return [];
+  });
+  const [isDbLoading, setIsDbLoading] = useState(() => !(people && people.length > 0));
 
   // Worker Movement History state
   const [workerHistory, setWorkerHistory] = useState<TagHistoryEntry[]>([]);
@@ -632,26 +673,35 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         mergedMap.set(key, doc);
       });
 
-      // 2. Merge registered_people records with priority on isCustomProfile and newest updatedAt
+      // 2. Merge registered_people records with priority on real human names and isCustomProfile
       registeredWorkersMap.forEach((doc, key) => {
         const existing = mergedMap.get(key);
         if (!existing) {
           mergedMap.set(key, doc);
         } else {
-          const docIsCustom = Boolean(doc.isCustomProfile);
-          const existingIsCustom = Boolean(existing.isCustomProfile);
+          const docHasReal = hasRealHumanName(doc.name);
+          const existingHasReal = hasRealHumanName(existing.name);
 
-          if (docIsCustom && !existingIsCustom) {
-            mergedMap.set(key, { ...existing, ...doc });
-          } else if (!docIsCustom && existingIsCustom) {
-            mergedMap.set(key, { ...doc, ...existing });
+          if (docHasReal && !existingHasReal) {
+            mergedMap.set(key, { ...existing, ...doc, name: doc.name, isCustomProfile: true });
+          } else if (!docHasReal && existingHasReal) {
+            mergedMap.set(key, { ...doc, ...existing, name: existing.name, isCustomProfile: true });
           } else {
-            const docTime = doc.updatedAt ? new Date(doc.updatedAt).getTime() : (doc.createdAt ? new Date(doc.createdAt).getTime() : 0);
-            const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : (existing.createdAt ? new Date(existing.createdAt).getTime() : 0);
-            if (docTime >= existingTime) {
+            const docIsCustom = Boolean(doc.isCustomProfile);
+            const existingIsCustom = Boolean(existing.isCustomProfile);
+
+            if (docIsCustom && !existingIsCustom) {
               mergedMap.set(key, { ...existing, ...doc });
-            } else {
+            } else if (!docIsCustom && existingIsCustom) {
               mergedMap.set(key, { ...doc, ...existing });
+            } else {
+              const docTime = doc.updatedAt ? new Date(doc.updatedAt).getTime() : (doc.createdAt ? new Date(doc.createdAt).getTime() : 0);
+              const existingTime = existing.updatedAt ? new Date(existing.updatedAt).getTime() : (existing.createdAt ? new Date(existing.createdAt).getTime() : 0);
+              if (docTime >= existingTime) {
+                mergedMap.set(key, { ...existing, ...doc });
+              } else {
+                mergedMap.set(key, { ...doc, ...existing });
+              }
             }
           }
         }
@@ -663,30 +713,36 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
       setDbWorkers(prev => {
         if (prev.length === 0) return incomingList;
 
-        const now = Date.now();
-        // Workers edited optimistically in the last 15 seconds
-        const recentOptimisticWorkers = prev.filter(w => {
-          if (!w.updatedAt) return false;
-          const age = now - new Date(w.updatedAt).getTime();
-          return age >= 0 && age < 15000;
-        });
-
-        if (recentOptimisticWorkers.length === 0) {
-          return incomingList;
-        }
-
         const resultMap = new Map<string, DBWorker>();
         incomingList.forEach(w => {
           const k = (w.hardhatTagId || (w as any).tagId || w.id || '').toUpperCase().trim();
           if (k) resultMap.set(k, w);
         });
 
-        // Overlay optimistic updates on top
-        recentOptimisticWorkers.forEach(opt => {
-          const k = (opt.hardhatTagId || (opt as any).tagId || opt.id || '').toUpperCase().trim();
+        // Ensure previously edited workers retain their real human name and custom status if incoming doc reverted to generic
+        prev.forEach(prevW => {
+          const k = (prevW.hardhatTagId || (prevW as any).tagId || prevW.id || '').toUpperCase().trim();
           if (k) {
-            const existing = resultMap.get(k);
-            resultMap.set(k, { ...(existing || {}), ...opt });
+            const incomingW = resultMap.get(k);
+            if (incomingW) {
+              const prevHasReal = hasRealHumanName(prevW.name);
+              const incHasReal = hasRealHumanName(incomingW.name);
+              if (prevHasReal && !incHasReal) {
+                resultMap.set(k, {
+                  ...incomingW,
+                  name: prevW.name,
+                  firstName: prevW.firstName || incomingW.firstName,
+                  lastName: prevW.lastName || incomingW.lastName,
+                  isCustomProfile: true,
+                  ppeStatus: prevW.ppeStatus || incomingW.ppeStatus,
+                  shiftStatus: prevW.shiftStatus || incomingW.shiftStatus,
+                  trainingStatus: prevW.trainingStatus || incomingW.trainingStatus
+                });
+              }
+            } else {
+              // Retain optimistic workers not yet in incoming list
+              resultMap.set(k, prevW);
+            }
           }
         });
 
@@ -970,7 +1026,10 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                        (p.hardhatTagId ? map.get(p.hardhatTagId.toUpperCase().trim()) : null) ||
                        ((p as any).tagId ? map.get(String((p as any).tagId).toUpperCase().trim()) : null);
       if (existing) {
-        // ALWAYS keep authoritative worker name and role from MongoDB
+        // Authoritative worker name from MongoDB wins, or if existing was generic, adopt real human name
+        if (!hasRealHumanName(existing.name) && hasRealHumanName(p.name)) {
+          existing.name = p.name;
+        }
         existing.currentZone = p.currentZone || existing.currentZone;
         existing.dwellTime = p.dwellTime ?? existing.dwellTime;
         existing.presenceState = p.presenceState || existing.presenceState;
@@ -980,16 +1039,18 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
         if (p.rssi !== undefined) existing.rssi = p.rssi;
         if ((p as any).batteryLevel !== undefined) existing.batteryLevel = (p as any).batteryLevel;
       } else {
+        const rawName = (p.name && hasRealHumanName(p.name)) ? p.name : (p.name && !p.name.startsWith('Tag ') ? p.name : `Personnel ${pTagUpper.slice(-6)}`);
         map.set(pTagUpper, {
           ...p,
           hardhatTagId: p.hardhatTagId || pTagUpper,
           tagId: pTagUpper,
-          name: p.name || `Tag ${pTagUpper}`,
+          name: rawName,
           role: p.role || 'Field Personnel',
           tradeCompany: p.tradeCompany || 'Field Team',
-          shiftStatus: 'ON_SITE',
+          shiftStatus: p.shiftStatus || 'ON_SITE',
+          ppeStatus: p.ppeStatus || 'COMPLIANT',
           trainingStatus: p.trainingStatus || 'COMPLIANT',
-          lastTrainingDate: p.lastTrainingDate || '',
+          lastTrainingDate: (p as any).lastTrainingDate || '',
           trainingCourse: '',
           isDbRegistered: false
         });
@@ -1111,47 +1172,116 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   }, [combinedPeople]);
 
   // Quick Update Safety Training Status in MongoDB
-  const handleQuickUpdateTrainingStatus = (tagId: string, name: string, newStatus: 'COMPLIANT' | 'DUE_SOON' | 'OVERDUE' | 'PENDING') => {
+  const handleQuickUpdateTrainingStatus = (
+    personOrTag: any,
+    nameOrStatus?: string,
+    newStatusArg?: 'COMPLIANT' | 'DUE_SOON' | 'OVERDUE' | 'PENDING'
+  ) => {
+    let person: any = {};
+    let tagId = '';
+    let name = '';
+    let newStatus: 'COMPLIANT' | 'DUE_SOON' | 'OVERDUE' | 'PENDING' = 'COMPLIANT';
+
+    if (typeof personOrTag === 'object' && personOrTag !== null) {
+      person = personOrTag;
+      tagId = person.hardhatTagId || person.tagId || person.id || '';
+      name = person.name || 'Worker';
+      newStatus = (nameOrStatus as any) || 'COMPLIANT';
+    } else {
+      tagId = String(personOrTag || '');
+      name = String(nameOrStatus || 'Worker');
+      newStatus = newStatusArg || 'COMPLIANT';
+      person = { id: tagId, hardhatTagId: tagId, name };
+    }
+
     const tagUpper = (tagId || "").toUpperCase().trim();
+    const rawId = (person.id || tagUpper).trim();
     const todayDate = formatEdtDate(new Date(), { format: 'iso' });
     const nowIso = new Date().toISOString();
 
-    // 1. Optimistically update dbWorkers state immediately (0ms)
-    setDbWorkers(prev => prev.map(w => {
-      if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
-        return { ...w, trainingStatus: newStatus, lastTrainingDate: todayDate, updatedAt: nowIso };
-      }
-      return w;
-    }));
+    const targetKeys = Array.from(new Set([
+      tagUpper,
+      rawId.toUpperCase(),
+      (person.hardhatTagId || '').toUpperCase().trim(),
+      ((person as any).tagId || '').toUpperCase().trim(),
+      ((person as any).TagID || '').toUpperCase().trim()
+    ].filter(Boolean)));
 
-    if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
-      setSelectedPerson(prev => prev ? {
-        ...prev,
-        trainingStatus: newStatus,
-        lastTrainingDate: todayDate,
-        updatedAt: nowIso
-      } : null);
+    // 1. Optimistically update dbWorkers state immediately (0ms)
+    setDbWorkers(prev => {
+      const matchIndex = prev.findIndex(w => {
+        const wKeys = [
+          (w.id || '').toUpperCase().trim(),
+          (w.hardhatTagId || '').toUpperCase().trim(),
+          ((w as any).tagId || '').toUpperCase().trim(),
+          ((w as any).TagID || '').toUpperCase().trim()
+        ].filter(Boolean);
+        return wKeys.some(k => targetKeys.includes(k));
+      });
+
+      if (matchIndex >= 0) {
+        return prev.map((w, idx) => idx === matchIndex ? {
+          ...w,
+          trainingStatus: newStatus,
+          lastTrainingDate: todayDate,
+          isCustomProfile: true,
+          updatedAt: nowIso
+        } : w);
+      } else {
+        return [{
+          ...person,
+          id: rawId || tagUpper,
+          hardhatTagId: tagUpper || rawId,
+          name: person.name || name,
+          trainingStatus: newStatus,
+          lastTrainingDate: todayDate,
+          isCustomProfile: true,
+          updatedAt: nowIso
+        }, ...prev];
+      }
+    });
+
+    if (selectedPerson) {
+      const sKeys = [
+        (selectedPerson.id || '').toUpperCase().trim(),
+        (selectedPerson.hardhatTagId || '').toUpperCase().trim(),
+        ((selectedPerson as any).tagId || '').toUpperCase().trim()
+      ].filter(Boolean);
+      if (sKeys.some(k => targetKeys.includes(k))) {
+        setSelectedPerson(prev => prev ? {
+          ...prev,
+          trainingStatus: newStatus,
+          lastTrainingDate: todayDate,
+          isCustomProfile: true,
+          updatedAt: nowIso
+        } : null);
+      }
     }
 
     showToast('success', `Updated Safety Training Status to '${newStatus}' for ${name}.`);
+    window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName: 'registered_people' } }));
     window.dispatchEvent(new CustomEvent('gao_refresh_data'));
     window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 
     // 2. Persist in background without blocking UI
     (async () => {
       try {
-        await Promise.all([
-          setDoc(doc(db, 'registered_people', tagUpper), {
-            trainingStatus: newStatus,
-            lastTrainingDate: todayDate,
-            updatedAt: serverTimestamp()
-          }, { merge: true }),
-          setDoc(doc(db, 'people', tagUpper), {
-            trainingStatus: newStatus,
-            lastTrainingDate: todayDate,
-            updatedAt: serverTimestamp()
-          }, { merge: true })
-        ]);
+        const persistPayload = {
+          trainingStatus: newStatus,
+          lastTrainingDate: todayDate,
+          isCustomProfile: true,
+          updatedAt: serverTimestamp()
+        };
+
+        const keysToUpdate = Array.from(new Set([tagUpper, rawId, person.hardhatTagId, (person as any).tagId].filter(Boolean)));
+        const tasks: Promise<any>[] = [];
+        for (const k of keysToUpdate) {
+          tasks.push(
+            setDoc(doc(db, 'registered_people', String(k)), persistPayload, { merge: true }),
+            setDoc(doc(db, 'people', String(k)), persistPayload, { merge: true })
+          );
+        }
+        await Promise.all(tasks);
 
         addDoc(collection(db, 'alerts'), {
           type: newStatus === 'OVERDUE' ? 'warning' : 'info',
@@ -1546,33 +1676,111 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   };
 
   // Quick toggle PPE status directly in MongoDB
-  const handleQuickUpdatePpe = (tagId: string, name: string, newPpe: 'COMPLIANT' | 'WARNING' | 'NON_COMPLIANT') => {
+  const handleQuickUpdatePpe = (
+    personOrTag: any,
+    nameOrStatus?: string,
+    newStatusArg?: 'COMPLIANT' | 'WARNING' | 'NON_COMPLIANT'
+  ) => {
+    let person: any = {};
+    let tagId = '';
+    let name = '';
+    let newPpe: 'COMPLIANT' | 'WARNING' | 'NON_COMPLIANT' = 'COMPLIANT';
+
+    if (typeof personOrTag === 'object' && personOrTag !== null) {
+      person = personOrTag;
+      tagId = person.hardhatTagId || person.tagId || person.id || '';
+      name = person.name || 'Worker';
+      newPpe = (nameOrStatus as any) || 'COMPLIANT';
+    } else {
+      tagId = String(personOrTag || '');
+      name = String(nameOrStatus || 'Worker');
+      newPpe = newStatusArg || 'COMPLIANT';
+      person = { id: tagId, hardhatTagId: tagId, name };
+    }
+
     const tagUpper = (tagId || "").toUpperCase().trim();
+    const rawId = (person.id || tagUpper).trim();
     const nowIso = new Date().toISOString();
 
-    // 1. Instantly update dbWorkers state (0ms latency)
-    setDbWorkers(prev => prev.map(w => {
-      if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
-        return { ...w, ppeStatus: newPpe, updatedAt: nowIso };
-      }
-      return w;
-    }));
+    const targetKeys = Array.from(new Set([
+      tagUpper,
+      rawId.toUpperCase(),
+      (person.hardhatTagId || '').toUpperCase().trim(),
+      ((person as any).tagId || '').toUpperCase().trim(),
+      ((person as any).TagID || '').toUpperCase().trim()
+    ].filter(Boolean)));
 
-    if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
-      setSelectedPerson(prev => prev ? { ...prev, ppeStatus: newPpe, updatedAt: nowIso } : null);
+    // 1. Instantly update dbWorkers state (0ms latency)
+    setDbWorkers(prev => {
+      const matchIndex = prev.findIndex(w => {
+        const wKeys = [
+          (w.id || '').toUpperCase().trim(),
+          (w.hardhatTagId || '').toUpperCase().trim(),
+          ((w as any).tagId || '').toUpperCase().trim(),
+          ((w as any).TagID || '').toUpperCase().trim()
+        ].filter(Boolean);
+        return wKeys.some(k => targetKeys.includes(k));
+      });
+
+      if (matchIndex >= 0) {
+        return prev.map((w, idx) => idx === matchIndex ? {
+          ...w,
+          ppeStatus: newPpe,
+          isCustomProfile: true,
+          updatedAt: nowIso
+        } : w);
+      } else {
+        return [{
+          ...person,
+          id: rawId || tagUpper,
+          hardhatTagId: tagUpper || rawId,
+          name: person.name || name,
+          ppeStatus: newPpe,
+          isCustomProfile: true,
+          updatedAt: nowIso
+        }, ...prev];
+      }
+    });
+
+    if (selectedPerson) {
+      const sKeys = [
+        (selectedPerson.id || '').toUpperCase().trim(),
+        (selectedPerson.hardhatTagId || '').toUpperCase().trim(),
+        ((selectedPerson as any).tagId || '').toUpperCase().trim()
+      ].filter(Boolean);
+      if (sKeys.some(k => targetKeys.includes(k))) {
+        setSelectedPerson(prev => prev ? {
+          ...prev,
+          ppeStatus: newPpe,
+          isCustomProfile: true,
+          updatedAt: nowIso
+        } : null);
+      }
     }
 
     showToast('success', `Updated ${name} PPE status to ${newPpe}.`);
+    window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName: 'registered_people' } }));
     window.dispatchEvent(new CustomEvent('gao_refresh_data'));
     window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 
     // 2. Persist in background
     (async () => {
       try {
-        await Promise.all([
-          setDoc(doc(db, 'registered_people', tagUpper), { ppeStatus: newPpe, updatedAt: serverTimestamp() }, { merge: true }),
-          setDoc(doc(db, 'people', tagUpper), { ppeStatus: newPpe, updatedAt: serverTimestamp() }, { merge: true })
-        ]);
+        const persistPayload = {
+          ppeStatus: newPpe,
+          isCustomProfile: true,
+          updatedAt: serverTimestamp()
+        };
+
+        const keysToUpdate = Array.from(new Set([tagUpper, rawId, person.hardhatTagId, (person as any).tagId].filter(Boolean)));
+        const tasks: Promise<any>[] = [];
+        for (const k of keysToUpdate) {
+          tasks.push(
+            setDoc(doc(db, 'registered_people', String(k)), persistPayload, { merge: true }),
+            setDoc(doc(db, 'people', String(k)), persistPayload, { merge: true })
+          );
+        }
+        await Promise.all(tasks);
 
         addDoc(collection(db, 'alerts'), {
           type: newPpe === 'NON_COMPLIANT' ? 'security' : newPpe === 'WARNING' ? 'warning' : 'info',
@@ -1587,33 +1795,111 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
   };
 
   // Quick toggle Shift status directly in MongoDB
-  const handleQuickUpdateShift = (tagId: string, name: string, newShift: 'ON_SITE' | 'OFF_SITE' | 'ON_LEAVE' | 'SUSPENDED') => {
+  const handleQuickUpdateShift = (
+    personOrTag: any,
+    nameOrStatus?: string,
+    newStatusArg?: 'ON_SITE' | 'OFF_SITE' | 'ON_LEAVE' | 'SUSPENDED'
+  ) => {
+    let person: any = {};
+    let tagId = '';
+    let name = '';
+    let newShift: 'ON_SITE' | 'OFF_SITE' | 'ON_LEAVE' | 'SUSPENDED' = 'ON_SITE';
+
+    if (typeof personOrTag === 'object' && personOrTag !== null) {
+      person = personOrTag;
+      tagId = person.hardhatTagId || person.tagId || person.id || '';
+      name = person.name || 'Worker';
+      newShift = (nameOrStatus as any) || 'ON_SITE';
+    } else {
+      tagId = String(personOrTag || '');
+      name = String(nameOrStatus || 'Worker');
+      newShift = newStatusArg || 'ON_SITE';
+      person = { id: tagId, hardhatTagId: tagId, name };
+    }
+
     const tagUpper = (tagId || "").toUpperCase().trim();
+    const rawId = (person.id || tagUpper).trim();
     const nowIso = new Date().toISOString();
 
-    // 1. Instantly update dbWorkers state (0ms latency)
-    setDbWorkers(prev => prev.map(w => {
-      if ((w.id || '').toUpperCase() === tagUpper || (w.hardhatTagId || '').toUpperCase() === tagUpper) {
-        return { ...w, shiftStatus: newShift, updatedAt: nowIso };
-      }
-      return w;
-    }));
+    const targetKeys = Array.from(new Set([
+      tagUpper,
+      rawId.toUpperCase(),
+      (person.hardhatTagId || '').toUpperCase().trim(),
+      ((person as any).tagId || '').toUpperCase().trim(),
+      ((person as any).TagID || '').toUpperCase().trim()
+    ].filter(Boolean)));
 
-    if (selectedPerson && ((selectedPerson.hardhatTagId || selectedPerson.id || '').toUpperCase() === tagUpper)) {
-      setSelectedPerson(prev => prev ? { ...prev, shiftStatus: newShift, updatedAt: nowIso } : null);
+    // 1. Instantly update dbWorkers state (0ms latency)
+    setDbWorkers(prev => {
+      const matchIndex = prev.findIndex(w => {
+        const wKeys = [
+          (w.id || '').toUpperCase().trim(),
+          (w.hardhatTagId || '').toUpperCase().trim(),
+          ((w as any).tagId || '').toUpperCase().trim(),
+          ((w as any).TagID || '').toUpperCase().trim()
+        ].filter(Boolean);
+        return wKeys.some(k => targetKeys.includes(k));
+      });
+
+      if (matchIndex >= 0) {
+        return prev.map((w, idx) => idx === matchIndex ? {
+          ...w,
+          shiftStatus: newShift,
+          isCustomProfile: true,
+          updatedAt: nowIso
+        } : w);
+      } else {
+        return [{
+          ...person,
+          id: rawId || tagUpper,
+          hardhatTagId: tagUpper || rawId,
+          name: person.name || name,
+          shiftStatus: newShift,
+          isCustomProfile: true,
+          updatedAt: nowIso
+        }, ...prev];
+      }
+    });
+
+    if (selectedPerson) {
+      const sKeys = [
+        (selectedPerson.id || '').toUpperCase().trim(),
+        (selectedPerson.hardhatTagId || '').toUpperCase().trim(),
+        ((selectedPerson as any).tagId || '').toUpperCase().trim()
+      ].filter(Boolean);
+      if (sKeys.some(k => targetKeys.includes(k))) {
+        setSelectedPerson(prev => prev ? {
+          ...prev,
+          shiftStatus: newShift,
+          isCustomProfile: true,
+          updatedAt: nowIso
+        } : null);
+      }
     }
 
     showToast('info', `Worker ${name} shift status set to ${newShift}.`);
+    window.dispatchEvent(new CustomEvent('gao_data_updated', { detail: { colName: 'registered_people' } }));
     window.dispatchEvent(new CustomEvent('gao_refresh_data'));
     window.dispatchEvent(new CustomEvent('gao_map_data_updated'));
 
     // 2. Persist in background
     (async () => {
       try {
-        await Promise.all([
-          setDoc(doc(db, 'registered_people', tagUpper), { shiftStatus: newShift, updatedAt: serverTimestamp() }, { merge: true }),
-          setDoc(doc(db, 'people', tagUpper), { shiftStatus: newShift, updatedAt: serverTimestamp() }, { merge: true })
-        ]);
+        const persistPayload = {
+          shiftStatus: newShift,
+          isCustomProfile: true,
+          updatedAt: serverTimestamp()
+        };
+
+        const keysToUpdate = Array.from(new Set([tagUpper, rawId, person.hardhatTagId, (person as any).tagId].filter(Boolean)));
+        const tasks: Promise<any>[] = [];
+        for (const k of keysToUpdate) {
+          tasks.push(
+            setDoc(doc(db, 'registered_people', String(k)), persistPayload, { merge: true }),
+            setDoc(doc(db, 'people', String(k)), persistPayload, { merge: true })
+          );
+        }
+        await Promise.all(tasks);
       } catch (err) {
         console.error("Failed to update shift status in MongoDB:", err);
         showToast('error', `Failed to sync shift status to MongoDB for ${name}.`);
@@ -1792,27 +2078,15 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
               <Users className="w-7 h-7 text-[#007BC4]" />
-              Enterprise Workforce & Personnel Center
+              Workforce Registry & Personnel Directory
             </h2>
-            {mongoStatus.connected ? (
-              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
-                <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
-              </span>
-            ) : (
-              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800">
-                <span className="w-2 h-2 rounded-full bg-rose-500" />
-                <Database size={13} className="text-rose-600 dark:text-rose-400" />
-                <span>MongoDB Disconnected</span>
-              </span>
-            )}
-            <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200">
-              Live UHF Tracking Active
+            <span className="px-2.5 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border-slate-200 dark:border-slate-700">
+              <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <span>Active Roster</span>
             </span>
           </div>
           <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-1">
-            Manage personnel directory, contractor trade rosters, RFID hardhat tags, and PPE compliance synced to MongoDB Atlas
+            Manage personnel directory, trade assignments, RFID hardhat tags, and safety compliance.
           </p>
         </div>
 
@@ -2213,7 +2487,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                             <span className="text-slate-400 text-[11px] font-medium">PPE Status:</span>
                             <select
                               value={ppe}
-                              onChange={(e) => handleQuickUpdatePpe(tagDisplay, person.name, e.target.value as any)}
+                              onChange={(e) => handleQuickUpdatePpe(person, e.target.value as any)}
                               className={`text-[10px] font-black uppercase rounded px-2 py-0.5 outline-none border cursor-pointer ${
                                 ppe === 'COMPLIANT' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950 dark:text-emerald-300' :
                                 ppe === 'WARNING' ? 'bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950 dark:text-amber-300' :
@@ -2230,7 +2504,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                             <span className="text-slate-400 text-[11px] font-medium">Shift State:</span>
                             <select
                               value={shift}
-                              onChange={(e) => handleQuickUpdateShift(tagDisplay, person.name, e.target.value as any)}
+                              onChange={(e) => handleQuickUpdateShift(person, e.target.value as any)}
                               className="text-[10px] font-bold rounded px-2 py-0.5 outline-none bg-white dark:bg-slate-700 text-slate-700 dark:text-slate-200 border border-slate-200 dark:border-slate-600 cursor-pointer"
                             >
                               <option value="ON_SITE">🟢 ON-SITE</option>
@@ -2247,7 +2521,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                               return (
                                 <select
                                   value={person.trainingStatus || 'COMPLIANT'}
-                                  onChange={(e) => handleQuickUpdateTrainingStatus(tagDisplay, person.name, e.target.value as any)}
+                                  onChange={(e) => handleQuickUpdateTrainingStatus(person, e.target.value as any)}
                                   className={`text-[10px] font-black uppercase rounded px-2 py-0.5 outline-none border cursor-pointer ${badgeInfo.selectClass}`}
                                 >
                                   <option value="COMPLIANT">✓ COMPLIANT</option>
@@ -2390,7 +2664,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                         <TableCell className="text-center">
                           <select
                             value={ppe}
-                            onChange={(e) => handleQuickUpdatePpe(tagDisplay, person.name, e.target.value as any)}
+                            onChange={(e) => handleQuickUpdatePpe(person, e.target.value as any)}
                             className={`text-[10px] font-black uppercase rounded px-2 py-1 outline-none border cursor-pointer ${
                               ppe === 'COMPLIANT' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
                               ppe === 'WARNING' ? 'bg-amber-50 text-amber-700 border-amber-200' :
@@ -2407,7 +2681,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                         <TableCell className="text-center">
                           <select
                             value={shift}
-                            onChange={(e) => handleQuickUpdateShift(tagDisplay, person.name, e.target.value as any)}
+                            onChange={(e) => handleQuickUpdateShift(person, e.target.value as any)}
                             className="text-[10px] font-bold rounded px-2 py-1 outline-none bg-slate-100 text-slate-700 border border-slate-200 cursor-pointer"
                           >
                             <option value="ON_SITE">🟢 ON-SITE</option>
@@ -2424,7 +2698,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                             return (
                               <select
                                 value={person.trainingStatus || 'COMPLIANT'}
-                                onChange={(e) => handleQuickUpdateTrainingStatus(tagDisplay, person.name, e.target.value as any)}
+                                onChange={(e) => handleQuickUpdateTrainingStatus(person, e.target.value as any)}
                                 className={`text-[10px] font-black uppercase rounded px-2 py-1 outline-none border cursor-pointer ${badgeInfo.selectClass}`}
                                 title="Update safety training compliance in MongoDB"
                               >
@@ -2729,7 +3003,7 @@ export default function PeopleTab({ people = [] }: PeopleTabProps) {
                             <span className="text-[11px] font-bold text-slate-500">Quick Update:</span>
                             <select
                               value={selectedPerson.trainingStatus || 'COMPLIANT'}
-                              onChange={(e) => handleQuickUpdateTrainingStatus(tagDisplay, selectedPerson.name, e.target.value as any)}
+                              onChange={(e) => handleQuickUpdateTrainingStatus(selectedPerson, e.target.value as any)}
                               className={`text-xs font-extrabold uppercase rounded-xl px-3 py-1.5 outline-none border cursor-pointer ${badgeInfo.selectClass}`}
                             >
                               <option value="COMPLIANT">✓ COMPLIANT</option>

@@ -23,7 +23,7 @@ export default function CommandPaletteModal({
   isOpen,
   onClose,
   people = [],
-  activeProject = 'metro-tower',
+  activeProject,
   onSelectProject,
   onToggleTheme,
   isDark,
@@ -49,7 +49,6 @@ export default function CommandPaletteModal({
     { id: 'customMap', label: 'Custom Map & Assets', path: '/custom-map', icon: Map, category: 'Navigation', shortcut: 'G M' },
     { id: 'playback', label: 'Playback History', path: '/playback', icon: PlayCircle, category: 'Navigation', shortcut: 'G P' },
     { id: 'people', label: 'Personnel Registry', path: '/people', icon: Users, category: 'Navigation', shortcut: 'G U' },
-    { id: 'visitors', label: 'Visitor Management & Badges', path: '/visitors', icon: ClipboardCheck, category: 'Navigation', shortcut: 'G V' },
     { id: 'attendance', label: 'Attendance & Timesheets', path: '/attendance', icon: Clock, category: 'Navigation', shortcut: 'G T' },
     { id: 'alerts', label: 'Real-time Alerts & Triggers', path: '/alerts', icon: Bell, category: 'Navigation', shortcut: 'G A' },
     { id: 'incidents', label: 'Incident Log File', path: '/incidents', icon: ShieldAlert, category: 'Navigation', shortcut: 'G I' },
@@ -67,11 +66,7 @@ export default function CommandPaletteModal({
     { id: 'sos', label: 'Trigger Site Emergency SOS Siren', action: () => { onTriggerSOS?.(); onClose(); }, icon: Zap, category: 'Action', shortcut: '⌘ !' },
   ];
 
-  const projectActions = [
-    { id: 'proj-metro', label: 'Switch Site: Metro Tower Hub (Active Phase 3)', action: () => { onSelectProject?.('metro-tower'); onClose(); }, icon: Building2, category: 'Projects' },
-    { id: 'proj-tunnel', label: 'Switch Site: Harbor Tunnel Shaft B', action: () => { onSelectProject?.('harbor-tunnel'); onClose(); }, icon: Building2, category: 'Projects' },
-    { id: 'proj-skyrise', label: 'Switch Site: SkyRise Alpha Commercial', action: () => { onSelectProject?.('skyrise-alpha'); onClose(); }, icon: Building2, category: 'Projects' },
-  ];
+  // Site switch actions are loaded dynamically from configured sites only
 
   const filteredPeople = query.trim() ? people.filter(p => 
     (p.name || "").toLowerCase().includes((query || "").toLowerCase()) || 
@@ -95,12 +90,10 @@ export default function CommandPaletteModal({
   const filteredItems = query.trim() ? [
     ...navItems.filter(i => (i.label || "").toLowerCase().includes((query || "").toLowerCase())),
     ...quickActions.filter(i => (i.label || "").toLowerCase().includes((query || "").toLowerCase())),
-    ...projectActions.filter(i => (i.label || "").toLowerCase().includes((query || "").toLowerCase())),
     ...personActions
   ] : [
     ...quickActions,
-    ...navItems.slice(0, 6),
-    ...projectActions
+    ...navItems.slice(0, 6)
   ];
 
   useEffect(() => {

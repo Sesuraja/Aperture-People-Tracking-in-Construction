@@ -1,4 +1,4 @@
-import { getCollectionDocs, upsertDoc, bulkWriteRealtimeTags, savePlaybackSnapshot, bulkUpsertDocs, getDocById, isRealCustomWorker } from './db.js';
+import { getCollectionDocs, upsertDoc, bulkWriteRealtimeTags, savePlaybackSnapshot, bulkUpsertDocs, getDocById, isRealCustomWorker, hasRealHumanName } from './db.js';
 import { processTelemetryWithAI, TelemetryPayload } from './aiPipeline.js';
 import { isRealTelemetryTag } from './dataPolicy.js';
 import { broadcastWebSocketEvent } from './websocket.js';
@@ -401,16 +401,16 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
     const keys = [p.id, p.tagId, p.hardhatTagId, p.TagID].filter(Boolean).map((k: any) => String(k).toLowerCase().trim());
     for (const key of keys) {
       const prev = existingMap.get(key);
-      const prevIsCustom = isRealCustomWorker(prev);
-      const curIsCustom = isRealCustomWorker(p);
+      const prevHasName = prev ? hasRealHumanName(prev.name) : false;
+      const curHasName = hasRealHumanName(p.name);
       if (!prev) {
         existingMap.set(key, p);
-      } else if (!prevIsCustom && curIsCustom) {
+      } else if (!prevHasName && curHasName) {
         existingMap.set(key, p);
-      } else if (prevIsCustom && !curIsCustom) {
-        // Never overwrite a custom profile with a non-custom profile
+      } else if (prevHasName && !curHasName) {
+        // Never overwrite a custom human name with a generic placeholder
         continue;
-      } else if (curIsCustom && p.updatedAt && prev.updatedAt && new Date(p.updatedAt).getTime() >= new Date(prev.updatedAt).getTime()) {
+      } else if (curHasName && p.updatedAt && prev.updatedAt && new Date(p.updatedAt).getTime() >= new Date(prev.updatedAt).getTime()) {
         existingMap.set(key, p);
       }
     }
@@ -429,21 +429,30 @@ export async function autoSyncTelemetryToMongoDB(items: any[], orgId: string = '
     }
     let personDoc: any;
     if (existing) {
+      const realName = hasRealHumanName(existing.name)
+        ? existing.name
+        : (hasRealHumanName(item.fullName) ? item.fullName : (existing.name || item.fullName || `Personnel ${tid.slice(-6).toUpperCase()}`));
       personDoc = {
         ...existing,
         id: tid,
         _id: existing._id || tid,
         tagId: tid,
         hardhatTagId: tid,
+        name: realName,
+        firstName: existing.firstName || item.fn || '',
+        lastName: existing.lastName || item.ln || '',
         currentZone: item.loc || existing.currentZone || 'Zone1',
         location: item.loc || existing.location || 'Zone1',
         shiftStatus: existing.shiftStatus || 'ON_SITE',
+        ppeStatus: existing.ppeStatus || 'COMPLIANT',
+        trainingStatus: existing.trainingStatus || 'COMPLIANT',
+        lastTrainingDate: existing.lastTrainingDate || '',
         presenceState: 'ACTIVE',
         lastSeen: item.enter || existing.lastSeen || nowIso,
         updatedAt: nowIso
       };
     } else {
-      const rawName = (item.fullName && !item.fullName.startsWith('Personnel ') && item.fullName.toLowerCase() !== 'john site lead') 
+      const rawName = (item.fullName && hasRealHumanName(item.fullName)) 
         ? item.fullName 
         : ((item.fn || item.ln) ? `${item.fn} ${item.ln}`.trim() : `Personnel ${tid.slice(-6).toUpperCase()}`);
       personDoc = {

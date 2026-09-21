@@ -52,10 +52,16 @@ async function generateContentWithFallback(ai: any, params: {
   const models = Array.from(new Set([DEFAULT_GEMINI_MODEL, ...DEFAULT_GEMINI_FALLBACK_CANDIDATES]));
   let lastError: any = null;
 
+  const effectiveConfig = {
+    ...(params.config || {}),
+    maxOutputTokens: params.config?.maxOutputTokens || 300
+  };
+
   for (const model of models) {
     try {
       const response = await ai.models.generateContent({
         ...params,
+        config: effectiveConfig,
         model
       });
       return response;

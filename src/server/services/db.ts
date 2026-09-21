@@ -810,6 +810,9 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
         if (existingInDb.organizationId) {
           cleanDoc.organizationId = existingInDb.organizationId;
         }
+        if (colName === 'registered_people' || colName === 'people') {
+          protectWorkerDocument(existingInDb, cleanDoc);
+        }
         await mongoDb.collection(colName).updateOne(
           { _id: existingInDb._id },
           { $set: cleanDoc }
@@ -859,6 +862,9 @@ export async function upsertDoc(colName: string, doc: any, organizationId?: stri
         if (fallbackById) {
           if (fallbackById.organizationId) {
             cleanDoc.organizationId = fallbackById.organizationId;
+          }
+          if (colName === 'registered_people' || colName === 'people') {
+            protectWorkerDocument(fallbackById, cleanDoc);
           }
           await mongoDb.collection(colName).updateOne(
             { _id: fallbackById._id },
@@ -1995,23 +2001,77 @@ export async function purgeLegacySampleWorkers(): Promise<void> {
 }
 
 /**
+ * Checks if a string is a real human name rather than a synthetic or default placeholder
+ */
+export function hasRealHumanName(name?: string): boolean {
+  if (!name || typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  const lower = trimmed.toLowerCase();
+  if (
+    !trimmed || 
+    lower === 'john' || 
+    lower === 'john site lead' || 
+    lower === 'unknown' || 
+    lower === 'unassigned' || 
+    lower === 'field personnel' || 
+    lower.startsWith('personnel ') || 
+    lower.startsWith('tag ') || 
+    lower.startsWith('worker ')
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Safeguard: Protects worker documents against being overwritten with generic fallback telemetry data
+ */
+export function protectWorkerDocument(existing: any, incoming: any): void {
+  if (!existing || typeof existing !== 'object' || !incoming || typeof incoming !== 'object') return;
+
+  // 1. Worker Name Safeguard: Never let generic telemetry names overwrite an existing real human name
+  if (hasRealHumanName(existing.name) && !hasRealHumanName(incoming.name)) {
+    incoming.name = existing.name;
+    incoming.firstName = existing.firstName || incoming.firstName || '';
+    incoming.lastName = existing.lastName || incoming.lastName || '';
+    incoming.isCustomProfile = true;
+  }
+
+  // 2. Worker Status Safeguard (PPE, Shift, Training, Role, Company):
+  // Never let automated telemetry background sync (which sends default or synthetic statuses) overwrite user-configured statuses!
+  if (!incoming.isCustomProfile) {
+    if (existing.ppeStatus) incoming.ppeStatus = existing.ppeStatus;
+    if (existing.shiftStatus) incoming.shiftStatus = existing.shiftStatus;
+    if (existing.trainingStatus) incoming.trainingStatus = existing.trainingStatus;
+    if (existing.lastTrainingDate) incoming.lastTrainingDate = existing.lastTrainingDate;
+    if (existing.trainingCourse) incoming.trainingCourse = existing.trainingCourse;
+    if (existing.trainingExpiry) incoming.trainingExpiry = existing.trainingExpiry;
+    if (existing.role && existing.role !== 'Field Personnel') incoming.role = existing.role;
+    if (existing.tradeCompany && existing.tradeCompany !== 'Field Team') {
+      incoming.tradeCompany = existing.tradeCompany;
+      incoming.company = existing.company || existing.tradeCompany;
+    }
+    if (existing.certifications && existing.certifications !== 'Standard Compliance & Safety') {
+      incoming.certifications = existing.certifications;
+    }
+    if (existing.phone) incoming.phone = existing.phone;
+    if (existing.email) incoming.email = existing.email;
+    if (existing.emergencyContact) incoming.emergencyContact = existing.emergencyContact;
+    if (existing.isCustomProfile) incoming.isCustomProfile = true;
+  }
+}
+
+/**
  * Checks if a worker profile is a real custom profile (not a default raw tag or generic John placeholder)
  */
 export function isRealCustomWorker(p: any): boolean {
   if (!p || typeof p !== 'object') return false;
-  if (p.isCustomProfile) return true;
   const name = String(p.name || '').trim();
-  const lower = name.toLowerCase();
-  if (
-    !name || 
-    lower === 'john' || 
-    lower === 'john site lead' || 
-    name.startsWith('Personnel ') || 
-    name.startsWith('Tag ')
-  ) {
+  if (!hasRealHumanName(name)) {
     return false;
   }
-  return Boolean(name && lower !== 'john');
+  return true;
 }
+
 
 

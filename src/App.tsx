@@ -11,7 +11,6 @@ import { Activity, Bell, Map, Map as MapIcon, Users, BarChart3, Settings, Shield
 import CommandPaletteModal from './components/CommandPaletteModal';
 import ErrorBoundary from './components/ErrorBoundary';
 import AttendanceTab from './components/AttendanceTab';
-import VisitorsTab from './components/VisitorsTab';
 import AuditTab from './components/AuditTab';
 import IncidentsTab from './components/IncidentsTab';
 import AIInsightsTab from './components/AIInsightsTab';
@@ -532,17 +531,6 @@ function AppContent({ onLogout }: { onLogout: () => void }) {
                    permissions={permissions}
                    userPagePermissions={userPagePermissions}
                    featureName="Personnel Registry"
-                 />
-              } />
-              <Route path="/visitors" element={
-                 <ProtectedRoute 
-                   element={<VisitorsTab />}
-                   userRole={userRole}
-                   userUid="default"
-                   permissionKey="visitors"
-                   permissions={permissions}
-                   userPagePermissions={userPagePermissions}
-                   featureName="Visitor Management"
                  />
               } />
               <Route path="/attendance" element={

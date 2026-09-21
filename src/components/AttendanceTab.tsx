@@ -1053,29 +1053,15 @@ export default function AttendanceTab({ people }: { people: Person[] }) {
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
               <Clock className="w-7 h-7 text-[#007BC4]" />
-              Enterprise Attendance Management
+              Attendance & Shift Management
             </h2>
             <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-blue-50 text-blue-700 border-blue-300 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800">
               <Clock size={13} className="text-[#007BC4]" />
               <span>System Time ({systemTzLabel}): <span className="font-mono font-black">{systemClock.timeNoSuffix}</span></span>
             </span>
-            {mongoStatus.connected ? (
-              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-emerald-50 text-emerald-700 border-emerald-300 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <Database size={13} className="text-emerald-600 dark:text-emerald-400" />
-                <span>MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)</span>
-                {mongoStatus.latencyMs > 0 && <span className="text-[10px] opacity-75 font-mono">({mongoStatus.latencyMs}ms)</span>}
-              </span>
-            ) : (
-              <span className="px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1.5 border shadow-2xs bg-rose-50 text-rose-700 border-rose-300 dark:bg-rose-950/60 dark:text-rose-300 dark:border-rose-800">
-                <span className="w-2 h-2 rounded-full bg-rose-500" />
-                <Database size={13} className="text-rose-600 dark:text-rose-400" />
-                <span>MongoDB Disconnected</span>
-              </span>
-            )}
           </div>
           <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-1">
-            Real-time RFID turnstile telemetry, live workforce presence, geo-mobile punches & automated timesheets synced to MongoDB.
+            Real-time RFID turnstile telemetry, live workforce presence, shift schedules, and automated timesheets.
           </p>
         </div>
 

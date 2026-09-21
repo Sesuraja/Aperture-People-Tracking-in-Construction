@@ -292,22 +292,10 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
       setRegisteredPeopleMap(new Map(masterMap));
     });
 
-    const unsubVisitors = onSnapshot(collection(db, 'visitors'), (visitorsSnap) => {
-      visitorsSnap.forEach((doc) => {
-        const d = doc.data();
-        if (d) {
-          const item = { id: doc.id, isVisitor: true, ...d };
-          ingestPeopleIntoMap(masterMap, [item]);
-        }
-      });
-      setRegisteredPeopleMap(new Map(masterMap));
-    });
-
     // Also fetch via REST API to ensure complete database coverage
     Promise.allSettled([
       fetch('/api/data/registered_people').then(r => r.ok ? r.json() : []),
-      fetch('/api/data/people').then(r => r.ok ? r.json() : []),
-      fetch('/api/data/visitors').then(r => r.ok ? r.json() : [])
+      fetch('/api/data/people').then(r => r.ok ? r.json() : [])
     ]).then(results => {
       results.forEach(res => {
         if (res.status === 'fulfilled' && Array.isArray(res.value)) {
@@ -320,7 +308,6 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
     return () => {
       unsubRegistered();
       unsubPeopleCol();
-      unsubVisitors();
     };
   }, [people, trackingCtx?.people]);
 
@@ -328,11 +315,10 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
   const fetchDbHistory = async () => {
     setIsDbLoading(true);
     try {
-      const [historySnap, registeredPeopleSnap, peopleSnap, visitorsSnap, restHistoryRes] = await Promise.allSettled([
+      const [historySnap, registeredPeopleSnap, peopleSnap, restHistoryRes] = await Promise.allSettled([
         getDocs(collection(db, 'tag_history')),
         getDocs(collection(db, 'registered_people')),
         getDocs(collection(db, 'people')),
-        getDocs(collection(db, 'visitors')),
         fetch(`/api/GetHistoryRecords/0/150?timezone=${encodeURIComponent(systemTzSetting)}`).then(r => r.ok ? r.json() : [])
       ]);
 
@@ -351,12 +337,6 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
         peopleSnap.value.docs.forEach((doc: any) => {
           const d = doc.data();
           if (d) ingestPeopleIntoMap(localPeopleMap, [{ id: doc.id, ...d }]);
-        });
-      }
-      if (visitorsSnap.status === 'fulfilled' && visitorsSnap.value?.docs) {
-        visitorsSnap.value.docs.forEach((doc: any) => {
-          const d = doc.data();
-          if (d) ingestPeopleIntoMap(localPeopleMap, [{ id: doc.id, isVisitor: true, ...d }]);
         });
       }
 
@@ -460,9 +440,9 @@ export default function PlaybackTab({ people, zones: initialZones }: { people?: 
     fetchDbHistory();
     const interval = setInterval(() => {
       fetchDbHistory();
-    }, 4000);
+    }, 10000);
     return () => clearInterval(interval);
-  }, [registeredPeopleMap, selectedDate]);
+  }, [selectedDate, systemTzSetting]);
 
   // Sync incoming API records and save them to MongoDB
   useEffect(() => {
@@ -729,14 +709,11 @@ ${alertSnippets || '  - No critical geofence breaches or safety violations recor
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-xl font-bold text-slate-900 dark:text-white tracking-tight">
-                  Historical Telemetry & Access Ledger
+                  History & Playback
                 </h2>
-                <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase bg-[#007BC4]/10 text-[#007BC4] border border-[#007BC4]/20">
-                  MongoDB 7-Day Retention
-                </span>
               </div>
               <p className="text-slate-500 dark:text-slate-400 text-xs font-medium mt-0.5">
-                Audit real-time & historical {personnelSingular.toLowerCase()} access, zone transitions & dwell times in minutes for <span className="font-semibold text-slate-700 dark:text-slate-300">{siteName}</span>
+                Audit workforce access, zone transitions & dwell times across {siteName}
               </p>
             </div>
           </div>

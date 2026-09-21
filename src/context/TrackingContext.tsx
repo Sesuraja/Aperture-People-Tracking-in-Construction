@@ -811,14 +811,13 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
     try {
       setIsLoading(true);
       const authHeaders = getAuthHeaders();
-      const [zonesRes, mapRes, readersRes, assetsRes, vehiclesRes, peopleRes, visitorsRes, camerasRes, sensorsRes, infraRes, liveTagsRes] = await Promise.allSettled([
+      const [zonesRes, mapRes, readersRes, assetsRes, vehiclesRes, peopleRes, camerasRes, sensorsRes, infraRes, liveTagsRes] = await Promise.allSettled([
         fetch('/api/data/zones', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch(`/api/data/map_configurations/${activeProject}`, { headers: authHeaders }).then(r => r.ok ? r.json() : null),
         fetch('/api/data/reader_zone_mappings', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/assets', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/vehicles', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/registered_people', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
-        fetch('/api/data/visitors', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/cameras', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/sensors', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
         fetch('/api/data/infrastructure', { headers: authHeaders }).then(r => r.ok ? r.json() : []),
@@ -918,62 +917,9 @@ export function TrackingProvider({ children }: { children: React.ReactNode }) {
         };
       });
 
-      // Include allowed and verified site visitors on the live tracking map
-      const activeVisitors: Person[] = (visitorsRes.status === 'fulfilled' && Array.isArray(visitorsRes.value))
-        ? visitorsRes.value
-            .filter((v: any) => {
-              if (!v) return false;
-              const status = (v.status || '').trim();
-              const idStatus = (v.idVerificationStatus || '').toUpperCase();
-
-              // Block pending approval, denied, rejected, departed, blacklisted, or failed ID visitors
-              if (status === 'Pending Approval' || status === 'Denied' || status === 'Rejected' || status === 'Completed' || status === 'Blacklisted' || status === 'Departed') {
-                return false;
-              }
-              if (idStatus === 'FAILED' || idStatus === 'REJECTED') {
-                return false;
-              }
-
-              // Allowed if active, checked-in, overstayed on site, or approved with verified ID
-              if (status === 'Active' || status === 'Checked-in' || status === 'Overstayed') {
-                return idStatus !== 'FAILED';
-              }
-              if (status === 'Approved' && (idStatus === 'VERIFIED' || v.tag)) {
-                return true;
-              }
-              return false;
-            })
-            .map((v: any, vIdx: number) => {
-              const zone = v.location || 'Site Command HQ';
-              const defaultPoint = SITE_ZONE_WAYPOINTS[3]; // Site Command HQ
-              const x = typeof v.x === 'number' ? v.x : defaultPoint.x;
-              const y = typeof v.y === 'number' ? v.y : defaultPoint.y;
-
-              return {
-                id: v.id || `VIS-${vIdx + 880}`,
-                name: `${v.name} (Visitor)`,
-                role: 'Visitor',
-                tradeCompany: v.company || 'Auditor / Guest',
-                ppeStatus: 'COMPLIANT' as const,
-                shiftStatus: 'ON_SITE' as const,
-                trainingStatus: 'COMPLIANT' as const,
-                hardhatTagId: v.tag || `VIS-TAG-${v.id || vIdx}`,
-                currentZone: zone,
-                presenceState: 'IDLE' as const,
-                dwellTime: v.duration ? parseInt(v.duration) || 25 : 25,
-                x,
-                y,
-                rssi: -58,
-                battery: 98,
-                lastSeen: v.arrivalTime ? new Date(v.arrivalTime) : new Date(),
-                trail: []
-              };
-            })
-        : [];
-
       setPeople(prev => {
         const existingMap = new Map((prev || []).map(p => [p.id, p]));
-        const combined = [...loadedPeople, ...activeVisitors];
+        const combined = loadedPeople;
 
         return combined.map(item => {
           const existing = existingMap.get(item.id);

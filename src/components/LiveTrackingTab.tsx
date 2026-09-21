@@ -85,17 +85,8 @@ function buildDynamicZones(
   return result;
 }
 
-const INITIAL_PROJECT_PROPERTIES: Record<string, ProjectProperties> = {
-  'metro-tower': {
-    id: 'metro-tower',
-    name: 'Primary Monitored Facility',
-    contractor: 'Prime Operations Group',
-    sizeSqFt: 350000,
-    dimensions: '250m x 180m',
-    floorplanUrl: '',
-    customZones: {}
-  }
-};
+// Site properties are loaded from the database; no hardcoded project data
+const INITIAL_PROJECT_PROPERTIES: Record<string, ProjectProperties> = {};
 
 export default function LiveTrackingTab({ 
   people: propPeople, 
@@ -116,10 +107,18 @@ export default function LiveTrackingTab({
 }) {
   const location = useLocation();
   const focusZone = location.state?.focusZone || null;
-  const [localActiveProject, setLocalActiveProject] = useState('metro-tower');
+  const [localActiveProject, setLocalActiveProject] = useState(() => localStorage.getItem('gao_active_project') || 'default');
   const activeProject = propActiveProject !== undefined ? propActiveProject : localActiveProject;
 
-  const currentProject = INITIAL_PROJECT_PROPERTIES[activeProject] || INITIAL_PROJECT_PROPERTIES['metro-tower'];
+  const currentProject: ProjectProperties = INITIAL_PROJECT_PROPERTIES[activeProject] || {
+    id: activeProject || 'default',
+    name: 'Active Monitored Facility',
+    contractor: '',
+    sizeSqFt: 0,
+    dimensions: '',
+    floorplanUrl: '',
+    customZones: {}
+  };
 
   const [localProjectProps, setLocalProjectProps] = useState<any>(() => {
     try {
@@ -166,8 +165,6 @@ export default function LiveTrackingTab({
   const [isEmergencyMode, setIsEmergencyMode] = useState(false);
   const [mapMode, setMapMode] = useState<MapMode>('standard');
   const [activeFloor, setActiveFloor] = useState('ALL');
-  const [timelineTime, setTimelineTime] = useState('NOW (Live)');
-  const [isReplaying, setIsReplaying] = useState(false);
   const [selectedTrade, setSelectedTrade] = useState<string>('ALL');
   const [isMapFullScreen, setIsMapFullScreen] = useState(false);
 
@@ -791,7 +788,6 @@ export default function LiveTrackingTab({
     };
 
     fetchDirectMapEntities();
-    const intervalId = setInterval(fetchDirectMapEntities, 2000);
 
     const handleDataUpdateEvent = () => {
       fetchDirectMapEntities();
@@ -800,7 +796,6 @@ export default function LiveTrackingTab({
     window.addEventListener('gao_project_updated', handleDataUpdateEvent);
 
     return () => {
-      clearInterval(intervalId);
       window.removeEventListener('gao_map_data_updated', handleDataUpdateEvent);
       window.removeEventListener('gao_project_updated', handleDataUpdateEvent);
       unsubProject(); unsubMapConfig(); unsubZones(); unsubGeofences(); unsubPeople(); unsubRegistered(); unsubAssets(); unsubVehicles(); unsubAlerts(); unsubReaders(); unsubDevices(); unsubCameras(); unsubSensors();
@@ -993,14 +988,13 @@ export default function LiveTrackingTab({
         id: role,
         label: role,
         icon: roleIcons[i % roleIcons.length]
-      })),
-      { id: 'Visitor', label: 'Visitors', icon: '🎫' }
+      }))
     ];
 
     return items.map(t => {
       const count = t.id === 'ALL' 
         ? people.length 
-        : people.filter(p => (p.role || "").toLowerCase().includes((t.id || "").toLowerCase()) || (t.id === 'Visitor' && ((p.role || '').toLowerCase().includes('visitor') || (p.name || '').includes('(Visitor)')))).length;
+        : people.filter(p => (p.role || "").toLowerCase().includes((t.id || "").toLowerCase())).length;
       return { ...t, count };
     });
   }, [people, trackingCtx?.industryConfig?.defaultRoles, personnelPlural]);
@@ -1086,25 +1080,6 @@ export default function LiveTrackingTab({
 
         {/* Top Header Action Buttons Cluster */}
         <div className="flex flex-wrap sm:flex-nowrap items-center gap-2 shrink-0">
-          <span className={`h-10 px-3 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 border shadow-2xs shrink-0 select-none ${
-            isWsConnected 
-              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
-              : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
-          }`}>
-            {isWsConnected ? <Wifi className="w-3.5 h-3.5 text-emerald-500 animate-pulse shrink-0" /> : <WifiOff className="w-3.5 h-3.5 text-amber-500 shrink-0" />}
-            <span className="hidden lg:inline whitespace-nowrap">{isWsConnected ? 'Telemetry Live' : 'Syncing...'}</span>
-          </span>
-
-          <span className={`h-10 px-3 rounded-xl text-xs font-bold inline-flex items-center justify-center gap-1.5 border shadow-2xs shrink-0 select-none ${
-            mongoDbStatus.connected && mongoDbStatus.storageType === 'mongodb'
-              ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
-              : 'bg-sky-50 dark:bg-sky-950/40 text-sky-700 dark:text-sky-300 border-sky-300 dark:border-sky-800'
-          }`}
-          title={mongoDbStatus.connected ? 'MongoDB Telemetry Database Connected' : 'Local In-Memory Telemetry Database Active'}
-          >
-            <Database className="w-3.5 h-3.5 text-sky-500 shrink-0" />
-            <span className="hidden lg:inline whitespace-nowrap">{mongoDbStatus.connected && mongoDbStatus.storageType === 'mongodb' ? 'MongoDB Online' : 'DB Engine Active'}</span>
-          </span>
 
           <button 
             onClick={handleExportAttendancePDF}
@@ -1509,40 +1484,6 @@ export default function LiveTrackingTab({
             </div>
           </div>
 
-          {/* Timeline Replay Scrubber Bar */}
-          <div className="px-3 py-2 bg-slate-100 text-slate-800 border-b border-slate-200 flex items-center justify-between gap-4 shrink-0 text-xs font-mono">
-            <div className="flex items-center gap-2.5 shrink-0">
-              <button 
-                onClick={() => setIsReplaying(!isReplaying)}
-                className="h-6 px-3 bg-sky-600 hover:bg-sky-500 active:bg-sky-700 rounded-md text-[10px] font-black uppercase tracking-wider text-white transition inline-flex items-center justify-center gap-1.5 shadow-xs"
-              >
-                <span>{isReplaying ? '⏸ PAUSE' : '▶ REPLAY'}</span>
-              </button>
-              <span className="text-[11px] font-bold text-sky-700">Timeline: {timelineTime}</span>
-            </div>
-            <div className="flex-1 max-w-md flex items-center gap-3">
-              <span className="text-[9px] text-slate-500 font-bold shrink-0">08:00 AM</span>
-              <input 
-                type="range" 
-                min="0" 
-                max="100" 
-                defaultValue="100"
-                className="w-full h-1.5 bg-slate-300 rounded-lg appearance-none cursor-pointer accent-sky-600"
-                onChange={(e) => {
-                  const val = Number(e.target.value);
-                  if (val < 20) setTimelineTime('08:30 AM');
-                  else if (val < 40) setTimelineTime('10:00 AM');
-                  else if (val < 60) setTimelineTime('11:45 AM');
-                  else if (val < 80) setTimelineTime('02:15 PM');
-                  else setTimelineTime('NOW (Live)');
-                }}
-              />
-              <span className="text-[9px] font-bold text-emerald-700 whitespace-nowrap shrink-0">NOW (Live)</span>
-            </div>
-            <div className="text-[10px] text-slate-500 font-semibold hidden lg:block shrink-0">
-              15-min path history loaded
-            </div>
-          </div>
 
           {/* Emergency SOS Persistent Active Alert Banner */}
           {emergencySosState?.active && (

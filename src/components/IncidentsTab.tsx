@@ -649,16 +649,10 @@ function getInitialIncidentsCache(): { records: RawApiHistoryRecord[]; count: nu
 
         {/* Header Action Bar */}
         <div className="flex flex-wrap items-center gap-2.5">
-          {/* MongoDB Atlas Persistence Badge */}
-          <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/60 text-indigo-700 dark:text-indigo-400 text-xs font-semibold">
-            <Database size={13} className="text-indigo-600 dark:text-indigo-400" />
-            <span>MongoDB Atlas: {isMongoSynced ? 'Persisted' : 'Syncing'}</span>
-          </div>
-
           {/* Connection Status Badge */}
           <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-400 text-xs font-medium">
             <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>API Online · {totalSystemCount.toLocaleString()} Total Records</span>
+            <span>Telemetry Active · {totalSystemCount.toLocaleString()} Records</span>
           </div>
 
           {/* Refresh Button */}

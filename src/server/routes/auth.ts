@@ -102,46 +102,26 @@ authRouter.post('/register', authRateLimiter, async (req: Request, res: Response
       return res.status(400).json({ error: 'User with this email already exists' });
     }
 
-    let resolvedOrgId = organizationId;
-    let resolvedOrgName = organizationName || 'People Tracking in Construction';
+    const resolvedOrgId = organizationId || 'default';
+    const resolvedOrgName = 'People Tracking in Construction';
 
-    // If new customer provides company/organization name, create dedicated organization
-    if (organizationName && organizationName.trim()) {
-      resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      resolvedOrgName = organizationName.trim();
-      const newOrg = {
+    // Ensure default organization exists
+    const defaultOrg = await getDocById('organizations', resolvedOrgId);
+    if (!defaultOrg) {
+      await upsertDoc('organizations', {
         id: resolvedOrgId,
         name: resolvedOrgName,
-        slug: resolvedOrgName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+        slug: 'people-tracking-in-construction',
         status: 'active',
-        plan: 'standard',
+        plan: 'enterprise',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString()
-      };
-      await upsertDoc('organizations', newOrg, resolvedOrgId);
-    } else if (organizationId) {
-      const existingOrg = await getDocById('organizations', organizationId);
-      if (existingOrg) {
-        resolvedOrgName = existingOrg.name;
-      }
-    } else {
-      // Auto-create a dedicated unique organization for this new user instead of demo
-      resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      resolvedOrgName = name ? `${name}'s Organization` : `${lowerEmail.split('@')[0]}'s Organization`;
-      const newOrg = {
-        id: resolvedOrgId,
-        name: resolvedOrgName,
-        slug: resolvedOrgName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
-        status: 'active',
-        plan: 'standard',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      await upsertDoc('organizations', newOrg, resolvedOrgId);
+      }, resolvedOrgId);
     }
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const assignedRole = organizationName ? 'admin' : (lowerEmail.endsWith('@gaostaff.com') ? 'admin' : role);
+    const validRoles = ['admin', 'manager', 'operator', 'viewer'];
+    const assignedRole = (role && validRoles.includes(role)) ? role : (lowerEmail.endsWith('@gaostaff.com') ? 'admin' : 'operator');
 
     const newUser = {
       id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
@@ -155,6 +135,22 @@ authRouter.post('/register', authRateLimiter, async (req: Request, res: Response
     };
 
     await upsertDoc('users', newUser, resolvedOrgId);
+
+    // Sync user role in settings for permission matrix
+    try {
+      await upsertDoc('settings', {
+        id: `user_role_${newUser.id}`,
+        uid: newUser.id,
+        email: newUser.email,
+        displayName: newUser.name,
+        role: newUser.role,
+        organizationId: resolvedOrgId,
+        updatedAt: new Date().toISOString()
+      }, resolvedOrgId);
+    } catch (e) {
+      console.warn('[Auth] Could not sync user role setting:', e);
+    }
+
     const token = generateToken({
       id: newUser.id,
       email: newUser.email,
@@ -170,7 +166,7 @@ authRouter.post('/register', authRateLimiter, async (req: Request, res: Response
       organizationId: resolvedOrgId,
       action: 'USER_REGISTER',
       resource: 'users',
-      details: { organizationId: resolvedOrgId, organizationName: resolvedOrgName },
+      details: { role: assignedRole, organizationId: resolvedOrgId, organizationName: resolvedOrgName },
       ip: req.ip
     });
 

@@ -1284,22 +1284,8 @@ export default function DevicesTab() {
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
               <Cpu className="w-7 h-7 text-[#007BC4]" />
-              Enterprise Hardware & Device Management
+              Hardware Devices & RFID Infrastructure
             </h2>
-            {/* Live MongoDB Atlas Connection Status */}
-            {mongoStatus.connected ? (
-              <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700 flex items-center gap-1.5 shadow-sm">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <Database size={13} className="text-emerald-600" />
-                MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)
-              </span>
-            ) : (
-              <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700 flex items-center gap-1.5 shadow-sm">
-                <span className="w-2 h-2 rounded-full bg-rose-500" />
-                <Database size={13} className="text-rose-600" />
-                MongoDB Disconnected
-              </span>
-            )}
 
             {/* Real-time WebSocket Connection Status Indicator */}
             <div className="flex items-center gap-2 ml-1 flex-wrap">

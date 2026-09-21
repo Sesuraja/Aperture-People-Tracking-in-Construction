@@ -234,7 +234,7 @@ Return strictly valid JSON with this exact schema:
       const responsePromise = ai.models.generateContent({
         model: m,
         contents: prompt,
-        config: { responseMimeType: 'application/json' }
+        config: { responseMimeType: 'application/json', maxOutputTokens: 300 }
       });
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('Gemini API timeout')), 12000));
       const response = await Promise.race([responsePromise, timeoutPromise]) as any;

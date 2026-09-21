@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db, doc, setDoc } from '../lib/db';
-import { ShieldAlert, Loader2, Mail, Lock, User, Shield, LogIn, UserPlus, Building2 } from 'lucide-react';
+import { ShieldAlert, Loader2, Mail, Lock, User, Shield, LogIn, UserPlus } from 'lucide-react';
 import ApertureLogo, { ApertureLogoMark } from './ApertureLogo';
 import { safeStorage } from '../lib/safeStorage';
 
@@ -13,10 +13,9 @@ export default function Login({ onLoginSuccess }: LoginProps) {
   const navigate = useNavigate();
   const [isSignUp, setIsSignUp] = useState(false);
   const [fullName, setFullName] = useState('');
-  const [organizationName, setOrganizationName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<'admin' | 'manager' | 'operator'>('admin');
+  const [role, setRole] = useState<'admin' | 'manager' | 'operator'>('operator');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
 
@@ -40,7 +39,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             password,
             name: fullName.trim() || email.split('@')[0],
             role,
-            organizationName: organizationName.trim() || `${fullName || 'Org'}'s Team`
+            organizationName: 'People Tracking in Construction'
           })
         });
         const apiData = await apiRes.json();
@@ -58,8 +57,8 @@ export default function Login({ onLoginSuccess }: LoginProps) {
         keysToClear.forEach(k => safeStorage.removeItem(k));
 
         safeStorage.setItem('gao_jwt_token', apiData.token);
-        const orgId = apiData.user?.organizationId || apiData.organization?.id || 'demo';
-        const orgName = apiData.organization?.name || organizationName.trim() || 'People Tracking in Construction';
+        const orgId = apiData.user?.organizationId || apiData.organization?.id || 'default';
+        const orgName = 'People Tracking in Construction';
         safeStorage.setItem('gao_active_organization', orgId);
         safeStorage.setItem('gao_active_project', orgId);
         safeStorage.setItem('gao_company_name', orgName);
@@ -145,16 +144,12 @@ export default function Login({ onLoginSuccess }: LoginProps) {
 
   {/* Product Title */}
   <h2 className="relative text-lg font-extrabold text-white tracking-tight">
-    {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config')
-      ? JSON.parse(localStorage.getItem('gao_industry_config') || '{}').appTitle || 'Aperture People Tracking'
-      : 'Aperture People Tracking'}
+    People Tracking in Construction
   </h2>
 
   {/* Tagline */}
   <p className="relative mt-1 text-xs text-sky-200/80 max-w-xs mx-auto leading-relaxed">
-    {typeof window !== 'undefined' && localStorage.getItem('gao_industry_config')
-      ? JSON.parse(localStorage.getItem('gao_industry_config') || '{}').appSubtitle || 'Enterprise RFID Workforce Tracking, Live Location Monitoring & AI Safety Telemetry'
-      : 'Enterprise RFID Workforce Tracking, Live Location Monitoring & AI Safety Telemetry'}
+    Enterprise RFID Workforce Tracking, Live Location Monitoring & Safety Telemetry
   </p>
 
 </div>
@@ -193,40 +188,22 @@ export default function Login({ onLoginSuccess }: LoginProps) {
           <form onSubmit={handleAuth} className="space-y-4">
             
             {isSignUp && (
-              <>
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                    Company / Organization Name
-                  </label>
-                  <div className="relative">
-                    <Building2 className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input 
-                      type="text" 
-                      value={organizationName}
-                      onChange={e => setOrganizationName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition"
-                      placeholder="e.g. Apex Construction Group"
-                    />
-                  </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
+                  Full Name
+                </label>
+                <div className="relative">
+                  <User className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input 
+                    type="text" 
+                    required={isSignUp}
+                    value={fullName}
+                    onChange={e => setFullName(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition"
+                    placeholder="John Doe"
+                  />
                 </div>
-
-                <div>
-                  <label className="block text-xs font-semibold uppercase tracking-wider text-slate-600 mb-1">
-                    Full Name
-                  </label>
-                  <div className="relative">
-                    <User className="w-5 h-5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input 
-                      type="text" 
-                      required={isSignUp}
-                      value={fullName}
-                      onChange={e => setFullName(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-lg pl-10 pr-4 py-2 text-sm outline-none focus:border-[#007BC4] focus:ring-1 focus:ring-[#007BC4] transition"
-                      placeholder="John Doe"
-                    />
-                  </div>
-                </div>
-              </>
+              </div>
             )}
 
             <div>

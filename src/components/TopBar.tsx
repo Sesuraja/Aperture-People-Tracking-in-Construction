@@ -1,289 +1,134 @@
-import { Download, Sun, Moon, Calendar, Bell, Search, Command, Database, ShieldCheck, Building2, Sparkles, Clock } from 'lucide-react';
+import { Bell, Moon, Search, Sun, Download, Building2, Clock } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useState, useEffect, useContext } from 'react';
-import { AppModeContext } from '../App';
-import ExportReportModal from './ExportReportModal';
+import { useState, useEffect } from 'react';
 import { ApertureLogoMark } from './ApertureLogo';
-import { useTerminology } from '../context/TrackingContext';
 import { useSystemClock } from '../lib/dateTimeUtils';
-import { doc, db, onSnapshot } from '../lib/db';
+import ExportReportModal from './ExportReportModal';
 
-interface TopBarProps {
-  onOpenCommandPalette?: () => void;
-}
+interface TopBarProps { onOpenCommandPalette?: () => void; }
 
-interface MongoStatus {
-  connected: boolean;
-  engine: string;
-  collectionsCount?: number;
-  totalRecords?: number;
-  latencyMs?: number;
-  lastError?: string | null;
-}
+const pageTitles: Record<string, string> = {
+  '/dashboard': 'Dashboard', '/live': 'Live Tracking', '/custom-map': 'Site Map',
+  '/playback': 'History & Playback', '/people': 'Personnel', '/attendance': 'Attendance',
+  '/devices': 'Hardware Devices', '/alerts': 'Alerts & Triggers', '/incidents': 'Incidents',
+  '/analytics': 'Analytics', '/ai-insights': 'AI Insights', '/account-access': 'Account Access',
+  '/settings': 'Settings', '/audit': 'Audit Ledger'
+};
 
 export default function TopBar({ onOpenCommandPalette }: TopBarProps) {
   const navigate = useNavigate();
   const location = useLocation();
   const [isDark, setIsDark] = useState(() => document.documentElement.classList.contains('dark'));
-  const [isExportOpen, setIsExportOpen] = useState(false);
-  const [orgInfo, setOrgInfo] = useState<{ id: string; name: string } | null>(null);
-  const [currentTimezone, setCurrentTimezone] = useState<string>(() => {
-    return (typeof window !== 'undefined' ? localStorage.getItem('gao_system_timezone') : null) || 'UTC (Coordinated Universal Time)';
-  });
-  const { mode } = useContext(AppModeContext);
-  const { config, personnelPlural } = useTerminology();
-  const systemClock = useSystemClock(currentTimezone, 1000);
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [orgName, setOrgName] = useState(() => localStorage.getItem('gao_company_name') || 'People Tracking in Construction');
+  const clock = useSystemClock();
 
-  // Real-time MongoDB and Server Health state
-  const [dbStatus, setDbStatus] = useState<MongoStatus>({
-    connected: true,
-    engine: 'MongoDB Atlas',
-    latencyMs: 24
-  });
-
+  const title = pageTitles[location.pathname] || 'People Tracking in Construction';
 
   useEffect(() => {
-    if (isDark) {
-      document.documentElement.classList.add('dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-    }
+    document.documentElement.classList.toggle('dark', isDark);
   }, [isDark]);
 
-  // Fetch organization info & subscribe to global settings
   useEffect(() => {
-    const fetchOrg = async () => {
-      try {
-        const token = localStorage.getItem('gao_jwt_token');
-        const headers: Record<string, string> = {};
-        if (token) headers['Authorization'] = `Bearer ${token}`;
-        const res = await fetch('/api/auth/organization', { headers });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.organization) {
-            setOrgInfo(data.organization);
-          }
-        }
-      } catch {}
+    const handleOrgUpdate = () => {
+      setOrgName(localStorage.getItem('gao_company_name') || 'People Tracking in Construction');
     };
-    fetchOrg();
-
-    // Live MongoDB settings listener
-    const unsub = onSnapshot(doc(db, 'settings', 'global'), (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        if (data.companyName && data.companyName !== 'Aperture Global Systems UTC') {
-          setOrgInfo(prev => ({ id: prev?.id || 'default', name: data.companyName }));
-        }
-        if (data.systemTimezone) {
-          setCurrentTimezone(data.systemTimezone);
-        }
-      }
-    });
-
-    const handleSettingsUpdate = (e: any) => {
-      if (e?.detail?.companyName && e.detail.companyName !== 'Aperture Global Systems UTC') {
-        setOrgInfo(prev => ({ id: prev?.id || 'default', name: e.detail.companyName }));
-      }
-      if (e?.detail?.systemTimezone) {
-        setCurrentTimezone(e.detail.systemTimezone);
-      }
-      fetchOrg();
-    };
-
-    window.addEventListener('gao_settings_updated', handleSettingsUpdate);
-    window.addEventListener('gao_data_updated', fetchOrg);
-
+    window.addEventListener('storage', handleOrgUpdate);
+    window.addEventListener('gao_settings_updated', handleOrgUpdate);
     return () => {
-      unsub();
-      window.removeEventListener('gao_settings_updated', handleSettingsUpdate);
-      window.removeEventListener('gao_data_updated', fetchOrg);
+      window.removeEventListener('storage', handleOrgUpdate);
+      window.removeEventListener('gao_settings_updated', handleOrgUpdate);
     };
   }, []);
-
-  // Polling real system & MongoDB health from /api/mongodb/status
-  const checkHealth = async () => {
-    try {
-      const startTime = Date.now();
-      const res = await fetch('/api/mongodb/status');
-      const latency = Date.now() - startTime;
-      if (res.ok) {
-        const data = await res.json();
-        setDbStatus({
-          connected: Boolean(data.connected),
-          engine: data.engine || (data.connected ? 'MongoDB Atlas' : 'In-Memory Fallback'),
-          collectionsCount: data.collectionsCount || 0,
-          totalRecords: data.totalRecords || 0,
-          latencyMs: latency < 1000 ? latency : 28,
-          lastError: data.lastError || null
-        });
-      } else {
-        setDbStatus(prev => ({ ...prev, connected: false, latencyMs: latency, lastError: 'API Error' }));
-      }
-    } catch (err: any) {
-      setDbStatus(prev => ({ ...prev, connected: false, lastError: err.message }));
-    }
-  };
-
-  useEffect(() => {
-    checkHealth();
-    const interval = setInterval(checkHealth, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  // Determine current active view category for compliance export
-  let defaultCategory = 'attendance';
-  if (location.pathname.includes('people')) defaultCategory = 'people';
-  else if (location.pathname.includes('incidents')) defaultCategory = 'incidents';
-  else if (location.pathname.includes('visitors')) defaultCategory = 'visitors';
-  else if (location.pathname.includes('devices')) defaultCategory = 'devices';
-  else if (location.pathname.includes('tags')) defaultCategory = 'tags';
 
   return (
-    <header className="h-16 sm:h-20 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center px-4 sm:px-6 justify-between shrink-0 shadow-xs z-20 w-full relative transition-colors gap-4">
-      <ExportReportModal
-        isOpen={isExportOpen}
-        onClose={() => setIsExportOpen(false)}
-        defaultCategory={defaultCategory}
-      />
-
-      {/* LEFT SECTION: Brand Logo, Full Heading & Subtitle (Gracefully truncates on smaller widths) */}
-      <div className="flex items-center gap-3 min-w-0 max-w-[300px] sm:max-w-[420px] md:max-w-[500px] lg:max-w-[620px]">
-        <div className="p-2 bg-blue-50 dark:bg-slate-800/90 rounded-2xl border border-blue-100 dark:border-slate-700/80 shadow-2xs flex items-center justify-center shrink-0">
-          <ApertureLogoMark size={26} />
-        </div>
-
-        <div className="flex flex-col justify-center min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <h1 className="text-sm sm:text-base lg:text-lg font-extrabold text-slate-900 dark:text-white tracking-tight leading-tight truncate" title="People Tracking in Construction">
-              People Tracking in Construction
-            </h1>
-            <span className="hidden md:inline-flex text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-[#007BC4]/10 text-[#007BC4] border border-[#007BC4]/20 max-w-[220px] truncate" title={config?.industryName || 'Multi-Industry'}>
-              {config?.industryName || 'Multi-Industry'}
-            </span>
+    <>
+      <header className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 flex items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="p-2 rounded-lg bg-blue-50 dark:bg-slate-800 border border-blue-100 dark:border-slate-700 shrink-0">
+            <ApertureLogoMark size={22} />
           </div>
-          <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 tracking-normal mt-0.5 font-medium truncate" title={config?.appSubtitle || 'Universal RFID & AI Telemetry System'}>
-            {config?.appSubtitle || 'Universal RFID & AI Telemetry System'}
-          </p>
-        </div>
-      </div>
-
-      {/* RIGHT SECTION: Action Cards, Health Indicators & Controls (Cleanly grouped, non-colliding) */}
-      <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
-        {/* Quick Search Trigger Button */}
-        <button
-          onClick={onOpenCommandPalette}
-          className="hidden 2xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700/80 text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-700 transition cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
-          title="Open Command Palette (Cmd + K / Ctrl + K)"
-        >
-          <Search className="w-3.5 h-3.5 text-[#007BC4] shrink-0" />
-          <span className="text-xs font-medium">Search {personnelPlural || 'Workforce'}...</span>
-          <kbd className="flex items-center gap-0.5 text-[10px] font-mono font-semibold bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-1.5 py-0.5 rounded shadow-2xs text-slate-600 dark:text-slate-300">
-            <Command className="w-2.5 h-2.5 inline-block" />K
-          </kbd>
-        </button>
-
-        {/* Export Data Action Card */}
-        <button
-          onClick={() => setIsExportOpen(true)}
-          className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-3.5 py-1.5 sm:py-2 rounded-xl bg-gradient-to-r from-blue-600 to-[#007BC4] hover:from-blue-700 hover:to-[#006aa9] text-white text-xs font-bold transition shadow-2xs hover:shadow-sm cursor-pointer whitespace-nowrap shrink-0"
-          title="Download current view data as CSV or PDF report for EHS compliance"
-        >
-          <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white shrink-0" />
-          <span className="hidden sm:inline">Export Data</span>
-          <span className="flex items-center text-[9px] bg-white/20 px-1.5 py-0.5 rounded font-mono font-bold whitespace-nowrap">
-            PDF / CSV
-          </span>
-        </button>
-
-        {/* UNIFIED SYSTEM & DATABASE HEALTH STATUS */}
-        <div
-          onClick={() => navigate('/settings')}
-          className="flex items-center gap-2 sm:gap-2.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/90 border border-slate-200/90 dark:border-slate-700/90 hover:border-slate-300 dark:hover:border-slate-600 transition cursor-pointer shadow-2xs whitespace-nowrap shrink-0"
-          title={`Database: MongoDB Atlas (${dbStatus.connected ? 'Connected' : 'Disconnected'}). Click to open Settings.`}
-        >
-          <span className="relative flex h-2.5 w-2.5 shrink-0">
-            {dbStatus.connected ? (
-              <>
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.9)]" />
-              </>
-            ) : (
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.9)]" />
-            )}
-          </span>
-
-          <div className="flex flex-col text-left leading-tight whitespace-nowrap">
-            <div className="flex items-center gap-1.5">
-              <span className="text-xs font-extrabold text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                {dbStatus.connected ? 'Atlas Live' : 'Offline'}
-              </span>
-              {dbStatus.connected && (
-                <span className="text-[9px] font-mono font-bold text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/80 px-1 py-0.5 rounded border border-emerald-200/60 dark:border-emerald-800/50 whitespace-nowrap">
-                  {dbStatus.latencyMs ? `${dbStatus.latencyMs}ms` : 'Healthy'}
-                </span>
-              )}
-            </div>
-            <span className="text-[9px] text-slate-400 dark:text-slate-500 font-medium whitespace-nowrap">
-              MongoDB Sync
-            </span>
+          <div className="min-w-0">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-400">People Tracking in Construction</p>
+            <h1 className="text-base font-bold text-slate-900 dark:text-white truncate">{title}</h1>
           </div>
         </div>
 
-        {/* Organization Tenant Badge (Visible on large screens) */}
-        {orgInfo && (
+        <div className="flex items-center gap-2 sm:gap-2.5 shrink-0">
+          {/* Organization Badge */}
           <div 
-            className="hidden xl:flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-50/70 dark:bg-blue-950/40 border border-blue-200/80 dark:border-blue-800/60 text-xs shadow-2xs whitespace-nowrap shrink-0"
-            title={`Tenant Organization: ${orgInfo.name} (ID: ${orgInfo.id})`}
+            className="hidden xl:flex items-center gap-2 px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 text-xs font-medium text-slate-700 dark:text-slate-300 select-none shadow-xs" 
+            title={`Active Organization: ${orgName}`}
           >
-            <Building2 className="w-3.5 h-3.5 text-[#007BC4] shrink-0" />
-            <div className="flex flex-col text-left whitespace-nowrap">
-              <span className="text-[9px] uppercase font-bold text-slate-400 dark:text-slate-500 leading-none whitespace-nowrap">Organization</span>
-              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 mt-0.5 whitespace-nowrap max-w-[130px] truncate">{orgInfo.name}</span>
-            </div>
+            <Building2 size={14} className="text-[#007BC4] shrink-0" />
+            <span className="truncate max-w-[180px] font-semibold">{orgName}</span>
           </div>
-        )}
 
-        {/* REAL-TIME LIVE CLOCK WIDGET */}
-        <div 
-          className="flex items-center gap-2 px-2.5 sm:px-3 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200/90 dark:border-slate-700/80 text-slate-700 dark:text-slate-200 shadow-2xs text-xs whitespace-nowrap shrink-0"
-          title={`System Real-Time Clock: ${systemClock.timezoneLabel}\nDate: ${systemClock.dateLong}`}
-        >
-          <div className="flex items-center gap-1.5">
-            <Clock className="w-3.5 h-3.5 text-[#007BC4] animate-pulse shrink-0" />
-            <span className="font-mono font-bold text-xs tracking-tight text-slate-900 dark:text-white">
-              {systemClock.timeNoSuffix}
+          {/* Real-time System Clock */}
+          <div 
+            className="hidden md:flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 text-xs font-mono text-slate-700 dark:text-slate-300 select-none shadow-xs" 
+            title={`Real-Time System Clock (${clock.iana})`}
+          >
+            <Clock size={13} className="text-slate-400 shrink-0" />
+            <span className="font-semibold tabular-nums">{clock.timeNoSuffix}</span>
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 uppercase tracking-wider">
+              {clock.timezoneLabel}
             </span>
           </div>
-          <span className="flex items-center gap-1 text-[10px] font-extrabold uppercase tracking-wider bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-400 px-1.5 py-0.5 rounded-md border border-emerald-300/60 dark:border-emerald-700/50">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-            {systemClock.timezoneLabel} LIVE
-          </span>
-          <span className="hidden xl:inline-block text-[11px] text-slate-400 font-medium pl-1 border-l border-slate-200 dark:border-slate-700">
-            {systemClock.dateStr}
-          </span>
-        </div>
 
-        {/* Action Icon Buttons */}
-        <div className="flex items-center gap-1 sm:gap-1.5 pl-1 sm:pl-2 border-l border-slate-200 dark:border-slate-800 shrink-0">
+          {/* Operational Status Indicator */}
+          <div className="hidden 2xl:flex items-center gap-1.5 px-2.5 py-1.5 rounded-full bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-[11px] font-semibold text-emerald-700 dark:text-emerald-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <span>Operational</span>
+          </div>
+
+          {/* Export Data Button */}
           <button 
-            onClick={() => navigate('/alerts')}
-            className="relative w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-[#007BC4] hover:bg-slate-100 dark:hover:bg-slate-700 transition shadow-2xs cursor-pointer shrink-0"
-            title="View Active Alerts"
+            onClick={() => setIsExportModalOpen(true)}
+            className="flex items-center gap-1.5 h-9 px-3 rounded-lg bg-[#007BC4] hover:bg-[#006aa9] text-white text-xs font-bold shadow-sm transition shrink-0 active:scale-95 cursor-pointer"
+            title="Export all system data & compliance reports"
           >
-            <Bell className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-            <span className="absolute top-2 right-2 w-2 h-2 bg-rose-500 border-2 border-white dark:border-slate-900 rounded-full" />
+            <Download size={14} />
+            <span className="hidden sm:inline">Export Data</span>
           </button>
 
+          {/* Search Button */}
           <button 
-            onClick={() => setIsDark(!isDark)}
-            className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl flex items-center justify-center bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-400 hover:text-[#007BC4] hover:bg-slate-100 dark:hover:bg-slate-700 transition shadow-2xs cursor-pointer shrink-0"
-            title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            onClick={onOpenCommandPalette} 
+            className="hidden lg:flex items-center gap-2 h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-700 text-xs text-slate-500 hover:text-[#007BC4] hover:border-[#007BC4] transition" 
+            title="Search (Ctrl+K)"
           >
-            {isDark ? <Moon className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-indigo-400" /> : <Sun className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-500" />}
+            <Search size={15} />
+            <span>Search</span>
+            <kbd className="text-[10px] border border-slate-200 dark:border-slate-700 rounded px-1">Ctrl K</kbd>
+          </button>
+
+          {/* Alerts Navigation */}
+          <button 
+            onClick={() => navigate('/alerts')} 
+            className="relative w-9 h-9 grid place-items-center rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-[#007BC4] hover:border-[#007BC4] transition" 
+            title="Alerts & Triggers"
+          >
+            <Bell size={16} />
+          </button>
+
+          {/* Dark / Light Mode Toggle */}
+          <button 
+            onClick={() => setIsDark(v => !v)} 
+            className="w-9 h-9 grid place-items-center rounded-lg border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:hover:text-white transition" 
+            title="Toggle color theme"
+          >
+            {isDark ? <Moon size={16} /> : <Sun size={16} />}
           </button>
         </div>
-      </div>
-    </header>
+      </header>
+
+      {/* Global Export Report Modal */}
+      <ExportReportModal
+        isOpen={isExportModalOpen}
+        onClose={() => setIsExportModalOpen(false)}
+        defaultCategory="all"
+      />
+    </>
   );
 }

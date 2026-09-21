@@ -1,8 +1,8 @@
 /**
  * Converts array of objects to a downloadable JSON backup file.
  */
-export function exportToJSON(filename: string, rows: Record<string, any>[]) {
-  if (!rows || rows.length === 0) {
+export function exportToJSON(filename: string, rows: Record<string, any>[] | Record<string, any> | any) {
+  if (!rows || (Array.isArray(rows) && rows.length === 0) || (typeof rows === 'object' && Object.keys(rows).length === 0)) {
     alert('No data available to export.');
     return;
   }
@@ -189,11 +189,13 @@ export function generatePDFReport(
     </tr>
   `).join('');
 
+  const orgName = typeof window !== 'undefined' ? (localStorage.getItem('gao_company_name') || 'People Tracking in Construction') : 'People Tracking in Construction';
+
   const html = `
     <!DOCTYPE html>
     <html>
       <head>
-        <title>${title} - Official Aperture RFID Report</title>
+        <title>${title} - ${orgName} Report</title>
         <style>
           @page { size: A4 landscape; margin: 15mm; }
           body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; margin: 0; padding: 24px; color: #0f172a; }
@@ -215,7 +217,7 @@ export function generatePDFReport(
       <body>
         <div class="no-print">
           <div>
-            <strong style="color: #1e40af;">Aperture RFID System - Ready to Export PDF</strong>
+            <strong style="color: #1e40af;">${orgName} - Ready to Export PDF</strong>
             <span style="font-size: 12px; color: #3b82f6; margin-left: 8px;">Click Print to save directly as PDF or send to printer.</span>
           </div>
           <button class="btn-print" onclick="window.print()">Print / Save PDF</button>
@@ -232,7 +234,8 @@ export function generatePDFReport(
                 <polygon points="30,70 90,70 82,78 40,78" fill="#7CAAF0" opacity="0.9" />
               </svg>
               <div style="display: flex; flex-direction: column;">
-                <span style="font-size: 16px; font-weight: 900; letter-spacing: 3.5px; color: #1247A8; line-height: 1;">APERTURE</span>
+                <span style="font-size: 15px; font-weight: 800; letter-spacing: 0.5px; color: #1247A8; line-height: 1.1;">PEOPLE TRACKING</span>
+                <span style="font-size: 9px; font-weight: 700; letter-spacing: 1.5px; color: #64748b;">IN CONSTRUCTION</span>
               </div>
             </div>
             <div style="height: 28px; width: 1px; background: #cbd5e1; margin: 0 4px;"></div>
@@ -244,7 +247,7 @@ export function generatePDFReport(
           <div class="meta-info">
             <div>Generated On: <strong>${dateStr}</strong></div>
             <div>Total Records: <strong>${rows.length}</strong></div>
-            <div>Security Domain: <strong>Aperture Security Domain</strong></div>
+            <div>Organization: <strong>${orgName}</strong></div>
           </div>
         </div>
 
@@ -260,8 +263,8 @@ export function generatePDFReport(
         </table>
 
         <div class="footer">
-          <span>Confidential - Aperture RFID System Generated Compliance Audit Report</span>
-          <span>Page 1 of 1</span>
+          <span>Confidential - ${orgName} People Tracking System Audit Report</span>
+          <span>Generated via Platform Export</span>
         </div>
 
         <script>

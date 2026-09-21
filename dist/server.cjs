@@ -1274,6 +1274,9 @@ async function upsertDoc(colName, doc, organizationId) {
         if (existingInDb.organizationId) {
           cleanDoc.organizationId = existingInDb.organizationId;
         }
+        if (colName === "registered_people" || colName === "people") {
+          protectWorkerDocument(existingInDb, cleanDoc);
+        }
         await mongoDb.collection(colName).updateOne(
           { _id: existingInDb._id },
           { $set: cleanDoc }
@@ -1324,6 +1327,9 @@ async function upsertDoc(colName, doc, organizationId) {
         if (fallbackById) {
           if (fallbackById.organizationId) {
             cleanDoc.organizationId = fallbackById.organizationId;
+          }
+          if (colName === "registered_people" || colName === "people") {
+            protectWorkerDocument(fallbackById, cleanDoc);
           }
           await mongoDb.collection(colName).updateOne(
             { _id: fallbackById._id },
@@ -2291,15 +2297,51 @@ async function purgeAllDemoAndTestData() {
   }
   return { deletedCounts };
 }
-function isRealCustomWorker(p) {
-  if (!p || typeof p !== "object") return false;
-  if (p.isCustomProfile) return true;
-  const name = String(p.name || "").trim();
-  const lower = name.toLowerCase();
-  if (!name || lower === "john" || lower === "john site lead" || name.startsWith("Personnel ") || name.startsWith("Tag ")) {
+function hasRealHumanName(name) {
+  if (!name || typeof name !== "string") return false;
+  const trimmed = name.trim();
+  const lower = trimmed.toLowerCase();
+  if (!trimmed || lower === "john" || lower === "john site lead" || lower === "unknown" || lower === "unassigned" || lower === "field personnel" || lower.startsWith("personnel ") || lower.startsWith("tag ") || lower.startsWith("worker ")) {
     return false;
   }
-  return Boolean(name && lower !== "john");
+  return true;
+}
+function protectWorkerDocument(existing, incoming) {
+  if (!existing || typeof existing !== "object" || !incoming || typeof incoming !== "object") return;
+  if (hasRealHumanName(existing.name) && !hasRealHumanName(incoming.name)) {
+    incoming.name = existing.name;
+    incoming.firstName = existing.firstName || incoming.firstName || "";
+    incoming.lastName = existing.lastName || incoming.lastName || "";
+    incoming.isCustomProfile = true;
+  }
+  if (!incoming.isCustomProfile) {
+    if (existing.ppeStatus) incoming.ppeStatus = existing.ppeStatus;
+    if (existing.shiftStatus) incoming.shiftStatus = existing.shiftStatus;
+    if (existing.trainingStatus) incoming.trainingStatus = existing.trainingStatus;
+    if (existing.lastTrainingDate) incoming.lastTrainingDate = existing.lastTrainingDate;
+    if (existing.trainingCourse) incoming.trainingCourse = existing.trainingCourse;
+    if (existing.trainingExpiry) incoming.trainingExpiry = existing.trainingExpiry;
+    if (existing.role && existing.role !== "Field Personnel") incoming.role = existing.role;
+    if (existing.tradeCompany && existing.tradeCompany !== "Field Team") {
+      incoming.tradeCompany = existing.tradeCompany;
+      incoming.company = existing.company || existing.tradeCompany;
+    }
+    if (existing.certifications && existing.certifications !== "Standard Compliance & Safety") {
+      incoming.certifications = existing.certifications;
+    }
+    if (existing.phone) incoming.phone = existing.phone;
+    if (existing.email) incoming.email = existing.email;
+    if (existing.emergencyContact) incoming.emergencyContact = existing.emergencyContact;
+    if (existing.isCustomProfile) incoming.isCustomProfile = true;
+  }
+}
+function isRealCustomWorker(p) {
+  if (!p || typeof p !== "object") return false;
+  const name = String(p.name || "").trim();
+  if (!hasRealHumanName(name)) {
+    return false;
+  }
+  return true;
 }
 
 // src/server/routes/connections.ts
@@ -2836,12 +2878,10 @@ async function calculateIndustryKpis(profile, tenantId) {
 }
 
 // src/constants/aiConfig.ts
-var DEFAULT_GEMINI_MODEL = typeof process !== "undefined" && process.env?.GEMINI_MODEL || "gemini-2.5-flash";
+var DEFAULT_GEMINI_MODEL = typeof process !== "undefined" && process.env?.GEMINI_MODEL || "gemini-1.5-flash";
 var DEFAULT_GEMINI_FALLBACK_CANDIDATES = [
-  DEFAULT_GEMINI_MODEL,
-  "gemini-2.5-flash",
   "gemini-1.5-flash",
-  "gemini-1.5-pro"
+  "gemini-2.0-flash"
 ];
 
 // src/server/services/aiEngine.ts
@@ -2953,7 +2993,7 @@ Return strictly valid JSON with this exact schema:
       const responsePromise = ai.models.generateContent({
         model: m,
         contents: prompt,
-        config: { responseMimeType: "application/json" }
+        config: { responseMimeType: "application/json", maxOutputTokens: 300 }
       });
       const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Gemini API timeout")), 12e3));
       const response = await Promise.race([responsePromise, timeoutPromise]);
@@ -4041,15 +4081,15 @@ async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
     const keys = [p.id, p.tagId, p.hardhatTagId, p.TagID].filter(Boolean).map((k) => String(k).toLowerCase().trim());
     for (const key of keys) {
       const prev = existingMap.get(key);
-      const prevIsCustom = isRealCustomWorker(prev);
-      const curIsCustom = isRealCustomWorker(p);
+      const prevHasName = prev ? hasRealHumanName(prev.name) : false;
+      const curHasName = hasRealHumanName(p.name);
       if (!prev) {
         existingMap.set(key, p);
-      } else if (!prevIsCustom && curIsCustom) {
+      } else if (!prevHasName && curHasName) {
         existingMap.set(key, p);
-      } else if (prevIsCustom && !curIsCustom) {
+      } else if (prevHasName && !curHasName) {
         continue;
-      } else if (curIsCustom && p.updatedAt && prev.updatedAt && new Date(p.updatedAt).getTime() >= new Date(prev.updatedAt).getTime()) {
+      } else if (curHasName && p.updatedAt && prev.updatedAt && new Date(p.updatedAt).getTime() >= new Date(prev.updatedAt).getTime()) {
         existingMap.set(key, p);
       }
     }
@@ -4063,21 +4103,28 @@ async function autoSyncTelemetryToMongoDB(items, orgId = "default") {
     }
     let personDoc;
     if (existing) {
+      const realName = hasRealHumanName(existing.name) ? existing.name : hasRealHumanName(item.fullName) ? item.fullName : existing.name || item.fullName || `Personnel ${tid.slice(-6).toUpperCase()}`;
       personDoc = {
         ...existing,
         id: tid,
         _id: existing._id || tid,
         tagId: tid,
         hardhatTagId: tid,
+        name: realName,
+        firstName: existing.firstName || item.fn || "",
+        lastName: existing.lastName || item.ln || "",
         currentZone: item.loc || existing.currentZone || "Zone1",
         location: item.loc || existing.location || "Zone1",
         shiftStatus: existing.shiftStatus || "ON_SITE",
+        ppeStatus: existing.ppeStatus || "COMPLIANT",
+        trainingStatus: existing.trainingStatus || "COMPLIANT",
+        lastTrainingDate: existing.lastTrainingDate || "",
         presenceState: "ACTIVE",
         lastSeen: item.enter || existing.lastSeen || nowIso,
         updatedAt: nowIso
       };
     } else {
-      const rawName = item.fullName && !item.fullName.startsWith("Personnel ") && item.fullName.toLowerCase() !== "john site lead" ? item.fullName : item.fn || item.ln ? `${item.fn} ${item.ln}`.trim() : `Personnel ${tid.slice(-6).toUpperCase()}`;
+      const rawName = item.fullName && hasRealHumanName(item.fullName) ? item.fullName : item.fn || item.ln ? `${item.fn} ${item.ln}`.trim() : `Personnel ${tid.slice(-6).toUpperCase()}`;
       personDoc = {
         id: tid,
         _id: tid,
@@ -5210,42 +5257,23 @@ authRouter.post("/register", authRateLimiter, async (req, res) => {
     if (existing) {
       return res.status(400).json({ error: "User with this email already exists" });
     }
-    let resolvedOrgId = organizationId;
-    let resolvedOrgName = organizationName || "People Tracking in Construction";
-    if (organizationName && organizationName.trim()) {
-      resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      resolvedOrgName = organizationName.trim();
-      const newOrg = {
+    const resolvedOrgId = organizationId || "default";
+    const resolvedOrgName = "People Tracking in Construction";
+    const defaultOrg = await getDocById("organizations", resolvedOrgId);
+    if (!defaultOrg) {
+      await upsertDoc("organizations", {
         id: resolvedOrgId,
         name: resolvedOrgName,
-        slug: resolvedOrgName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
+        slug: "people-tracking-in-construction",
         status: "active",
-        plan: "standard",
+        plan: "enterprise",
         createdAt: (/* @__PURE__ */ new Date()).toISOString(),
         updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      await upsertDoc("organizations", newOrg, resolvedOrgId);
-    } else if (organizationId) {
-      const existingOrg = await getDocById("organizations", organizationId);
-      if (existingOrg) {
-        resolvedOrgName = existingOrg.name;
-      }
-    } else {
-      resolvedOrgId = `org_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      resolvedOrgName = name ? `${name}'s Organization` : `${lowerEmail.split("@")[0]}'s Organization`;
-      const newOrg = {
-        id: resolvedOrgId,
-        name: resolvedOrgName,
-        slug: resolvedOrgName.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-        status: "active",
-        plan: "standard",
-        createdAt: (/* @__PURE__ */ new Date()).toISOString(),
-        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
-      };
-      await upsertDoc("organizations", newOrg, resolvedOrgId);
+      }, resolvedOrgId);
     }
     const passwordHash = await import_bcryptjs.default.hash(password, 10);
-    const assignedRole = organizationName ? "admin" : lowerEmail.endsWith("@gaostaff.com") ? "admin" : role;
+    const validRoles = ["admin", "manager", "operator", "viewer"];
+    const assignedRole = role && validRoles.includes(role) ? role : lowerEmail.endsWith("@gaostaff.com") ? "admin" : "operator";
     const newUser = {
       id: `usr_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
       email: lowerEmail,
@@ -5257,6 +5285,19 @@ authRouter.post("/register", authRateLimiter, async (req, res) => {
       createdAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     await upsertDoc("users", newUser, resolvedOrgId);
+    try {
+      await upsertDoc("settings", {
+        id: `user_role_${newUser.id}`,
+        uid: newUser.id,
+        email: newUser.email,
+        displayName: newUser.name,
+        role: newUser.role,
+        organizationId: resolvedOrgId,
+        updatedAt: (/* @__PURE__ */ new Date()).toISOString()
+      }, resolvedOrgId);
+    } catch (e) {
+      console.warn("[Auth] Could not sync user role setting:", e);
+    }
     const token = generateToken({
       id: newUser.id,
       email: newUser.email,
@@ -5271,7 +5312,7 @@ authRouter.post("/register", authRateLimiter, async (req, res) => {
       organizationId: resolvedOrgId,
       action: "USER_REGISTER",
       resource: "users",
-      details: { organizationId: resolvedOrgId, organizationName: resolvedOrgName },
+      details: { role: assignedRole, organizationId: resolvedOrgId, organizationName: resolvedOrgName },
       ip: req.ip
     });
     const orgDoc = await getDocById("organizations", resolvedOrgId);
@@ -6714,10 +6755,15 @@ function parseCleanJSON(rawText) {
 async function generateContentWithFallback(ai, params) {
   const models = Array.from(/* @__PURE__ */ new Set([DEFAULT_GEMINI_MODEL, ...DEFAULT_GEMINI_FALLBACK_CANDIDATES]));
   let lastError = null;
+  const effectiveConfig = {
+    ...params.config || {},
+    maxOutputTokens: params.config?.maxOutputTokens || 300
+  };
   for (const model of models) {
     try {
       const response = await ai.models.generateContent({
         ...params,
+        config: effectiveConfig,
         model
       });
       return response;

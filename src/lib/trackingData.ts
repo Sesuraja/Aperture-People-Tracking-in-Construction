@@ -30,23 +30,30 @@ function handleDbError(error: unknown, operationType: OperationType, path: strin
   console.warn('Database Operation Notice: ', JSON.stringify(errInfo));
 }
 
-export const SITE_ZONE_WAYPOINTS: { name: string; x: number; y: number; minX: number; maxX: number; minY: number; maxY: number }[] = [
-  { name: 'Zone 1', x: 42.5, y: 27.5, minX: 20, maxX: 65, minY: 10, maxY: 45 },
-  { name: 'Zone 2', x: 42.5, y: 80.0, minX: 20, maxX: 65, minY: 70, maxY: 90 }
-];
-
-export const INITIAL_PROJECT_ZONES: Record<string, Record<string, { x: number; y: number; width: number; height: number }>> = {
-  'metro-tower': {
-    'Zone 1': { x: 20, y: 10, width: 45, height: 35 },
-    'Zone 2': { x: 20, y: 70, width: 45, height: 20 },
-    'Zone1': { x: 20, y: 10, width: 45, height: 35 },
-    'Zone2': { x: 20, y: 70, width: 45, height: 20 }
-  },
-  'highrise-phase2': {
-    'Zone 1': { x: 20, y: 10, width: 45, height: 35 },
-    'Zone 2': { x: 20, y: 70, width: 45, height: 20 }
+function hasRealHumanName(name?: string): boolean {
+  if (!name || typeof name !== 'string') return false;
+  const trimmed = name.trim();
+  const lower = trimmed.toLowerCase();
+  if (
+    !trimmed ||
+    lower === 'john' ||
+    lower === 'john site lead' ||
+    lower === 'unknown' ||
+    lower === 'unassigned' ||
+    lower === 'field personnel' ||
+    lower.startsWith('personnel ') ||
+    lower.startsWith('tag ') ||
+    lower.startsWith('worker ')
+  ) {
+    return false;
   }
-};
+  return true;
+}
+
+// Zone waypoints are loaded dynamically from the database (/api/zones)
+
+// Project zone geometry is loaded from the database (/api/zones or gao_project_properties)
+export const INITIAL_PROJECT_ZONES: Record<string, Record<string, { x: number; y: number; width: number; height: number }>> = {};
 
 export function getZonesForProject(projectId: string): string[] {
   try {
@@ -99,11 +106,12 @@ export function normalizeZoneName(location?: string | null, projectId: string = 
   return cleanLoc || zones[0] || 'People Tracking in Construction';
 }
 
+// Default fallback rect when no zone geometry is configured yet
 const DEFAULT_ROOM_BOUNDS: Record<string, { x: number; y: number; width: number; height: number }> = {
-  'People Tracking in Construction': { x: 5, y: 5, width: 90, height: 90 }
+  'default': { x: 5, y: 5, width: 90, height: 90 }
 };
 
-export function getZoneRect(zoneName: string, projectId: string = 'metro-tower', dynamicZones?: Record<string, any>) {
+export function getZoneRect(zoneName: string, projectId: string = 'default', dynamicZones?: Record<string, any>) {
   const cleanNameLower = (zoneName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
   if (dynamicZones && Object.keys(dynamicZones).length > 0) {
@@ -143,14 +151,14 @@ export function getZoneRect(zoneName: string, projectId: string = 'metro-tower',
     if (match) return match[1];
   }
 
-  return DEFAULT_ROOM_BOUNDS['People Tracking in Construction'];
+  return DEFAULT_ROOM_BOUNDS['default'] || { x: 5, y: 5, width: 90, height: 90 };
 }
 
 const ZONES: Record<string, { x: number; y: number; width: number; height: number }> = {
   ...DEFAULT_ROOM_BOUNDS
 };
 
-export function useTrackingData(mode: 'real' | null, activeProjectId: string = 'metro-tower') {
+export function useTrackingData(mode: 'real' | null, activeProjectId: string = 'default') {
   const [people, setPeople] = useState<Person[]>([]);
   const [assets, setAssets] = useState<Asset[]>([]);
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
@@ -345,11 +353,13 @@ export function useTrackingData(mode: 'real' | null, activeProjectId: string = '
                     nextPeople.push(p);
                  } else {
                     p.lastSeen = parsedDate;
-                    if (registered?.name) {
-                      p.name = registered.name;
-                    } else if (pName && !pName.startsWith('Tag ')) {
-                      p.name = pName;
-                    }
+                     if (registered?.name && hasRealHumanName(registered.name)) {
+                       p.name = registered.name;
+                     } else if (hasRealHumanName(p.name)) {
+                       // Keep existing custom worker name
+                     } else if (pName && !pName.startsWith('Tag ') && !pName.startsWith('Personnel ')) {
+                       p.name = pName;
+                     }
                     if (registered?.role) {
                       p.role = registered.role;
                     } else if (pRole) {

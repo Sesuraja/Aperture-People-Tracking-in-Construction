@@ -38,7 +38,7 @@ const CATEGORY_CONFIG: Record<AlertCategory, { icon: React.ElementType; color: s
 
 const CATEGORIES_LIST: AlertCategory[] = [
   'Emergency', 'Safety', 'Security', 'Equipment', 
-  'Reader', 'Worker', 'Visitor', 'Maintenance', 
+  'Reader', 'Worker', 'Maintenance', 
   'Weather', 'System', 'Operational', 'Compliance', 'Asset'
 ];
 
@@ -1468,33 +1468,19 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
           <div className="flex items-center gap-2 flex-wrap">
             <h2 className="text-2xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
               <Siren className="w-7 h-7 text-rose-600 animate-pulse" />
-              Enterprise Alert Command Center
+              Alerts & Triggers Center
             </h2>
-            {/* Live MongoDB Atlas Connection Status */}
-            {mongoStatus.connected ? (
-              <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-300 dark:bg-emerald-950/80 dark:text-emerald-300 dark:border-emerald-700 flex items-center gap-1.5 shadow-sm">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <Database size={13} className="text-emerald-600" />
-                MongoDB Atlas: Lat-Aperture-People-Tracking (Connected)
-              </span>
-            ) : (
-              <span className="px-3 py-1 rounded-full text-[11px] font-bold bg-rose-50 text-rose-700 border border-rose-300 dark:bg-rose-950/80 dark:text-rose-300 dark:border-rose-700 flex items-center gap-1.5 shadow-sm">
-                <span className="w-2 h-2 rounded-full bg-rose-500" />
-                <Database size={13} className="text-rose-600" />
-                MongoDB Disconnected
-              </span>
-            )}
             <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold flex items-center gap-1.5 border ${
               isWsConnected 
                 ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300 dark:border-emerald-800'
                 : 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300 dark:border-amber-800'
             }`}>
               {isWsConnected ? <Wifi className="w-3 h-3 text-emerald-500 animate-pulse" /> : <WifiOff className="w-3 h-3 text-amber-500" />}
-              {isWsConnected ? 'WebSocket: 0ms Sync' : 'WebSocket: Connecting...'}
+              {isWsConnected ? 'Live Safety Stream Active' : 'Connecting Stream...'}
             </span>
           </div>
           <p className="text-slate-500 dark:text-slate-400 font-medium text-xs md:text-sm mt-0.5">
-            Zero-latency emergency sirens, AI hazard diagnostics, automated dispatch rules & MongoDB persistence
+            Real-time safety alerts, hazard telemetry, emergency triggers, and automated escalation policies.
           </p>
         </div>
 
@@ -1506,28 +1492,14 @@ export default function AlertsTab({ alerts: _propAlerts }: { alerts?: AIAlert[] 
             title="Fetch latest UHF telemetry & analyze with Gemini/AI engine"
           >
             <Sparkles size={14} className={isSyncingAi ? 'animate-spin' : ''} />
-            {isSyncingAi ? 'AI Analyzing...' : 'Run AI Telemetry Analysis'}
-          </button>
-
-          <button
-            onClick={() => {
-              wsTriggerSafetyAlert(
-                '⚡ INSTANT WS PANIC: High Voltage Perimeter Breach',
-                'Zone 4 High Voltage Substation',
-                'critical'
-              );
-            }}
-            className="px-3.5 py-2 bg-gradient-to-r from-amber-600 to-rose-600 hover:from-amber-700 hover:to-rose-700 text-white rounded-xl text-xs font-black shadow-md transition flex items-center gap-1.5"
-            title="Broadcast Zero-Latency WebSocket Panic Alert"
-          >
-            <Zap size={14} className="fill-current" /> Instant WS Panic
+            {isSyncingAi ? 'AI Analyzing...' : 'Run AI Analysis'}
           </button>
 
           <button
             onClick={() => setIsCreateModalOpen(true)}
             className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-md transition flex items-center gap-2"
           >
-            <Plus size={15} /> Trigger Incident
+            <Plus size={15} /> Trigger Alert
           </button>
 
           <button

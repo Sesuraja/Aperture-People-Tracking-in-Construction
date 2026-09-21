@@ -512,10 +512,7 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
             </div>
             <div>
               <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2.5">
-                AI Insights Intelligence Center
-                <Badge variant="outline" className="text-xs bg-indigo-500/10 border-indigo-500/20 text-indigo-700 dark:text-indigo-300 font-bold uppercase tracking-wider">
-                  Real Telemetry Engine
-                </Badge>
+                AI Insights & Predictions
               </h1>
               <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
                 Evidence-based intelligence analyzing live people-movement API telemetry across {siteLabel}.
@@ -534,19 +531,10 @@ export default function AIInsightsTab({ people = [] }: AIInsightsTabProps) {
             <span className="text-slate-500 dark:text-slate-400 font-medium">{activeIndustry}</span>
           </div>
 
-          {/* MongoDB Atlas Persistence Badge */}
-          <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-indigo-50 dark:bg-indigo-950/40 border border-indigo-200 dark:border-indigo-800/50 text-xs font-semibold text-indigo-700 dark:text-indigo-300">
-            <Database size={14} className="text-indigo-600 dark:text-indigo-400" />
-            <span>MongoDB Atlas</span>
-            <span className="font-mono font-bold bg-indigo-100 dark:bg-indigo-900/60 px-1.5 py-0.5 rounded text-[11px]">
-              {isMongoSynced ? 'Persisted' : 'Syncing'}
-            </span>
-          </div>
-
           {/* Telemetry Record Count Badge */}
           <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-2xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/50 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
             <Radio size={14} className="animate-pulse text-emerald-500" />
-            <span>Live GAO RFID Feed</span>
+            <span>Telemetry Feed</span>
             <span className="font-mono font-bold bg-emerald-100 dark:bg-emerald-900/60 px-1.5 py-0.5 rounded text-[11px]">
               {normalizedEvents.length.toLocaleString()} events
             </span>

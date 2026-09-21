@@ -60,7 +60,6 @@ export const INITIAL_MAP_WORKERS: MapWorkerItem[] = [];
 
 export const DEFAULT_LAYER_CONFIGS: Record<string, MapLayerConfig> = {
   workers: { id: 'workers', name: 'Personnel', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'User', color: 'bg-emerald-500 text-white' },
-  visitors: { id: 'visitors', name: 'Visitors', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Users', color: 'bg-blue-500 text-white' },
   contractors: { id: 'contractors', name: 'External Staff', category: 'personnel', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Building2', color: 'bg-indigo-500 text-white' },
   equipment: { id: 'equipment', name: 'Equipment', category: 'equipment', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Box', color: 'bg-amber-500 text-white' },
   vehicles: { id: 'vehicles', name: 'Vehicles', category: 'equipment', visible: true, opacity: 1, locked: false, count: 0, iconName: 'Truck', color: 'bg-orange-500 text-white' },
@@ -115,82 +114,9 @@ export interface SiteData {
   buildings: BuildingData[];
 }
 
-const DEFAULT_SITES: Record<string, SiteData> = {
-  'metro-tower': {
-    id: 'metro-tower',
-    name: 'Metro Corporate Commercial Complex',
-    contractor: 'Enterprise Facility Management',
-    dimensions: '200m x 150m (30,000 m²)',
-    buildings: [
-      {
-        id: 'bldg-main',
-        name: 'Building A - Main Operations Tower',
-        floors: [
-          {
-            id: 'fl-1',
-            name: 'Level 1 - Ground Access & Portal Gate',
-            levelNumber: 1,
-            activeVersionId: 'ver-1.0',
-            versions: [
-              {
-                id: 'ver-1.0',
-                versionNumber: 'v1.0',
-                status: 'published',
-                createdAt: '2026-08-01 09:00',
-                author: 'Facility Operations Lead',
-                notes: 'Initial approved facility security clearance map and RFID portal boundaries.',
-                zones: {},
-                floorplanUrl: null
-              }
-            ]
-          },
-          {
-            id: 'fl-2',
-            name: 'Level 2 - Operations & Engineering Wing',
-            levelNumber: 2,
-            activeVersionId: 'ver-1.0-l2',
-            versions: [
-              {
-                id: 'ver-1.0-l2',
-                versionNumber: 'v1.0',
-                status: 'published',
-                createdAt: '2026-08-02 11:30',
-                author: 'Operations Director',
-                notes: 'Level 2 facility operations and security perimeter layout.',
-                zones: {},
-                floorplanUrl: null
-              }
-            ]
-          }
-        ]
-      },
-      {
-        id: 'bldg-logistics',
-        name: 'Building B - Logistics & Equipment Hub',
-        floors: [
-          {
-            id: 'fl-b1-1',
-            name: 'Ground Level - Fleet Staging & Parking',
-            levelNumber: 1,
-            activeVersionId: 'ver-1.0-b2',
-            versions: [
-              {
-                id: 'ver-1.0-b2',
-                versionNumber: 'v1.0',
-                status: 'published',
-                createdAt: '2026-08-03 14:00',
-                author: 'G. Hopper (Fleet Manager)',
-                notes: 'Fleet vehicle parking and equipment storage area.',
-                zones: {},
-                floorplanUrl: null
-              }
-            ]
-          }
-        ]
-      }
-    ]
-  }
-};
+// Site data is loaded from the database (API/MongoDB); no hardcoded site structure
+const DEFAULT_SITES: Record<string, SiteData> = {};
+
 
 export function getSafetyStatusBadge(status: string) {
   if (status === 'COMPLIANT') {
@@ -334,7 +260,6 @@ export default function CustomMapPage({ activeProject, setActiveProject }: Custo
     return {
       ...layerConfigs,
       workers: { ...layerConfigs.workers, name: personnelPlural, count: activeWorkers.length },
-      visitors: { ...layerConfigs.visitors, count: activeWorkers.filter(w => (w.role || '').toLowerCase().includes('visitor') || (w.name || '').toLowerCase().includes('visitor')).length },
       contractors: { ...layerConfigs.contractors, name: `External ${organizationType}`, count: activeWorkers.filter(w => (w.role || '').toLowerCase().includes('contractor') || (w.company || '').toLowerCase().includes('contractor')).length },
       equipment: { ...layerConfigs.equipment, count: assets.length },
       vehicles: { ...layerConfigs.vehicles, count: vehicles.length },
