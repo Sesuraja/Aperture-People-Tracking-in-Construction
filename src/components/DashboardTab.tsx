@@ -74,7 +74,9 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianG
 import { useMemo, ReactNode, useState, useEffect, useContext } from 'react';
 import React from 'react';
 import { collection, onSnapshot, doc, getDoc, setDoc, addDoc, deleteDoc, query, orderBy, limit, db } from '../lib/db';
-import { useTerminology } from '../context/TrackingContext';
+import { useTerminology, useTracking } from '../context/TrackingContext';
+import { gaoApi } from '../lib/gaoApi';
+import { convertRealtimeTagsToMovementRecords } from '../lib/movementAnalytics';
 
 import { useNavigate } from 'react-router-dom';
 import { AppModeContext } from '../App';
@@ -187,14 +189,29 @@ export default function DashboardTab({
     });
   }, []);
 
+  const trackingCtx = useTracking();
   const [registeredCount, setRegisteredCount] = useState<number>(() => people?.length || 0);
   const [registeredPeopleList, setRegisteredPeopleList] = useState<any[]>(() => people || []);
   const [activeOnsiteCount, setActiveOnsiteCount] = useState<number>(() => people?.filter(p => p.presenceState !== 'EXITED' && p.shiftStatus !== 'OFF_SITE').length || people?.length || 0);
   const [activeOnsiteWorkersList, setActiveOnsiteWorkersList] = useState<any[]>(() => people || []);
   const [recentMovements, setRecentMovements] = useState<any[]>([]);
   const [timelineData, setTimelineData] = useState<any[]>([]);
-  const movingCount = (people || []).filter(p => p.presenceState === 'MOVING').length;
-  const avgDwellInfo = (people && people.length > 0) ? (people.reduce((sum, p) => sum + p.dwellTime, 0) / people.length / 60).toFixed(1) : "0.0";
+  
+  const effectiveWorkers = useMemo(() => {
+    return (activeOnsiteWorkersList && activeOnsiteWorkersList.length > 0)
+      ? activeOnsiteWorkersList
+      : (registeredPeopleList && registeredPeopleList.length > 0 ? registeredPeopleList : (trackingCtx?.people && trackingCtx.people.length > 0 ? trackingCtx.people : (people || [])));
+  }, [activeOnsiteWorkersList, registeredPeopleList, trackingCtx?.people, people]);
+
+  const movingCount = useMemo(() => {
+    return effectiveWorkers.filter(p => p.presenceState === 'MOVING').length;
+  }, [effectiveWorkers]);
+
+  const avgDwellInfo = useMemo(() => {
+    return (effectiveWorkers && effectiveWorkers.length > 0)
+      ? (effectiveWorkers.reduce((sum, p) => sum + (Number(p.dwellTime) || 0), 0) / effectiveWorkers.length / 60).toFixed(1)
+      : "0.0";
+  }, [effectiveWorkers]);
 
   const [deviceStats, setDeviceStats] = useState({ online: 0, offline: 0, warning: 0 });
   const [deviceList, setDeviceList] = useState<any[]>([]);
@@ -565,7 +582,12 @@ export default function DashboardTab({
     let rawPeopleList: any[] = [];
 
     const syncCombinedPeople = () => {
-      const combined = [...(rawRegisteredList || []), ...(rawPeopleList || []), ...(people || [])];
+      const combined = [
+        ...(rawRegisteredList || []), 
+        ...(rawPeopleList || []), 
+        ...(trackingCtx?.people || []), 
+        ...(people || [])
+      ];
       const map = new Map<string, any>();
       const nameToKeyMap = new Map<string, string>();
       const tagToKeyMap = new Map<string, string>();
@@ -603,6 +625,39 @@ export default function DashboardTab({
           });
         }
       });
+
+      // Incorporate active transmitting RFID tags from live feeds
+      const currentLiveTags = (liveTagsList && liveTagsList.length > 0) ? liveTagsList : (trackingCtx?.liveTags || []);
+      if (currentLiveTags.length > 0) {
+        currentLiveTags.forEach((tag: any) => {
+          const rawTag = (tag.epc || tag.tagId || tag.TagID || tag.id || '').toString().trim().toUpperCase();
+          if (!rawTag) return;
+          if (!tagToKeyMap.has(rawTag)) {
+            const newWorker = {
+              id: rawTag,
+              hardhatTagId: rawTag,
+              tagId: rawTag,
+              name: tag.name || tag.personName || `Badge ${rawTag.substring(0, 8)}`,
+              role: tag.role || 'Active Field Personnel',
+              currentZone: tag.zone || tag.location || tag.readerName || 'Site Area',
+              presenceState: 'MOVING',
+              shiftStatus: 'ON_SITE',
+              dwellTime: tag.dwellTime || 120,
+              ppeStatus: tag.ppeStatus || 'COMPLIANT',
+              battery: tag.battery !== undefined ? tag.battery : 90
+            };
+            map.set(rawTag, newWorker);
+            tagToKeyMap.set(rawTag, rawTag);
+          } else {
+            const existing = map.get(tagToKeyMap.get(rawTag)!);
+            if (existing) {
+              if (tag.zone || tag.location) existing.currentZone = tag.zone || tag.location;
+              if (existing.presenceState === 'EXITED') existing.presenceState = 'ACTIVE';
+              existing.shiftStatus = 'ON_SITE';
+            }
+          }
+        });
+      }
 
       const unique = Array.from(map.values());
       
@@ -870,7 +925,7 @@ export default function DashboardTab({
     // Direct Real-time REST Sync from MongoDB & GAO UHF API
     const fetchDirectStats = async () => {
       try {
-        const [regRes, pplRes, visRes, devRes, hwRes, alertRes, liveTagsRes, vhcRes, astRes] = await Promise.all([
+        const [regRes, pplRes, visRes, devRes, hwRes, alertRes, liveTagsRes, vhcRes, astRes, gaoRealtimeRes, gaoHistoryRes] = await Promise.all([
           fetch('/api/data/registered_people').then(r => r.ok ? r.json() : []).catch(() => []),
           fetch('/api/data/people').then(r => r.ok ? r.json() : []).catch(() => []),
           fetch('/api/data/visitors').then(r => r.ok ? r.json() : []).catch(() => []),
@@ -879,7 +934,9 @@ export default function DashboardTab({
           fetch('/api/data/alerts').then(r => r.ok ? r.json() : []).catch(() => []),
           fetch('/api/GetTagsInRealtime').then(r => r.ok ? r.json() : []).catch(() => []),
           fetch('/api/data/vehicles').then(r => r.ok ? r.json() : []).catch(() => []),
-          fetch('/api/data/assets').then(r => r.ok ? r.json() : []).catch(() => [])
+          fetch('/api/data/assets').then(r => r.ok ? r.json() : []).catch(() => []),
+          gaoApi.getTagsInRealtime().catch(() => []),
+          gaoApi.getHistoryRecords(0, 30).catch(() => [])
         ]);
 
         if (Array.isArray(regRes) || Array.isArray(pplRes)) {
@@ -903,23 +960,57 @@ export default function DashboardTab({
           setDbAlerts(alertRes);
         }
 
-        if (Array.isArray(liveTagsRes)) {
-          setLiveTagsList(liveTagsRes);
-          setLiveTagsCount(liveTagsRes.length);
+        const resolvedLiveTags = (Array.isArray(gaoRealtimeRes) && gaoRealtimeRes.length > 0)
+          ? gaoRealtimeRes
+          : (Array.isArray(liveTagsRes) ? liveTagsRes : []);
+
+        if (resolvedLiveTags.length > 0) {
+          setLiveTagsList(resolvedLiveTags);
+          setLiveTagsCount(resolvedLiveTags.length);
+          syncCombinedPeople();
         }
 
         if (Array.isArray(vhcRes)) setVehiclesList(vhcRes);
         if (Array.isArray(astRes)) setAssetsList(astRes);
+
+        if (Array.isArray(gaoHistoryRes) && gaoHistoryRes.length > 0) {
+          const mapped = gaoHistoryRes.slice(0, 10).map((h: any, idx: number) => {
+            const rawTag = h.TagID || h.tagId || '';
+            const matchedPerson = rawRegisteredList.find((p: any) => 
+              (p.hardhatTagId && p.hardhatTagId.toUpperCase() === rawTag.toUpperCase()) ||
+              (p.tagId && p.tagId.toUpperCase() === rawTag.toUpperCase()) ||
+              (p.id && p.id.toUpperCase() === rawTag.toUpperCase())
+            );
+            return {
+              id: `hist-${idx}-${rawTag}`,
+              tagId: rawTag,
+              name: matchedPerson?.name || h.personName || h.name || `Tag ${rawTag.substring(0, 8).toUpperCase()}`,
+              role: matchedPerson?.role || h.role || 'Personnel',
+              fromZone: h.fromZone || null,
+              toZone: h.LocationName || h.location || h.toZone || 'Gate Scanner',
+              timestamp: h.EnterTime ? new Date(h.EnterTime) : (h.timestamp ? new Date(h.timestamp) : new Date())
+            };
+          });
+          setRecentMovements(prev => prev.length > 0 ? prev : mapped);
+        }
       } catch (err) {
         console.warn('Dashboard direct REST sync note:', err);
       }
     };
 
     fetchDirectStats();
-    const restPollInterval = setInterval(fetchDirectStats, 8000);
+    const restPollInterval = setInterval(fetchDirectStats, 6000);
+
+    const handleGaoUpdate = () => {
+      fetchDirectStats();
+    };
+    window.addEventListener('gao_data_updated', handleGaoUpdate);
+    window.addEventListener('gao_refresh_data', handleGaoUpdate);
 
     return () => {
       clearInterval(restPollInterval);
+      window.removeEventListener('gao_data_updated', handleGaoUpdate);
+      window.removeEventListener('gao_refresh_data', handleGaoUpdate);
       unsubs.forEach(fn => {
         if (typeof fn === 'function') fn();
       });
@@ -1117,8 +1208,13 @@ export default function DashboardTab({
 
   // Recharts memoized zone proportions datasets
   const zoneData = useMemo(() => {
-    const counts = people.reduce((acc, p) => {
-      acc[p.currentZone] = (acc[p.currentZone] || 0) + 1;
+    const workerPool = (activeOnsiteWorkersList && activeOnsiteWorkersList.length > 0)
+      ? activeOnsiteWorkersList
+      : (registeredPeopleList && registeredPeopleList.length > 0 ? registeredPeopleList : (people || []));
+
+    const counts = workerPool.reduce((acc: Record<string, number>, p: any) => {
+      const z = p.currentZone || p.zone || 'Site Area';
+      acc[z] = (acc[z] || 0) + 1;
       return acc;
     }, {} as Record<string, number>);
 
@@ -1126,7 +1222,7 @@ export default function DashboardTab({
       name: zone,
       value: counts[zone]
     }));
-  }, [people]);
+  }, [people, activeOnsiteWorkersList, registeredPeopleList]);
 
   const deviceData = [
     { name: 'Online', value: deviceStats.online, color: '#10b981' },
@@ -1411,7 +1507,7 @@ export default function DashboardTab({
       }
 
       case 'site_status': {
-        const totalHeadcount = registeredPeopleList.length || people.length || 0;
+        const totalHeadcount = activeOnsiteWorkersList.length || registeredPeopleList.length || people.length || 0;
         const activeZonesList = dbZones.length > 0 ? dbZones.map((z: any) => z.name || z.id) : (Object.keys(zones).length > 0 ? Object.keys(zones) : ['Site Area']);
         const totalSiteCapacity = dbZones.length > 0 
           ? dbZones.reduce((sum: number, z: any) => sum + (Number(z.capacity) || 20), 0)
@@ -1451,7 +1547,7 @@ export default function DashboardTab({
             <div className="space-y-2 flex-1 overflow-y-auto">
               <div className="text-xs font-bold text-slate-700 uppercase tracking-wider mb-1">Active Sector Readiness</div>
               {activeZonesList.slice(0, 4).map((z: string) => {
-                const count = people.filter(p => p.currentZone === z).length || registeredPeopleList.filter(p => p.currentZone === z).length;
+                const count = activeOnsiteWorkersList.filter((p: any) => p.currentZone === z || p.zone === z).length || registeredPeopleList.filter((p: any) => p.currentZone === z || p.zone === z).length || people.filter(p => p.currentZone === z).length;
                 return (
                   <div key={z} className="flex items-center justify-between bg-slate-50 p-2.5 rounded-lg border border-slate-100 text-xs font-medium">
                     <span className="font-semibold text-slate-800 truncate max-w-[200px]">{z}</span>
@@ -1596,14 +1692,27 @@ export default function DashboardTab({
       }
 
       case 'ai_recommendations': {
-        const displayRecs = aiRecs.length > 0 ? aiRecs : [
+        const dynamicRecs = [
           {
-            title: 'Live Personnel Movement Analysis',
-            text: `${movingCount} personnel active in motion across ${Object.keys(zones).length} monitored sectors. All RFID credentials verified in MongoDB.`,
+            title: 'Telemetry Movement Flow',
+            text: `${movingCount} ${personnelPlural.toLowerCase()} active in motion across ${Object.keys(zones).length || dbZones.length || 1} monitored zones. Average dwell duration is ${avgDwellInfo} minutes.`,
             icon: 'Sparkles',
             color: 'purple'
+          },
+          {
+            title: 'Site Gateway & Portal Health',
+            text: `${deviceStats.online} UHF RFID gate portals are actively scanning with ${deviceStats.offline} offline units. Operational coverage is at ${deviceList.length > 0 ? Math.round((deviceStats.online / deviceList.length) * 100) : 100}%.`,
+            icon: 'Radio',
+            color: 'amber'
+          },
+          {
+            title: 'Safety Clearance Rating',
+            text: `${incidentsList.filter((i: any) => i.severity === 'Critical').length === 0 ? 'Zero active critical safety breaches logged.' : `${incidentsList.filter((i: any) => i.severity === 'Critical').length} critical incidents requiring clearance.`} ${uniqueAlerts.length} total warnings in tracking history.`,
+            icon: 'TrendingUp',
+            color: 'emerald'
           }
         ];
+        const displayRecs = aiRecs.length > 0 ? aiRecs : dynamicRecs;
 
         return (
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[380px]">
@@ -1764,99 +1873,110 @@ export default function DashboardTab({
              </div>
              
              <div className="flex flex-1 gap-6 min-h-0 overflow-hidden">
-               <div className="w-1/3 flex flex-col gap-3 border-r border-slate-100 pr-4 overflow-y-auto shrink-0 z-20">
-                 <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-white sticky top-0 py-1">Device Health</h4>
-                 {((deviceList && deviceList.length > 0) ? deviceList.slice(0, 5) : [
-                   { name: 'Main Entrance', status: 'online' },
-                   { name: 'Lobby Scanner', status: 'online' },
-                   { name: 'Server Rm Door', status: 'warning' },
-                   { name: 'Loading Dock', status: 'online' },
-                 ]).map((d, idx) => {
-                   const isOnline = d.status === 'online';
-                   const isWarning = d.status === 'warning';
-                   const bgClass = isOnline ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : isWarning ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-rose-50 text-rose-700 border-rose-100';
+                <div className="w-1/3 flex flex-col gap-3 border-r border-slate-100 pr-4 overflow-y-auto shrink-0 z-20">
+                  <h4 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest bg-white sticky top-0 py-1">Device Health</h4>
+                  {deviceList.length > 0 ? (
+                    deviceList.slice(0, 5).map((d, idx) => {
+                      const isOnline = d.status === 'online';
+                      const isWarning = d.status === 'warning';
+                      const bgClass = isOnline ? 'bg-emerald-50 text-emerald-700 border-emerald-100' : isWarning ? 'bg-amber-50 text-amber-700 border-amber-100' : 'bg-rose-50 text-rose-700 border-rose-100';
+                      
+                      return (
+                        <div 
+                          key={d.id || idx} 
+                          onClick={() => navigate('/devices')}
+                          className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer hover:scale-[1.02] flex-shrink-0 transition-transform duration-200 ${bgClass}`}
+                        >
+                          <div className="font-bold text-xs truncate max-w-[100px]">{d.name}</div>
+                          <div className="text-[10px] font-bold uppercase">{d.status}</div>
+                        </div>
+                      );
+                    })
+                  ) : (
+                    <div className="p-3 bg-slate-50 border border-slate-100 rounded-lg text-center text-slate-400 text-[11px] font-medium">
+                      No devices detected.
+                    </div>
+                  )}
+                  <button 
+                    onClick={() => navigate('/devices')} 
+                    className="text-[10px] font-bold text-[#007BC4] uppercase text-left hover:underline mt-1 flex items-center gap-1 group bg-white sticky bottom-0 py-1"
+                  >
+                    View all devices <span className="group-hover:translate-x-1 transition-transform">→</span>
+                  </button>
+                </div>
+                
+                <div className="flex-1 flex flex-col bg-slate-50 rounded-lg p-4 overflow-hidden border border-slate-200 shadow-inner overflow-y-auto">
+                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Live Zone Occupancy Distribution</h4>
+                   <div className="flex flex-col gap-2">
+                      {(() => {
+                        const activeZones = (dbZones && dbZones.length > 0)
+                          ? dbZones.map((z: any) => z.name || z.id)
+                          : (zones && Object.keys(zones).length > 0 ? Object.keys(zones) : ['Site Area']);
+                        const workerPool = (activeOnsiteWorkersList && activeOnsiteWorkersList.length > 0)
+                          ? activeOnsiteWorkersList
+                          : (registeredPeopleList && registeredPeopleList.length > 0 ? registeredPeopleList : people);
+                        const totalPoolCount = Math.max(workerPool.length, 1);
+
+                        return activeZones.map((z: string) => {
+                          const count = workerPool.filter((p: any) => p.currentZone === z || p.zone === z || (p.location && p.location.includes(z))).length;
+                          const percent = Math.round((count / totalPoolCount) * 100);
+                          return (
+                            <div key={z} onClick={() => navigate('/live', { state: { focusZone: z } })} className="flex items-center gap-3 bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 cursor-pointer hover:border-[#007BC4]/40 hover:bg-[#007BC4]/5 hover:translate-x-1 transition-all duration-200">
+                               <div className="font-bold text-slate-700 w-24 text-xs truncate">{z}</div>
+                               <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden">
+                                  <div className={`h-full rounded-full transition-all duration-500 ${percent > 40 ? 'bg-[#f59e0b]' : 'bg-[#007BC4]'}`} style={{ width: `${Math.max(percent, count > 0 ? 4 : 0)}%` }}></div>
+                               </div>
+                               <div className="w-10 text-right">
+                                 <span className="font-semibold text-xs text-slate-900">{count}</span>
+                                 <span className="text-[9px] text-slate-400 ml-0.5">pax</span>
+                               </div>
+                            </div>
+                          );
+                        });
+                      })()}
+                   </div>
                    
-                   return (
-                     <div 
-                       key={d.id || idx} 
-                       onClick={() => navigate('/devices')}
-                       className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer hover:scale-[1.02] flex-shrink-0 transition-transform duration-200 ${bgClass}`}
-                     >
-                       <div className="font-bold text-xs truncate max-w-[100px]">{d.name}</div>
-                       <div className="text-[10px] font-bold uppercase">{d.status}</div>
-                     </div>
-                   );
-                 })}
-                 <button 
-                   onClick={() => navigate('/devices')} 
-                   className="text-[10px] font-bold text-[#007BC4] uppercase text-left hover:underline mt-1 flex items-center gap-1 group bg-white sticky bottom-0 py-1"
-                 >
-                   View all devices <span className="group-hover:translate-x-1 transition-transform">→</span>
-                 </button>
-               </div>
-               
-               <div className="flex-1 flex flex-col bg-slate-50 rounded-lg p-4 overflow-hidden border border-slate-200 shadow-inner overflow-y-auto">
-                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Live Zone Occupancy Distribution</h4>
-                  <div className="flex flex-col gap-2">
-                     {Object.keys(zones).map(z => {
-                        const count = people.filter(p => p.currentZone === z).length;
-                        const percent = Math.round((count / Math.max(people.length, 1)) * 100);
-                        return (
-                           <div key={z} onClick={() => navigate('/live', { state: { focusZone: z } })} className="flex items-center gap-3 bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 cursor-pointer hover:border-[#007BC4]/40 hover:bg-[#007BC4]/5 hover:translate-x-1 transition-all duration-200">
-                              <div className="font-bold text-slate-700 w-24 text-xs truncate">{z}</div>
-                              <div className="flex-1 bg-slate-100 h-2 rounded-full overflow-hidden">
-                                 <div className={`h-full rounded-full transition-all duration-500 ${percent > 40 ? 'bg-[#f59e0b]' : 'bg-[#007BC4]'}`} style={{ width: `${Math.max(percent, 2)}%` }}></div>
-                              </div>
-                              <div className="w-10 text-right">
-                                <span className="font-semibold text-xs text-slate-900">{count}</span>
-                                <span className="text-[9px] text-slate-400 ml-0.5">pax</span>
-                              </div>
-                           </div>
-                        )
-                     })}
-                  </div>
-                  
-                  <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 mt-4">Recent Movement Log</h4>
-                  <div className="flex flex-col gap-1.5">
-                     {recentMovements.length > 0 ? (
-                        recentMovements.slice(0, 3).map(move => (
-                          <div key={move.id} onClick={() => navigate('/playback')} className="flex items-center justify-between bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 cursor-pointer hover:border-[#007BC4]/30 hover:bg-[#007BC4]/5 hover:translate-x-0.5 transition-all duration-200">
-                            <div className="flex items-center gap-2">
-                               <div className="w-7 h-7 rounded bg-[#007BC4]/10 text-[#007BC4] flex items-center justify-center font-bold text-xs border border-[#007BC4]/20">{(move.name || 'U').charAt(0)}</div>
-                               <div>
-                                 <div className="font-bold text-xs text-slate-800 leading-tight">{move.name}</div>
-                                 <div className="text-[9px] text-slate-500 font-medium uppercase tracking-wide leading-none">{move.role} - ID: {move.tagId.substring(0, 6)}</div>
-                               </div>
-                            </div>
-                            <div className="flex flex-col items-end leading-none">
-                               <div className="text-xs font-bold text-slate-600 flex items-center gap-1 text-right">
-                                 <span className="w-1 h-1 rounded-full bg-[#007BC4]"></span> {move.fromZone ? `${move.fromZone} → ${move.toZone}` : `Entered ${move.toZone}`}
-                               </div>
-                               <div className="text-[9px] text-slate-400 font-mono mt-0.5">{formatEdtTime(move.timestamp)}</div>
-                            </div>
-                          </div>
-                        ))
-                     ) : (
-                        people.slice(0, 3).map(p => (
-                          <div key={p.id} onClick={() => navigate('/live', { state: { focusZone: p.currentZone, highlightedPersonId: p.id } })} className="flex items-center justify-between bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 cursor-pointer hover:border-[#007BC4]/30 hover:bg-[#007BC4]/5 hover:translate-x-0.5 transition-all duration-200">
+                   <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 mt-4">Recent Movement Log</h4>
+                   <div className="flex flex-col gap-1.5">
+                      {recentMovements.length > 0 ? (
+                         recentMovements.slice(0, 3).map(move => (
+                           <div key={move.id} onClick={() => navigate('/playback')} className="flex items-center justify-between bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 cursor-pointer hover:border-[#007BC4]/30 hover:bg-[#007BC4]/5 hover:translate-x-0.5 transition-all duration-200">
                              <div className="flex items-center gap-2">
-                                <div className="w-7 h-7 rounded bg-[#007BC4]/10 text-[#007BC4] flex items-center justify-center font-bold text-xs border border-[#007BC4]/20">{(p.name || 'U').charAt(0)}</div>
+                                <div className="w-7 h-7 rounded bg-[#007BC4]/10 text-[#007BC4] flex items-center justify-center font-bold text-xs border border-[#007BC4]/20">{(move.name || 'U').charAt(0)}</div>
                                 <div>
-                                  <div className="font-bold text-xs text-slate-800 leading-tight">{p.name}</div>
-                                  <div className="text-[9px] text-slate-500 font-medium uppercase tracking-wide leading-none">{p.role}</div>
+                                  <div className="font-bold text-xs text-slate-800 leading-tight">{move.name}</div>
+                                  <div className="text-[9px] text-slate-500 font-medium uppercase tracking-wide leading-none">{move.role} - ID: {String(move.tagId || '').substring(0, 6)}</div>
                                 </div>
                              </div>
                              <div className="flex flex-col items-end leading-none">
-                                <div className="text-xs font-bold text-slate-600 flex items-center gap-1">
-                                  <span className="w-1 h-1 rounded-full bg-emerald-500"></span> {p.currentZone}
+                                <div className="text-xs font-bold text-slate-600 flex items-center gap-1 text-right">
+                                  <span className="w-1 h-1 rounded-full bg-[#007BC4]"></span> {move.fromZone ? `${move.fromZone} → ${move.toZone}` : `Entered ${move.toZone}`}
                                 </div>
-                                <div className="text-[9px] text-slate-400 font-mono mt-0.5">Dwell: {Math.floor(p.dwellTime/60)}m {p.dwellTime%60}s</div>
+                                <div className="text-[9px] text-slate-400 font-mono mt-0.5">{formatEdtTime(move.timestamp)}</div>
                              </div>
-                          </div>
-                        ))
-                     )}
-                  </div>
-               </div>
+                           </div>
+                         ))
+                      ) : (
+                         (activeOnsiteWorkersList.length > 0 ? activeOnsiteWorkersList : (registeredPeopleList.length > 0 ? registeredPeopleList : people)).slice(0, 3).map(p => (
+                           <div key={p.id} onClick={() => navigate('/live', { state: { focusZone: p.currentZone || p.zone, highlightedPersonId: p.id } })} className="flex items-center justify-between bg-white px-3 py-2 rounded-lg shadow-sm border border-slate-100 cursor-pointer hover:border-[#007BC4]/30 hover:bg-[#007BC4]/5 hover:translate-x-0.5 transition-all duration-200">
+                              <div className="flex items-center gap-2">
+                                 <div className="w-7 h-7 rounded bg-[#007BC4]/10 text-[#007BC4] flex items-center justify-center font-bold text-xs border border-[#007BC4]/20">{(p.name || 'U').charAt(0)}</div>
+                                 <div>
+                                   <div className="font-bold text-xs text-slate-800 leading-tight">{p.name || 'Active Personnel'}</div>
+                                   <div className="text-[9px] text-slate-500 font-medium uppercase tracking-wide leading-none">{p.role || p.tradeCompany || 'On-site'}</div>
+                                 </div>
+                              </div>
+                              <div className="flex flex-col items-end leading-none">
+                                 <div className="text-xs font-bold text-slate-600 flex items-center gap-1">
+                                   <span className="w-1 h-1 rounded-full bg-emerald-500"></span> {p.currentZone || p.zone || 'Site Area'}
+                                 </div>
+                                 <div className="text-[9px] text-slate-400 font-mono mt-0.5">Dwell: {Math.floor((Number(p.dwellTime) || 0)/60)}m {(Number(p.dwellTime) || 0)%60}s</div>
+                              </div>
+                           </div>
+                         ))
+                      )}
+                   </div>
+                </div>
              </div>
           </div>
         );
@@ -1887,7 +2007,34 @@ export default function DashboardTab({
         const lastExitTime = lastExit?.checkOutTime || lastExit?.outTime ? formatEdtTime(lastExit.checkOutTime || lastExit.outTime, { includeSeconds: false }) : 'On site / No exit';
         const lastExitName = lastExit?.name || lastExit?.personName || 'All active personnel logged in';
 
-        const totalActiveHours = sortedLogs.length > 0 ? '8h 00m' : '0h 00m';
+        let totalActiveHours = '8h 00m';
+        if (shiftSchedules && shiftSchedules.length > 0) {
+          const activeShift = shiftSchedules[0];
+          if (activeShift.startTime && activeShift.endTime) {
+            const [sH, sM] = activeShift.startTime.split(':').map(Number);
+            const [eH, eM] = activeShift.endTime.split(':').map(Number);
+            let diffMins = (eH * 60 + eM) - (sH * 60 + sM);
+            if (diffMins < 0) diffMins += 24 * 60;
+            const h = Math.floor(diffMins / 60);
+            const m = diffMins % 60;
+            totalActiveHours = `${h}h ${m > 0 ? `${m}m` : '00m'}`;
+          } else if (activeShift.durationHours) {
+            totalActiveHours = `${activeShift.durationHours}h 00m`;
+          }
+        } else if (sortedLogs.length > 0) {
+          const validLogs = sortedLogs.filter(l => (l.checkInTime || l.inTime) && (l.checkOutTime || l.outTime));
+          if (validLogs.length > 0) {
+            const totalMs = validLogs.reduce((acc, l) => {
+              const start = new Date(l.checkInTime || l.inTime).getTime();
+              const end = new Date(l.checkOutTime || l.outTime).getTime();
+              return acc + Math.max(0, end - start);
+            }, 0);
+            const avgMins = Math.round((totalMs / validLogs.length) / 60000);
+            totalActiveHours = `${Math.floor(avgMins / 60)}h ${avgMins % 60}m`;
+          }
+        } else {
+          totalActiveHours = '0h 00m';
+        }
 
         return (
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[480px]">
@@ -1916,7 +2063,26 @@ export default function DashboardTab({
         );
       }
 
-      case 'ai_insights':
+      case 'ai_insights': {
+        const liveWorkerCount = activeOnsiteWorkersList.length || registeredPeopleList.length || people.length;
+        const dynamicAiInsights = [
+          {
+            title: 'Telemetry Movement Flow',
+            text: `${movingCount} of ${liveWorkerCount} tracked personnel active in motion across monitored zones. Average dwell duration is ${avgDwellInfo} min.`,
+            type: 'nominal'
+          },
+          {
+            title: 'Gateway & Portal Telemetry',
+            text: `${deviceStats.online} hardware portals actively ingesting live RFID scans. System health is ${deviceStats.offline === 0 ? 'fully nominal' : `${deviceStats.offline} offline gateway(s) flagged for inspection`}.`,
+            type: deviceStats.offline === 0 ? 'nominal' : 'warning'
+          },
+          {
+            title: 'Zone Capacity & Safety',
+            text: `Monitored sectors show balanced distribution with ${zoneData.length} active zones reporting live telemetry in MongoDB.`,
+            type: 'nominal'
+          }
+        ];
+
         return (
           <div className="bg-white rounded-xl border border-slate-200 p-5 flex flex-col shadow-sm transition hover:shadow-md h-[480px]">
              <div className="flex items-center justify-between mb-4 pb-3 border-b border-slate-100 shrink-0">
@@ -1924,13 +2090,7 @@ export default function DashboardTab({
                <button onClick={() => navigate('/ai-insights')} className="text-xs font-semibold text-[#007BC4] hover:underline cursor-pointer">Open AI Studio</button>
             </div>
             <div className="flex flex-col gap-3 flex-1 overflow-y-auto">
-               {(aiRecs.length > 0 ? aiRecs.slice(0, 4) : [
-                 {
-                   title: 'Site Safety Analysis',
-                   text: `Headcount nominal across monitored sectors with ${movingCount} personnel active in motion. All RFID badges verified in MongoDB.`,
-                   type: 'nominal'
-                 }
-               ]).map((insight: any, idx: number) => (
+               {dynamicAiInsights.map((insight: any, idx: number) => (
                  <div key={insight.id || idx} className={`p-3 rounded-lg border ${idx === 0 ? 'bg-purple-50 border-purple-100' : idx === 1 ? 'bg-amber-50 border-amber-100' : 'bg-slate-50 border-slate-200'}`}>
                    <h4 className={`text-xs font-bold uppercase mb-1 ${idx === 0 ? 'text-purple-700' : idx === 1 ? 'text-amber-700' : 'text-slate-700'}`}>
                      {insight.title || insight.headline || 'Operational Insight'}
@@ -1943,6 +2103,7 @@ export default function DashboardTab({
             </div>
           </div>
         );
+      }
 
       case 'chart_over_time':
         return (
@@ -1996,21 +2157,24 @@ export default function DashboardTab({
                  </PieChart>
                </ResponsiveContainer>
                <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-                 <span className="text-xl font-bold text-slate-900">{(people.length || registeredCount || 0).toString()}</span>
+                 <span className="text-xl font-bold text-slate-900">{(activeOnsiteWorkersList.length || registeredPeopleList.length || people.length || registeredCount || 0).toString()}</span>
                  <span className="text-[9px] font-semibold text-slate-500 uppercase tracking-widest">Total</span>
                </div>
                
                {/* Custom Legend Overlay */}
                <div className="absolute right-0 top-1/2 -translate-y-1/2 flex flex-col gap-1.5 pointer-events-none">
-                 {zoneData.slice(0, 3).map((entry, index) => (
-                   <div key={entry.name} className="flex items-center justify-between gap-1.5 text-[10px] bg-white/95 border border-slate-100 px-1.5 py-0.5 rounded shadow-sm backdrop-blur">
-                     <div className="flex items-center gap-1">
-                       <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></span>
-                       <span className="text-slate-700 font-bold max-w-[50px] truncate">{entry.name}</span>
+                 {zoneData.slice(0, 3).map((entry, index) => {
+                   const totalPool = activeOnsiteWorkersList.length || registeredPeopleList.length || people.length || 1;
+                   return (
+                     <div key={entry.name} className="flex items-center justify-between gap-1.5 text-[10px] bg-white/95 border border-slate-100 px-1.5 py-0.5 rounded shadow-sm backdrop-blur">
+                       <div className="flex items-center gap-1">
+                         <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: COLORS[index % COLORS.length] }}></span>
+                         <span className="text-slate-700 font-bold max-w-[50px] truncate">{entry.name}</span>
+                       </div>
+                       <span className="text-slate-500 font-bold">{Math.round((entry.value / Math.max(totalPool, 1)) * 100)}%</span>
                      </div>
-                     <span className="text-slate-500 font-bold">{Math.round((entry.value / Math.max(people.length, 1)) * 100)}%</span>
-                   </div>
-                 ))}
+                   );
+                 })}
                </div>
             </div>
           </div>
@@ -2050,7 +2214,7 @@ export default function DashboardTab({
                 </ResponsiveContainer>
                 <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
                   <span className="text-lg font-extrabold text-slate-900 leading-none">
-                    {deviceList.length || (deviceStats.online + deviceStats.offline) || 18}
+                    {deviceList.length || (deviceStats.online + deviceStats.offline) || 0}
                   </span>
                   <span className="text-[8px] font-semibold text-slate-400 uppercase tracking-widest mt-0.5">Readers</span>
                 </div>
